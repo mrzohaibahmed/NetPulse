@@ -324,10 +324,6 @@ Logs are written to `logs/monitor.log` and the console.
 Get-Content logs\monitor.log -Wait
 ```
 
-## Windows EXE
-
-The project root includes `build_exe.ps1` and `run_netpulse.py` to package backend + built frontend into `dist/NetworkMonitor.exe`. See the [root README](../README.md) for build and run instructions.
-
 ## Development Notes
 
 - Run commands from `backend/` so Python imports resolve correctly.

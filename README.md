@@ -154,8 +154,6 @@ A full-stack, enterprise-grade network monitoring system that continuously monit
 ```
 Network Monitor/
 ├── README.md               # Main architecture & mechanics documentation
-├── build_exe.ps1           # Powershell build chain for standalone EXE compilation
-├── run_netpulse.py         # Entry wrapper utilized by PyInstaller
 ├── backend/
 │   ├── app.py              # Flask server and blueprint routes registration
 │   ├── scheduler.py        # Background task scheduler (Ping & Nmap loops)
@@ -283,28 +281,6 @@ npm install
 npm run dev
 ```
 *Vite UI server runs at `http://127.0.0.1:5173` (proxies `/api` routes to backend)*
-
----
-
-## 📦 Running under Windows (Single EXE Mode)
-
-You can package both the frontend built assets and the Flask server environment into a standalone, portable Windows application.
-
-### Build Executable
-Run the script in the project root:
-```powershell
-.\build_exe.ps1
-```
-This builds the frontend production bundle (`frontend/dist`), invokes the Python environment, packages dependencies using PyInstaller, and compiles a single output program inside:
-`dist\NetworkMonitor.exe`
-
-### Run Executable
-Double-click the output file or run:
-```powershell
-.\dist\NetworkMonitor.exe
-```
-This boots the server and mounts the built web UI automatically. Point your browser directly to:
-`http://127.0.0.1:5000`
 
 ---
 
