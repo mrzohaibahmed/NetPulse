@@ -20,6 +20,7 @@ frontend/.env.local
 
 # Logs
 logs/*.log
+**/logs/*.log
 
 # OS
 Thumbs.db
