@@ -75,6 +75,3 @@ export function PaginationControls({
     </div>
   )
 }
-
-/** @deprecated use PaginationControls */
-export const Pagination = PaginationControls
