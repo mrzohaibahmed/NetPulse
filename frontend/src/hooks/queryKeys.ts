@@ -1,0 +1,23 @@
+export const queryKeys = {
+  health: ['health'] as const,
+  dashboard: {
+    all: ['dashboard'] as const,
+    summary: ['dashboard', 'summary'] as const,
+    statistics: ['dashboard', 'statistics'] as const,
+    statusChart: ['dashboard', 'status-chart'] as const,
+    typeChart: ['dashboard', 'type-chart'] as const,
+    responseTime: ['dashboard', 'response-time'] as const,
+    scanActivity: ['dashboard', 'scan-activity'] as const,
+    deviceStatus: ['dashboard', 'device-status'] as const,
+    recentHistory: ['dashboard', 'recent-history'] as const,
+  },
+  alerts: (status?: string) => ['alerts', status ?? 'all'] as const,
+  devices: (params: object) => ['devices', params] as const,
+  device: (id: string) => ['device', id] as const,
+  deviceHistory: (id: string, params: object) => ['device-history', id, params] as const,
+  history: (params: object) => ['history', params] as const,
+  settings: ['settings'] as const,
+  users: ['users'] as const,
+  networkHint: ['network-hint'] as const,
+  uptimeReport: (params: object) => ['uptime-report', params] as const,
+}

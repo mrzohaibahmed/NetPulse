@@ -1,0 +1,122 @@
+import os
+from copy import deepcopy
+from datetime import datetime, timezone
+
+from config.database import db
+
+SETTINGS_ID = "global"
+
+DEFAULT_SETTINGS = {
+    "_id": SETTINGS_ID,
+    "pingInterval": int(os.getenv("SCAN_INTERVAL", "30")),
+    "pingTimeoutMs": int(os.getenv("PING_TIMEOUT_MS", "1000")),
+    "pingRetries": int(os.getenv("PING_RETRIES", "3")),
+    "smtp": {
+        "enabled": os.getenv("ALERT_EMAIL_ENABLED", "true").lower() in ("1", "true", "yes"),
+        "host": (os.getenv("SMTP_HOST") or "smtp.gmail.com").strip(),
+        "port": int(os.getenv("SMTP_PORT", "587")),
+        "user": (os.getenv("SMTP_USER") or "").strip(),
+        "password": (os.getenv("SMTP_PASSWORD") or "").strip(),
+        "fromAddress": (os.getenv("SMTP_FROM") or os.getenv("SMTP_USER") or "").strip(),
+        "toAddress": (os.getenv("ALERT_EMAIL_TO") or "").strip(),
+        "useTls": os.getenv("SMTP_USE_TLS", "true").lower() in ("1", "true", "yes"),
+    },
+    "updatedAt": None,
+}
+
+
+def ensure_settings():
+    existing = db.settings.find_one({"_id": SETTINGS_ID})
+    if existing:
+        return existing
+
+    doc = deepcopy(DEFAULT_SETTINGS)
+    doc["updatedAt"] = datetime.now(timezone.utc)
+    db.settings.insert_one(doc)
+    return doc
+
+
+def get_settings():
+    ensure_settings()
+    return db.settings.find_one({"_id": SETTINGS_ID})
+
+
+def get_public_settings():
+    settings = get_settings()
+    smtp = settings.get("smtp", {})
+    return {
+        "pingInterval": settings.get("pingInterval", 30),
+        "pingTimeoutMs": settings.get("pingTimeoutMs", 1000),
+        "pingRetries": settings.get("pingRetries", 3),
+        "smtp": {
+            "enabled": smtp.get("enabled", True),
+            "host": smtp.get("host", ""),
+            "port": smtp.get("port", 587),
+            "user": smtp.get("user", ""),
+            "passwordSet": bool(smtp.get("password")),
+            "fromAddress": smtp.get("fromAddress", ""),
+            "toAddress": smtp.get("toAddress", ""),
+            "useTls": smtp.get("useTls", True),
+        },
+        "updatedAt": settings.get("updatedAt"),
+    }
+
+
+def update_settings(payload: dict):
+    ensure_settings()
+    current = get_settings()
+    update = {"updatedAt": datetime.now(timezone.utc)}
+
+    if "pingInterval" in payload and payload["pingInterval"] is not None:
+        value = int(payload["pingInterval"])
+        if value < 5:
+            raise ValueError("pingInterval must be at least 5 seconds")
+        update["pingInterval"] = value
+
+    if "pingTimeoutMs" in payload and payload["pingTimeoutMs"] is not None:
+        value = int(payload["pingTimeoutMs"])
+        if value < 100:
+            raise ValueError("pingTimeoutMs must be at least 100ms")
+        update["pingTimeoutMs"] = value
+
+    if "pingRetries" in payload and payload["pingRetries"] is not None:
+        value = int(payload["pingRetries"])
+        if value < 1:
+            raise ValueError("pingRetries must be at least 1")
+        update["pingRetries"] = value
+
+    if "smtp" in payload and isinstance(payload["smtp"], dict):
+        smtp = dict(current.get("smtp") or {})
+        incoming = payload["smtp"]
+        for key in ("enabled", "host", "port", "user", "fromAddress", "toAddress", "useTls"):
+            if key in incoming:
+                smtp[key] = incoming[key]
+        if "password" in incoming and incoming["password"]:
+            smtp["password"] = incoming["password"]
+        if "port" in smtp:
+            smtp["port"] = int(smtp["port"])
+        update["smtp"] = smtp
+
+    db.settings.update_one({"_id": SETTINGS_ID}, {"$set": update})
+    return get_settings()
+
+
+def get_ping_config(device=None):
+    settings = get_settings()
+    interval = settings.get("pingInterval", 30)
+    timeout_ms = settings.get("pingTimeoutMs", 1000)
+    retries = settings.get("pingRetries", 3)
+
+    if device:
+        if device.get("pingInterval") is not None:
+            interval = int(device["pingInterval"])
+        if device.get("pingTimeoutMs") is not None:
+            timeout_ms = int(device["pingTimeoutMs"])
+        if device.get("pingRetries") is not None:
+            retries = int(device["pingRetries"])
+
+    return {
+        "interval": interval,
+        "timeout_ms": timeout_ms,
+        "retries": retries,
+    }
