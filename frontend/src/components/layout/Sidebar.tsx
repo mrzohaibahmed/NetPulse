@@ -1,18 +1,19 @@
+import { useState } from 'react'
 import { NavLink } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Activity,
   Bell,
-  ChevronLeft,
-  ChevronRight,
+  FileBarChart,
   History,
   LayoutDashboard,
+  Menu,
+  Pin,
+  PinOff,
   Radar,
   Server,
   Settings,
   UserCircle,
-  FileBarChart,
-  Menu,
   X,
 } from 'lucide-react'
 import { useAuth } from '@/auth/AuthContext'
@@ -22,13 +23,15 @@ import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 
 interface SidebarProps {
-  collapsed: boolean
-  onCollapsedChange: (value: boolean) => void
+  pinned: boolean
+  onPinnedChange: (value: boolean) => void
   mobileOpen: boolean
   onMobileOpenChange: (value: boolean) => void
 }
 
-export function Sidebar({ collapsed, onCollapsedChange, mobileOpen, onMobileOpenChange }: SidebarProps) {
+export function Sidebar({ pinned, onPinnedChange, mobileOpen, onMobileOpenChange }: SidebarProps) {
+  const [hovered, setHovered] = useState(false)
+  const collapsed = !pinned && !hovered
   const { isAdmin, user, logout } = useAuth()
   const health = useHealthQuery()
   const apiOk = health.isError ? false : health.data ? true : null
@@ -121,7 +124,7 @@ export function Sidebar({ collapsed, onCollapsedChange, mobileOpen, onMobileOpen
   const content = (
     <aside
       className={cn(
-        'flex h-full flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground',
+        'flex h-full flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground transition-[width] duration-200 ease-in-out',
         collapsed ? 'w-[72px]' : 'w-[248px]',
       )}
     >
@@ -136,10 +139,27 @@ export function Sidebar({ collapsed, onCollapsedChange, mobileOpen, onMobileOpen
               initial={{ opacity: 0, width: 0 }}
               animate={{ opacity: 1, width: 'auto' }}
               exit={{ opacity: 0, width: 0 }}
-              className="overflow-hidden"
+              className="flex flex-1 items-center justify-between overflow-hidden"
             >
-              <p className="text-lg font-bold tracking-tight text-white">NetPulse</p>
-              <p className="text-xs text-muted-foreground">Network Monitor</p>
+              <div>
+                <p className="text-lg font-bold tracking-tight text-white">NetPulse</p>
+                <p className="text-xs text-muted-foreground">Network Monitor</p>
+              </div>
+              <Tooltip delayDuration={0}>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 shrink-0 text-muted-foreground hover:text-white"
+                    onClick={() => onPinnedChange(!pinned)}
+                    aria-label={pinned ? 'Unpin sidebar' : 'Pin sidebar'}
+                  >
+                    {pinned ? <PinOff className="h-3.5 w-3.5" /> : <Pin className="h-3.5 w-3.5" />}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="right">{pinned ? 'Unpin' : 'Pin'}</TooltipContent>
+              </Tooltip>
             </motion.div>
           ) : null}
         </AnimatePresence>
@@ -169,16 +189,6 @@ export function Sidebar({ collapsed, onCollapsedChange, mobileOpen, onMobileOpen
           </div>
         ) : null}
 
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="hidden w-full md:inline-flex"
-          onClick={() => onCollapsedChange(!collapsed)}
-          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-        >
-          {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
-        </Button>
       </div>
     </aside>
   )
@@ -186,7 +196,13 @@ export function Sidebar({ collapsed, onCollapsedChange, mobileOpen, onMobileOpen
   return (
     <>
       {/* Desktop */}
-      <div className="sticky top-0 hidden h-screen shrink-0 md:block">{content}</div>
+      <div
+        className="sticky top-0 hidden h-screen shrink-0 md:block"
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+      >
+        {content}
+      </div>
 
       {/* Mobile toggle */}
       <Button
