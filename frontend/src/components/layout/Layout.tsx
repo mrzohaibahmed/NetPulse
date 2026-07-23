@@ -5,14 +5,14 @@ import { TopNavbar } from '@/components/layout/TopNavbar'
 import { PageTransition } from '@/components/shared/PageTransition'
 
 export function Layout() {
-  const [collapsed, setCollapsed] = useState(false)
+  const [pinned, setPinned] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
 
   return (
     <div className="flex min-h-screen bg-background">
       <Sidebar
-        collapsed={collapsed}
-        onCollapsedChange={setCollapsed}
+        pinned={pinned}
+        onPinnedChange={setPinned}
         mobileOpen={mobileOpen}
         onMobileOpenChange={setMobileOpen}
       />

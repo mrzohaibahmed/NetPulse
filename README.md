@@ -1,223 +1,258 @@
-# 🖥️ Network Monitor (NetPulse)
+# Network Monitor (NetPulse)
 
-A full-stack, enterprise-grade network monitoring system that continuously monitors LAN devices, captures deep hardware/service signatures using Nmap, fires email alerts on outages, and visualizes live latency telemetry in a React dashboard.
-
----
-
-## 📖 Table of Contents
-
-- [Features](#-features)
-- [System Architecture](#-system-architecture)
-- [How It Works (System Mechanics)](#-how-it-works-system-mechanics)
-  - [1. Automatic Ping Monitoring](#1-automatic-ping-monitoring)
-  - [2. Nmap Deep Scanning](#2-nmap-deep-scanning)
-  - [3. Subnet sweeping (Discovery)](#3-subnet-sweeping-discovery)
-  - [4. Alerting & Notifications](#4-alerting--notifications)
-  - [5. Role-Based Access Control](#5-role-based-access-control)
-- [Tech Stack](#-tech-stack)
-- [Project Directory Structure](#-project-directory-structure)
-- [MongoDB Collections Schema](#-mongodb-collections-schema)
-- [Configuration (.env)](#-configuration-env)
-- [API Route Reference](#-api-route-reference)
-- [Development Setup](#-development-setup)
-- [Running under Windows (Single EXE Mode)](#-running-under-windows-single-exe-mode)
-- [Default Login Credentials](#-default-login-credentials)
-- [Troubleshooting](#-troubleshooting)
+A full-stack LAN monitoring system that continuously pings devices, profiles them with Nmap, discovers hosts on your subnet, fires email alerts on critical outages, and shows live status in a React dashboard.
 
 ---
 
-## ✨ Features
+## Table of contents
 
-- **📊 Live Telemetry Dashboard** — Monitor latency trends, status distribution, and active alerts dynamically with automatic frontend page-polling.
-- **🛠️ Device Registry Management** — CRUD functionality, bulk CSV spreadsheet imports, and device-specific ping configurations (custom timeout, retries, interval).
-- **⏱️ Bounded Background Scheduler** — Concurrent background jobs managing ICMP checks and Nmap profiles.
-- **🔍 Subnet Sweeping & Discovery** — Auto-detect local networks, scan IP ranges, and dynamically register newly found online nodes.
-- **🔒 Deep OS & Port Profiling** — Read operating systems, open ports, software products, version details, MAC addresses, and vendor labels using integrated Nmap.
-- **✉️ Automated Outage Routing** — Generate persistent internal alert lists and forward email notifications to administrators when critical infrastructure fails.
-- **👤 Multi-Role Authentication** — JWT validation supporting admin and read-only viewer accounts.
-- **⚙️ Dynamic Reconfiguration** — Re-schedule ping loops and tweak SMTP setups on the fly directly from the UI without restarting python processes.
+- [What this project does](#what-this-project-does)
+- [How it works](#how-it-works)
+- [System architecture](#system-architecture)
+- [Tech stack](#tech-stack)
+- [Project structure](#project-structure)
+- [MongoDB collections](#mongodb-collections)
+- [Configuration](#configuration)
+- [API overview](#api-overview)
+- [Development setup](#development-setup)
+- [Default login credentials](#default-login-credentials)
+- [Troubleshooting](#troubleshooting)
 
 ---
 
-## 📐 System Architecture
+## What this project does
+
+NetPulse watches devices on your local network and answers three questions continuously:
+
+1. **Is the device reachable?** — ICMP ping on a schedule (or on demand).
+2. **What is running on it?** — Periodic Nmap scans for OS, open ports, services, MAC, and vendor.
+3. **Did something important go down?** — In-app alerts plus optional email when a critical device goes offline.
+
+Operators use the React UI to:
+
+| Page | Purpose |
+|------|---------|
+| **Dashboard** | Live KPIs, status charts, response-time trends, recent activity |
+| **Devices** | CRUD inventory, CSV import, manual ping / Nmap, per-device ping overrides |
+| **Discovery** | Suggest local `/24` range and sweep IPs; auto-register new online hosts |
+| **History** | Filterable ping history and per-device uptime |
+| **Alerts** | Acknowledge or dismiss critical outage alerts |
+| **Reports** | Uptime reports; export devices/history as CSV or Excel |
+| **Settings** | Global ping interval/timeout/retries and SMTP (no server restart needed) |
+| **Account** | Change username/password; admins manage users |
+
+Roles:
+
+- **admin** — full write access (devices, discovery, settings, users)
+- **viewer** — read-only dashboard, devices, history, reports, alerts
+
+---
+
+## How it works
+
+### End-to-end flow
+
+```
+┌──────────────┐     JWT REST      ┌─────────────────┐     PyMongo     ┌──────────┐
+│ React UI     │ ◄───────────────► │ Flask (app.py)  │ ◄─────────────► │ MongoDB  │
+│ (Vite/TS)    │   poll 10–20s     │ + APScheduler   │                 │          │
+└──────────────┘                   └────────┬────────┘                 └──────────┘
+                                            │
+                     ┌──────────────────────┼──────────────────────┐
+                     ▼                      ▼                      ▼
+              ICMP ping (ping3)      Nmap (python-nmap)      SMTP email
+              every ~30s             every ~1 hour          on critical
+              (Settings)             (.env interval)        offline
+```
+
+1. On startup, Flask loads settings, seeds default users if needed, and starts APScheduler.
+2. The **ping job** loads devices with `monitor: true`, respects per-device intervals, pings each host, updates status, writes `pingHistory`, and may create an alert.
+3. The **Nmap job** scans currently **Online** devices only, stores OS/ports/services under `networkInfo` on the device document.
+4. The frontend authenticates with JWT and polls dashboard/device APIs so the UI stays live without WebSockets.
+
+### 1. Automatic ping monitoring
+
+**Where:** `backend/scheduler.py` → `services/monitor_service.py` → `services/ping_service.py`
+
+1. APScheduler runs `monitor_all_devices` on the global interval from Settings (`pingInterval`, default from `SCAN_INTERVAL`, usually 30s).
+2. For each device with `monitor: true`, if enough time has passed since `lastCheckedAt` (honoring optional `pingInterval` / timeout / retries overrides), the service sends an ICMP echo via `ping3`.
+3. Results update the device:
+   - **Success** → `Online`, reset `consecutiveFailures`, set `lastSeen` and `responseTime`
+   - **Failure + critical** → `Offline (Critical)`
+   - **Failure + non-critical** → `Not Reachable`
+4. Every check (automatic or manual) is stored in `pingHistory` with `scanType` of `Automatic` or `Manual`.
+5. Changing `pingInterval` in Settings calls `reschedule_monitor_job` so the loop updates without restarting Flask.
+
+### 2. Nmap deep scanning
+
+**Where:** `backend/scheduler.py` → `services/nmap_service.py` (also triggered from `routes/nmap_routes.py`)
+
+1. A separate scheduler job runs every `NMAP_SCAN_INTERVAL` seconds (default 3600).
+2. Only devices currently marked `Online` are scanned (avoids hanging on dead hosts).
+3. A thread pool (`MAX_SCAN_THREADS`, default 5) runs Nmap with `NMAP_ARGUMENTS` (default `-A -T4`).
+4. Parsed results are written to the device’s `networkInfo` (OS, ports, services, MAC, vendor) and shown in the device details drawer.
+5. Admins/users can also trigger a single-device or “scan all online” Nmap run from the API/UI.
+
+Requires the **Nmap binary** on `PATH` (or set `NMAP_PATH`). Aggressive flags often need Administrator privileges on Windows.
+
+### 3. Subnet discovery
+
+**Where:** `services/discovery_service.py` via `POST /api/discovery/scan-range`
+
+1. `GET /api/discovery/network-hint` probes the local IP (UDP connect to `8.8.8.8`) and suggests a `/24` start/end range.
+2. The range scan uses a thread pool to ping hosts (capped to protect resources).
+3. Online hosts get a best-effort reverse DNS name.
+4. Hosts not already in MongoDB can be auto-saved as devices (`deviceType: Unknown`, `monitor: true`, status `Online`) so they enter the ping loop immediately.
+
+### 4. Alerting and email
+
+**Where:** `services/alert_service.py` + `services/email_service.py`
+
+1. After each ping update, the monitor compares previous vs new status.
+2. Transition of a **critical** device into `Offline (Critical)` creates an `alerts` document (once per outage transition, not on every failed ping).
+3. If SMTP is enabled, a background thread sends email using Settings / `.env` values.
+4. Operators acknowledge or dismiss alerts in the UI.
+
+### 5. Authentication and roles
+
+**Where:** `utils/auth.py`, `services/user_service.py`, `routes/auth_routes.py`
+
+- Login returns a JWT (`JWT_SECRET`, `JWT_EXPIRE_HOURS`).
+- Passwords are stored with bcrypt.
+- Route handlers enforce `admin` vs `viewer` as needed.
+- First boot with an empty `users` collection seeds default admin and viewer accounts.
+
+### 6. Frontend data loading
+
+**Where:** `frontend/src/hooks/queries.ts`, Vite proxy in `vite.config.ts`
+
+- TanStack Query polls the API (dashboard ~10s, devices ~15s, history ~20s).
+- In development, Vite proxies `/api` and `/health` to `http://127.0.0.1:5000`.
+- In production, `npm run build` produces `frontend/dist`; Flask serves that SPA at `/` when the folder exists.
+
+---
+
+## System architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                       React Frontend                        │
-│             Vite + TypeScript + Tailwind CSS                │
-│       React Query Polling (10s/15s) ◄──► REST API          │
+│                    React frontend (NetPulse)                │
+│         Vite + TypeScript + Tailwind + TanStack Query       │
 └──────────────────────────────┬──────────────────────────────┘
-                               │ HTTP with JWT Authorization
+                               │ HTTP + Bearer JWT
 ┌──────────────────────────────▼──────────────────────────────┐
-│                   Flask Backend (app.py)                    │
+│                   Flask backend (app.py)                    │
+│  Blueprints: auth, devices, scan, nmap, history, dashboard, │
+│              discovery, alerts, settings, reports           │
 │                                                             │
-│  ┌───────────────────────┐       ┌───────────────────────┐  │
-│  │     APScheduler       │       │    Flask Blueprints   │  │
-│  │                       │       │  (Routes/Controllers) │  │
-│  │  Job 1 (Ping loop):   │       │                       │  │
-│  │  monitor_all_devices  │       │  • /api/auth          │  │
-│  │  Interval: 30s        │       │  • /api/devices       │  │
-│  │                       │       │  • /api/history       │  │
-│  │  Job 2 (Nmap scan):   │       │  • /api/discovery     │  │
-│  │  scan_all_online_devs │       │  • /api/alerts        │  │
-│  │  Interval: 3600s      │       │  • /api/reports       │  │
-│  └───────────┬───────────┘       └───────────┬───────────┘  │
-└──────────────┼───────────────────────────────┼──────────────┘
-               │                               │
-               └───────────────┬───────────────┘
-                               │ PyMongo Driver
+│  APScheduler                                                │
+│  • device_monitor_job  → monitor_all_devices (ping)         │
+│  • nmap_scan_job       → scan_all_online_devices            │
+└──────────────────────────────┬──────────────────────────────┘
+                               │
 ┌──────────────────────────────▼──────────────────────────────┐
-│                           MongoDB                           │
-│                                                             │
-│  Collections:                                               │
-│  • devices (inventory & Nmap results)                       │
-│  • pingHistory (raw time-series ping records)               │
-│  • alerts (active/dismissed outages)                        │
-│  • settings (global variables)                              │
-│  • users (hashed authentication records)                     │
-│  • auditLogs (administrative actions)                       │
+│                         MongoDB                             │
+│  devices · pingHistory · alerts · settings · users ·        │
+│  auditLogs                                                  │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## ⚙️ How It Works (System Mechanics)
+## Tech stack
 
-### 1. Automatic Ping Monitoring
-- **Runner**: Powered by `APScheduler` inside `backend/scheduler.py`.
-- **Methodology**:
-  1. The background scheduler initiates the `device_monitor_job` trigger.
-  2. The service queries all records in MongoDB where `monitor = true`.
-  3. If a device has an overridden `pingInterval` in database, the system verifies whether the duration since its `lastCheckedAt` exceeds the custom threshold.
-  4. The system executes a raw ICMP echo request using the `ping3` library.
-  5. The result state is evaluated and written:
-     - **Success**: Status becomes `Online`. `consecutiveFailures` is reset to `0`. `lastSeen` is set to the current timestamp.
-     - **Outage (Critical)**: If the host fails ICMP checks and `critical = true`, the status switches to `Offline (Critical)`.
-     - **Outage (Non-Critical)**: If the host fails ICMP checks and `critical = false`, the status switches to `Not Reachable`.
-  6. Every execution stores an item in the `pingHistory` collection.
+| Layer | Technologies |
+|-------|----------------|
+| Frontend | React 19, TypeScript, Vite 8, Tailwind CSS 4, TanStack Query/Table, Recharts, Radix UI, Framer Motion |
+| Backend | Flask 3, Flask-CORS, APScheduler, PyMongo |
+| Monitoring | `ping3` (ICMP), `python-nmap` (Nmap) |
+| Auth | PyJWT, bcrypt |
+| Export | openpyxl (Excel), CSV |
+| Database | MongoDB |
 
 ---
 
-### 2. Nmap Deep Scanning
-- **Runner**: Concurrent execution managed in `backend/services/nmap_service.py` via python-nmap.
-- **Methodology**:
-  1. An independent scheduling job executes at `NMAP_SCAN_INTERVAL` (default: 3600 seconds / 1 hour).
-  2. It queries MongoDB for devices currently marked `Online`. Offline targets are skipped to prevent execution timeouts.
-  3. The service instantiates a bounded thread pool with a worker thread limit controlled by `MAX_SCAN_THREADS` (default: 5).
-  4. It calls the Nmap binary via subprocess with the configured variables (default: `-A -T4` for OS mapping, default script scans, service version detection, and timing acceleration).
-  5. The raw results are mapped to the device's `networkInfo` sub-document:
-     - `os`: Name, family, generation, and detection confidence level.
-     - `ports`: Active ports, matching protocols (`tcp`/`udp`), states (`open`/`filtered`), service identifiers, software products, and version strings.
-     - `services`: Deduplicated string arrays representing running services (e.g. `["http", "ssh", "rdp"]`).
-     - `macAddress` & `vendor`: Populated when scanning local Layer-2 segments.
-  6. The backend updates the device document in MongoDB, which is rendered dynamically in the **Network Info** tab inside the **Device Details** drawer.
-
----
-
-### 3. Subnet sweeping (Discovery)
-- **Runner**: Multithreaded address scanning in `backend/services/discovery_service.py`.
-- **Methodology**:
-  1. The backend automatically determines the local network configuration by executing a UDP socket check to `8.8.8.8` and calculating the `/24` subnet boundaries.
-  2. The user initiates a range sweep (limited to 1024 hosts per execution to safeguard resources).
-  3. A thread pool of 20 workers simultaneously pings every host in the range.
-  4. For each responsive target, the discovery module attempts a reverse-DNS hostname lookup (`socket.gethostbyaddr`).
-  5. **Auto-Save Functionality**: If the host is not already present in the database, NetPulse inserts it with `deviceType = "Unknown"`, `monitor = true`, and status `Online`, making it instantly part of the active polling routine.
-
----
-
-### 4. Alerting & Notifications
-- **Runner**: Spawned background alerting in `backend/services/alert_service.py`.
-- **Methodology**:
-  1. After every automatic check, `monitor_service.py` calls the alert verification hook.
-  2. If the target's status transitions from `Online` to `Offline (Critical)`, an outage alert record is generated.
-  3. If SMTP alerts are enabled, the service spawns a separate background thread to configure an email message.
-  4. It connects to the defined server configuration (`SMTP_HOST`, `SMTP_PORT`, with optional TLS/SSL protection) and routes an warning email to the target destination.
-
----
-
-### 5. Role-Based Access Control
-- **Viewer Role**: Read-only permission limits access to dashboard statistics, uptime tables, filterable logs, and network details.
-- **Admin Role**: Read-write permission grants full access to add, edit, or delete monitored devices, scan configurations, range discovery sweeps, global SMTP parameters, and custom user account generation.
-
----
-
-## 🛠️ Tech Stack
-
-- **Frontend**: React 19, TypeScript 6, Vite 8, Recharts, Tailwind CSS 4, TanStack Query, Radix UI.
-- **Backend**: Flask 3.1, APScheduler 3.11, PyMongo 4.17.
-- **Libraries**: `ping3` (ICMP execution), `python-nmap` (nmap automation), `PyJWT` (authorization tokens), `bcrypt` (password hashing), `openpyxl` (spreadsheet reporting).
-
----
-
-## 📁 Project Directory Structure
+## Project structure
 
 ```
 Network Monitor/
-├── README.md               # Main architecture & mechanics documentation
+├── README.md
 ├── backend/
-│   ├── app.py              # Flask server and blueprint routes registration
-│   ├── scheduler.py        # Background task scheduler (Ping & Nmap loops)
-│   ├── requirements.txt    # Python requirements
-│   ├── config/
-│   │   ├── database.py     # MongoDB connection config & env parser
-│   │   └── email.py        # Mail server environment maps
-│   ├── models/             # PyMongo template structures (devices, history)
-│   ├── routes/             # REST blueprints (auth, device CRUD, scans, alerts)
-│   ├── services/           # Underlying logic (ICMP ping, Nmap scans, discovery)
-│   └── utils/              # Security helpers, serialization, paging, logging
+│   ├── app.py                 # Flask app, blueprints, SPA static serving
+│   ├── scheduler.py           # Ping + Nmap background jobs
+│   ├── requirements.txt
+│   ├── .env / .env.example
+│   ├── config/                # MongoDB + env (incl. Nmap settings)
+│   ├── models/                # Device / ping history document helpers
+│   ├── routes/                # REST blueprints
+│   ├── services/              # Ping, monitor, Nmap, discovery, alerts, email, …
+│   ├── utils/                 # JWT, serializers, pagination, logging
+│   └── logs/monitor.log
 └── frontend/
     ├── src/
-    │   ├── api/            # API queries layer (client, endpoints)
-    │   ├── components/     # UI widgets, layout tables, DeviceDrawer
-    │   ├── hooks/          # React Query hook abstractions
-    │   ├── pages/          # Layout views (Dashboard, Devices, Discovery)
-    │   └── types/          # Shared TypeScript contracts (Device, NetworkInfo)
-    ├── package.json        # Frontend manifest & scripts
-    └── vite.config.ts      # Vite server configuration
+    │   ├── api/               # HTTP client + endpoint helpers
+    │   ├── auth/              # Auth context
+    │   ├── components/        # Layout, devices, shared UI, Radix primitives
+    │   ├── hooks/             # React Query hooks (polling)
+    │   ├── pages/             # Dashboard, Devices, Discovery, …
+    │   └── types/
+    ├── package.json
+    └── vite.config.ts         # Dev server + /api proxy
 ```
 
----
-
-## 🗄️ MongoDB Collections Schema
-
-- **`devices`**: Stores active host inventories, status metrics, overrides, and Nmap metadata arrays.
-- **`pingHistory`**: Time-series log containing result parameters of every scheduled and manually triggered check.
-- **`alerts`**: Tracked system outages showing target identifiers, timestamps, acknowledge, and dismiss statuses.
-- **`settings`**: Key-value pair configuration for mail servers, global timeout thresholds, and scan speed parameters.
-- **`users`**: Secure account store storing password details encrypted using `bcrypt`.
-- **`auditLogs`**: Immutable log recording administrative actions (device additions, settings updates, imports).
+More detail: [`backend/README.md`](backend/README.md), [`frontend/README.md`](frontend/README.md).
 
 ---
 
-## 🔌 Configuration (.env)
+## MongoDB collections
 
-Modify configuration by updating `backend/.env`:
+| Collection | Purpose |
+|------------|---------|
+| `devices` | Inventory, status, ping overrides, Nmap `networkInfo` |
+| `pingHistory` | Time-series of every manual/automatic ping |
+| `alerts` | Critical offline events (acknowledge / dismiss) |
+| `settings` | Global ping + SMTP config (editable in UI) |
+| `users` | Accounts with bcrypt password hashes |
+| `auditLogs` | Admin action trail (creates, imports, settings changes, …) |
+
+**Device status values:** `Online`, `Not Reachable`, `Offline (Critical)`, `Unknown`.
+
+---
+
+## Configuration
+
+Copy and edit `backend/.env` (see also `backend/.env.example`):
 
 ```env
-# Database Settings
+# Database
 MONGO_URI=mongodb://localhost:27017
 DATABASE_NAME=NetworkMonitor
 
-# Polling Controls
+# Flask
+FLASK_DEBUG=true
+
+# Ping defaults (also adjustable in Settings UI)
 SCAN_INTERVAL=30
 PING_TIMEOUT_MS=1000
 PING_RETRIES=3
 
-# JWT Configuration
-JWT_SECRET=network-monitor-production-secret-key
+# Auth
+JWT_SECRET=change-me-in-production
 JWT_EXPIRE_HOURS=8
+DEFAULT_ADMIN_USER=admin
+DEFAULT_ADMIN_PASSWORD=admin123
 
-# SMTP Email Parameters
+# Email alerts (optional)
 ALERT_EMAIL_ENABLED=true
 ALERT_EMAIL_TO=recipient@example.com
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
 SMTP_USER=sender@gmail.com
-SMTP_PASSWORD=your-secure-app-password
+SMTP_PASSWORD=your-app-password
 SMTP_FROM=sender@gmail.com
 SMTP_USE_TLS=true
 
-# Nmap Profiling Parameters
+# Nmap
 NMAP_SCAN_INTERVAL=3600
 NMAP_ARGUMENTS=-A -T4
 MAX_SCAN_THREADS=5
@@ -225,83 +260,116 @@ NMAP_TIMEOUT=300
 NMAP_PATH=
 ```
 
----
+| Variable | Meaning |
+|----------|---------|
+| `MONGO_URI` / `DATABASE_NAME` | MongoDB connection (required) |
+| `SCAN_INTERVAL` | Default ping interval in seconds |
+| `JWT_*` | Token signing and lifetime |
+| `DEFAULT_ADMIN_*` | First admin credentials when DB has no users |
+| `ALERT_*` / `SMTP_*` | Critical offline email |
+| `NMAP_*` | Background profiling interval, flags, concurrency, binary path |
 
-## 🗺️ API Route Reference
-
-| Method | Route | Description | Auth Role |
-|---|---|---|---|
-| **POST** | `/api/auth/login` | Yields JWT authorization token | Public |
-| **GET** | `/api/auth/me` | Fetches active identity profile | Any |
-| **PUT** | `/api/auth/account` | Alters password or username variables | Any |
-| **POST** | `/api/devices` | Inserts a monitored host record | Admin |
-| **GET** | `/api/devices` | Fetches paginated, filterable host inventories | Any |
-| **PUT** | `/api/devices/<id>` | Alters host parameters and overrides | Admin |
-| **DELETE** | `/api/devices/<id>` | Drops device and purges database history | Admin |
-| **POST** | `/api/devices/import` | Processes device registry CSV uploads | Admin |
-| **POST** | `/api/devices/<id>/scan` | Triggers immediate ICMP check | Any |
-| **POST** | `/api/devices/<id>/scan-details`| Runs Nmap OS, version, and service scan | Any |
-| **POST** | `/api/devices/scan-all-details` | Scans all online devices with Nmap concurrently | Any |
-| **GET** | `/api/history` | Fetches system-wide ping history records | Any |
-| **GET** | `/api/devices/<id>/history` | Fetches device history, uptime report & Nmap scans | Any |
-| **GET** | `/api/discovery/network-hint`| Inspects socket context to suggest CIDR sweep | Any |
-| **POST** | `/api/discovery/scan-range`| Launches thread pool subnet discovery sweep | Admin |
-| **GET** | `/api/alerts` | Fetches alert inventory log | Any |
-| **POST** | `/api/alerts/<id>/acknowledge`| Marks target outage recognized | Any |
-| **POST** | `/api/alerts/<id>/dismiss` | Dismisses outage records | Any |
-| **GET** | `/api/settings` | Fetches mail settings and thresholds | Any |
-| **PUT** | `/api/settings` | Updates global configuration dynamically | Admin |
-| **GET** | `/api/reports/uptime` | Compiles device uptime percentages | Any |
-| **GET** | `/api/reports/export/devices` | Yields Excel/CSV device manifest download | Any |
-| **GET** | `/api/reports/export/history` | Yields Excel/CSV ping logs download | Any |
+Use `NMAP_ARGUMENTS=-sV -T4` if you cannot run elevated (skips aggressive OS detection).
 
 ---
 
-## 🚀 Development Setup
+## API overview
 
-### 1. Initialize MongoDB
-Ensure you have a MongoDB instance running locally on port `27017` or have a valid MongoDB Atlas connection string.
+All JSON APIs are under `/api` except `/health`. Most routes require `Authorization: Bearer <token>`.
 
-### 2. Configure Backend
+| Method | Route | Description | Role |
+|--------|-------|-------------|------|
+| POST | `/api/auth/login` | Login, returns JWT | Public |
+| GET | `/api/auth/me` | Current user | Any |
+| PUT | `/api/auth/account` | Update own account | Any |
+| GET/PUT | `/api/users` / `/api/users/<id>` | List / update users | Admin |
+| POST/GET/PUT/DELETE | `/api/devices` … | Device CRUD + CSV import | Admin write |
+| POST | `/api/devices/<id>/scan` | Manual ICMP ping | Any |
+| POST | `/api/devices/<id>/scan-details` | Manual Nmap scan | Any |
+| POST | `/api/devices/scan-all-details` | Nmap all online devices | Any |
+| GET | `/api/history`, `/api/devices/<id>/history` | Ping history / uptime | Any |
+| GET | `/api/discovery/network-hint` | Suggest LAN range | Any |
+| POST | `/api/discovery/scan-range` | Subnet sweep | Admin |
+| GET | `/api/dashboard/*` | Summary, stats, charts | Any |
+| GET/POST | `/api/alerts` … | List / acknowledge / dismiss | Any |
+| GET/PUT | `/api/settings` | Read / update global settings | Admin write |
+| GET | `/api/reports/uptime` | Uptime report | Any |
+| GET | `/api/reports/export/devices` | Export devices (csv/xlsx) | Any |
+| GET | `/api/reports/export/history` | Export history (csv/xlsx) | Any |
+| GET | `/health` | Server + MongoDB ping | Public |
+
+Full endpoint tables: [`backend/README.md`](backend/README.md).
+
+---
+
+## Development setup
+
+### Prerequisites
+
+- Python 3.10+
+- Node.js 18+ (for the frontend)
+- MongoDB (local or Atlas)
+- [Nmap](https://nmap.org/download.html) installed for deep scans
+- On Windows, run the terminal **as Administrator** for reliable ICMP and aggressive Nmap
+
+### 1. Backend
+
 ```powershell
 cd backend
 python -m venv venv
 .\venv\Scripts\activate
 pip install -r requirements.txt
-# Create and edit your .env file in the backend/ directory
+# Create backend/.env from the Configuration section above
 python app.py
 ```
-*API server runs at `http://127.0.0.1:5000`*
 
-### 3. Configure Frontend
-Open a new shell:
+API: `http://127.0.0.1:5000`
+
+### 2. Frontend (dev)
+
 ```powershell
 cd frontend
 npm install
 npm run dev
 ```
-*Vite UI server runs at `http://127.0.0.1:5173` (proxies `/api` routes to backend)*
+
+UI: `http://127.0.0.1:5173` (proxies `/api` to the Flask app)
+
+### 3. Single-process UI (optional)
+
+```powershell
+cd frontend
+npm run build
+cd ..\backend
+python app.py
+```
+
+Flask serves the built SPA from `frontend/dist` at `http://127.0.0.1:5000`.
 
 ---
 
-## 🔑 Default Login Credentials
+## Default login credentials
 
-Upon the database creation, NetPulse pre-seeds the following system roles:
+Created on first run when the `users` collection is empty:
 
-| Username | Password | Role | Description |
-|---|---|---|---|
-| **admin** | `admin123` | `admin` | Full read/write capability, settings access |
-| **viewer** | `viewer123` | `viewer` | Read-only access to dashboard statistics |
+| Username | Password | Role |
+|----------|----------|------|
+| `admin` (or `DEFAULT_ADMIN_USER`) | `admin123` (or `DEFAULT_ADMIN_PASSWORD`) | admin |
+| `viewer` | `viewer123` | viewer |
 
-*Note: Update password credentials immediately inside **Account Settings** or the environment parameters when deploying.*
+Change these immediately for any shared or production environment.
 
 ---
 
-## 🔍 Troubleshooting
+## Troubleshooting
 
-| Issue | Cause | Resolution |
-|---|---|---|
-| **ICMP Ping Failure** | Missing socket privileges | Run your terminal instance (or VS Code) **as Administrator** on Windows. |
-| **Nmap Scan Failures** | Admin privilege missing | Nmap aggressive scanning (`-A` or `-O`) requires elevated system permissions. Run your terminal as Administrator, or downgrade `NMAP_ARGUMENTS` in `.env` to `-sV -T4` to omit raw OS detection tests. |
-| **UI changes not showing** | Running on Flask port | Run `npm run build` in the `frontend` folder to update the static build served by Flask. |
-| **MongoDB Errors** | Authentication/Connection failure | Validate the `MONGO_URI` connection string and credentials inside `backend/.env`. |
+| Issue | Likely cause | Fix |
+|-------|----------------|-----|
+| Pings always fail | ICMP needs elevation on Windows | Run the terminal / IDE as Administrator |
+| Nmap errors or empty OS info | Missing binary or no admin rights | Install Nmap, set `NMAP_PATH`, run elevated, or use `NMAP_ARGUMENTS=-sV -T4` |
+| UI not updating from Flask alone | Stale or missing build | Run `npm run build` in `frontend/` |
+| MongoDB connection errors | Bad URI / DB down | Check `MONGO_URI` and that MongoDB is reachable |
+| Duplicate scheduler jobs | Debug reloader | App only starts the scheduler in the child process when `FLASK_DEBUG=true` |
+| No email on outage | SMTP off or misconfigured | Enable in Settings / `.env`; use an app password for Gmail |
+
+Logs: `backend/logs/monitor.log` (also printed to the console).

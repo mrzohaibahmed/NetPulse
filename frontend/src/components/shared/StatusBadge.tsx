@@ -16,7 +16,7 @@ export function StatusBadge({ status, className, pulse = true }: StatusBadgeProp
     tone === 'online' ? 'success' : tone === 'warn' ? 'warning' : tone === 'offline' ? 'danger' : 'muted'
 
   return (
-    <Badge variant={variant} className={cn('font-semibold', className)}>
+    <Badge variant={variant} className={cn('whitespace-nowrap font-semibold', className)}>
       {pulse && tone === 'online' ? (
         <span className="relative flex h-2 w-2">
           <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60" />
