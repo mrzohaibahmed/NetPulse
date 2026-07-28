@@ -70,6 +70,12 @@ from services.storm.risk_engine import (
     get_latest_risk_results,
     get_risk_history,
 )
+from services.storm.diagnostics.serializer import (
+    serialize_incident,
+    serialize_prepare_result,
+)
+from services.storm.incident import get_incident, list_incidents
+from services.storm.orchestrator import prepare as prepare_mitigation, prepare_all_safe
 from services.storm.safety import (
     evaluate as evaluate_safety,
     evaluate_all_safety,
@@ -988,5 +994,177 @@ def get_interface_safety(device_id: str, interface: str):
         return jsonify({
             "success": False,
             "message": "Failed to fetch interface safety",
+            "error": str(error),
+        }), 500
+
+
+# ---------------------------------------------------------------------------
+# Incidents + Mitigation Orchestrator (prepare only — no shutdown)
+# ---------------------------------------------------------------------------
+
+
+def _incident_filters():
+    status = (request.args.get("status") or "").strip() or None
+    return {
+        "search": (request.args.get("q") or "").strip() or None,
+        "status": status,
+    }
+
+
+@storm_bp.route("/storm/incidents", methods=["GET"])
+@require_auth()
+def list_storm_incidents():
+    try:
+        page, limit = parse_pagination(default_limit=50, max_limit=500)
+        filters = _incident_filters()
+        _, total = list_incidents(skip=0, limit=1, **filters)
+        page, skip, total_pages = clamp_page(page, total, limit)
+        rows, total = list_incidents(skip=skip, limit=limit, **filters)
+        return jsonify({
+            "success": True,
+            "count": len(rows),
+            "data": [serialize_incident(row) for row in rows],
+            **pagination_payload(total, page, limit, total_pages),
+        }), 200
+    except Exception as error:  # noqa: BLE001
+        return jsonify({
+            "success": False,
+            "message": "Failed to list storm incidents",
+            "error": str(error),
+        }), 500
+
+
+@storm_bp.route("/storm/incidents/device/<device_id>", methods=["GET"])
+@require_auth()
+def list_device_storm_incidents(device_id: str):
+    try:
+        oid = _parse_device_id(device_id)
+        if oid is None:
+            return jsonify({
+                "success": False,
+                "message": "Invalid device ID",
+            }), 400
+
+        page, limit = parse_pagination(default_limit=50, max_limit=500)
+        filters = _incident_filters()
+        _, total = list_incidents(device_id=oid, skip=0, limit=1, **filters)
+        page, skip, total_pages = clamp_page(page, total, limit)
+        rows, total = list_incidents(
+            device_id=oid, skip=skip, limit=limit, **filters
+        )
+        return jsonify({
+            "success": True,
+            "count": len(rows),
+            "data": [serialize_incident(row) for row in rows],
+            **pagination_payload(total, page, limit, total_pages),
+        }), 200
+    except Exception as error:  # noqa: BLE001
+        return jsonify({
+            "success": False,
+            "message": "Failed to list device storm incidents",
+            "error": str(error),
+        }), 500
+
+
+@storm_bp.route("/storm/incidents/<incident_id>", methods=["GET"])
+@require_auth()
+def get_storm_incident(incident_id: str):
+    try:
+        doc = get_incident(str(incident_id).strip())
+        if not doc:
+            return jsonify({
+                "success": False,
+                "message": "Incident not found",
+            }), 404
+        return jsonify({
+            "success": True,
+            "data": serialize_incident(doc),
+        }), 200
+    except Exception as error:  # noqa: BLE001
+        return jsonify({
+            "success": False,
+            "message": "Failed to fetch storm incident",
+            "error": str(error),
+        }), 500
+
+
+@storm_bp.route("/storm/orchestrator/prepare", methods=["POST"])
+@require_auth(roles=["admin"])
+def prepare_orchestrator_route():
+    """
+    Prepare mitigation for one interface (diagnostics + incident).
+
+    Does NOT execute shutdown / no shutdown / any configuration command.
+    """
+    try:
+        body = request.get_json(silent=True) or {}
+        device_id = body.get("deviceId") or body.get("device_id")
+        name = (
+            body.get("interface")
+            or body.get("name")
+            or body.get("interfaceName")
+        )
+        if not device_id or not name:
+            return jsonify({
+                "success": False,
+                "message": "deviceId and interface are required",
+            }), 400
+        if not ObjectId.is_valid(str(device_id)):
+            return jsonify({
+                "success": False,
+                "message": "Invalid device ID",
+            }), 400
+
+        probe_ssh = body.get("probeSsh", True)
+        if isinstance(probe_ssh, str):
+            probe_ssh = probe_ssh.strip().lower() in ("1", "true", "yes")
+
+        result = prepare_mitigation(
+            ObjectId(str(device_id)),
+            str(name).strip(),
+            probe_ssh=bool(probe_ssh),
+            require_safety=True,
+        )
+        return jsonify({
+            "success": True,
+            "message": (
+                "READY_FOR_MITIGATION"
+                if result.get("ready")
+                else result.get("reason") or "Preparation blocked"
+            ),
+            "data": serialize_prepare_result(result),
+        }), 200
+    except Exception as error:  # noqa: BLE001
+        return jsonify({
+            "success": False,
+            "message": "Failed to prepare mitigation",
+            "error": str(error),
+        }), 500
+
+
+@storm_bp.route("/storm/orchestrator/prepare-all", methods=["POST"])
+@require_auth(roles=["admin"])
+def prepare_all_orchestrator_route():
+    """Bulk prepare for all SAFE interfaces — diagnostics only, no mitigation."""
+    try:
+        body = request.get_json(silent=True) or {}
+        probe_ssh = body.get("probeSsh", True)
+        if isinstance(probe_ssh, str):
+            probe_ssh = probe_ssh.strip().lower() in ("1", "true", "yes")
+        summary = prepare_all_safe(probe_ssh=bool(probe_ssh))
+        return jsonify({
+            "success": True,
+            "message": (
+                f"Orchestrator prepare completed: "
+                f"{summary['ready']} ready / "
+                f"{summary['blocked']} blocked "
+                f"({summary['total']} interface(s))"
+            ),
+            **summary,
+        }), 200
+    except Exception as error:  # noqa: BLE001
+        return jsonify({
+            "success": False,
+            "message": "Failed to run bulk orchestrator prepare",
             "error": str(error),
         }), 500

@@ -34,9 +34,11 @@ def _run_interface_stats_then_eligibility() -> None:
         → Risk Score Engine
         → Confirmation Engine
         → Safety Engine
-        → Store Safety Result
+        → Diagnostics Capture
+        → Incident + Orchestrator Prepare
 
     Failures never abort stats or the scheduler.
+    Mitigation (shutdown) is intentionally NOT executed.
     """
     from services.interface_collection.stats_collector import (  # noqa: PLC0415
         collect_all_interface_stats,
@@ -84,6 +86,17 @@ def _run_interface_stats_then_eligibility() -> None:
     except Exception as exc:  # noqa: BLE001
         logger.error(
             "Safety evaluation failed after confirmation: %s",
+            exc,
+        )
+
+    try:
+        from services.storm.orchestrator import prepare_all_safe  # noqa: PLC0415
+
+        # Diagnostics + incident prep only — never executes mitigation.
+        prepare_all_safe(probe_ssh=True)
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            "Orchestrator prepare failed after safety: %s",
             exc,
         )
 

@@ -9,7 +9,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import { Activity, CheckCircle2, RefreshCw, Shield, ShieldCheck } from 'lucide-react'
+import { Activity, CheckCircle2, FileJson, RefreshCw, Shield, ShieldCheck } from 'lucide-react'
 import { PortClassificationBadges } from '@/components/interfaces/InterfaceStatusBadge'
 import { EmptyState } from '@/components/shared/EmptyState'
 import { ErrorState } from '@/components/shared/ErrorState'
@@ -35,11 +35,13 @@ import {
   useEligibilityMutations,
   useEligibilityQuery,
   useInterfaceRiskQuery,
+  useOrchestratorMutations,
   useRiskMutations,
   useRiskQuery,
   useSafetyMutations,
   useSafetyQuery,
   useStormConfigQuery,
+  useStormIncidentsQuery,
 } from '@/hooks/queries'
 import { cn } from '@/lib/utils'
 import type {
@@ -48,6 +50,7 @@ import type {
   NetworkInterface,
   RiskResult,
   SafetyResult,
+  StormIncident,
 } from '@/types'
 import { formatDateTime, formatRelative } from '@/utils/format'
 
@@ -199,6 +202,71 @@ function formatCooldown(seconds: number | null | undefined): string {
   return `${m}m ${rem}s`
 }
 
+function IncidentStatusBadge({ status }: { status: string }) {
+  const value = (status || 'OPEN').toUpperCase()
+  if (value === 'READY_FOR_MITIGATION' || value === 'PREPARED') {
+    return (
+      <Badge variant="success" className="font-semibold uppercase tracking-wide">
+        Ready
+      </Badge>
+    )
+  }
+  if (value === 'OPEN') {
+    return (
+      <Badge variant="warning" className="font-semibold uppercase tracking-wide">
+        Open
+      </Badge>
+    )
+  }
+  return (
+    <Badge variant="secondary" className="font-semibold uppercase tracking-wide">
+      {status}
+    </Badge>
+  )
+}
+
+function JsonSection({
+  title,
+  open,
+  onToggle,
+  data,
+}: {
+  title: string
+  open: boolean
+  onToggle: () => void
+  data: unknown
+}) {
+  return (
+    <div className="rounded-md border border-border/50">
+      <button
+        type="button"
+        className="flex w-full items-center justify-between px-3 py-2 text-left text-sm font-medium"
+        onClick={onToggle}
+      >
+        <span>{title}</span>
+        <span className="text-xs text-muted-foreground">{open ? 'Hide' : 'Show'}</span>
+      </button>
+      {open ? (
+        <pre className="max-h-64 overflow-auto border-t border-border/50 bg-secondary/20 p-3 text-xs">
+          {JSON.stringify(data ?? {}, null, 2)}
+        </pre>
+      ) : null}
+    </div>
+  )
+}
+
+function exportIncident(incident: StormIncident) {
+  const blob = new Blob([JSON.stringify(incident, null, 2)], {
+    type: 'application/json',
+  })
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = `${incident.incidentId || 'storm-incident'}.json`
+  anchor.click()
+  URL.revokeObjectURL(url)
+}
+
 function classificationIface(row: EligibilityResult): Pick<
   NetworkInterface,
   | 'portMode'
@@ -228,6 +296,7 @@ export function StormProtectionPage() {
   const riskMutations = useRiskMutations()
   const confirmationMutations = useConfirmationMutations()
   const safetyMutations = useSafetyMutations()
+  const orchestratorMutations = useOrchestratorMutations()
   const stormConfig = useStormConfigQuery()
 
   const [query, setQuery] = useState('')
@@ -256,6 +325,14 @@ export function StormProtectionPage() {
   const [safetyLimit, setSafetyLimit] = useState(DEFAULT_LIMIT)
   const [selectedSafety, setSelectedSafety] = useState<SafetyResult | null>(null)
 
+  const [incidentQuery, setIncidentQuery] = useState('')
+  const [debouncedIncidentQuery, setDebouncedIncidentQuery] = useState('')
+  const [incidentStatusFilter, setIncidentStatusFilter] = useState('all')
+  const [incidentPage, setIncidentPage] = useState(1)
+  const [incidentLimit, setIncidentLimit] = useState(DEFAULT_LIMIT)
+  const [selectedIncident, setSelectedIncident] = useState<StormIncident | null>(null)
+  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({})
+
   useEffect(() => {
     const timer = window.setTimeout(() => setDebouncedQuery(query), 300)
     return () => window.clearTimeout(timer)
@@ -277,6 +354,11 @@ export function StormProtectionPage() {
   }, [safetyQueryText])
 
   useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedIncidentQuery(incidentQuery), 300)
+    return () => window.clearTimeout(timer)
+  }, [incidentQuery])
+
+  useEffect(() => {
     setPage(1)
   }, [debouncedQuery, eligibleFilter, limit])
 
@@ -291,6 +373,10 @@ export function StormProtectionPage() {
   useEffect(() => {
     setSafetyPage(1)
   }, [debouncedSafetyQuery, safetyStatusFilter, safetyLimit])
+
+  useEffect(() => {
+    setIncidentPage(1)
+  }, [debouncedIncidentQuery, incidentStatusFilter, incidentLimit])
 
   const eligibilityQuery = useEligibilityQuery({
     page,
@@ -325,6 +411,13 @@ export function StormProtectionPage() {
     safetyStatus: safetyStatusFilter === 'all' ? undefined : safetyStatusFilter,
   })
 
+  const incidentsQuery = useStormIncidentsQuery({
+    page: incidentPage,
+    limit: incidentLimit,
+    q: debouncedIncidentQuery,
+    status: incidentStatusFilter === 'all' ? undefined : incidentStatusFilter,
+  })
+
   const selectedHistoryQuery = useInterfaceRiskQuery(
     selectedRisk?.deviceId || '',
     selectedRisk?.interface || '',
@@ -347,6 +440,10 @@ export function StormProtectionPage() {
   const safetyRows = safetyListQuery.data?.data ?? []
   const safetyTotal = safetyListQuery.data?.total ?? safetyListQuery.data?.count ?? 0
   const safetyTotalPages = safetyListQuery.data?.totalPages ?? 1
+
+  const incidentRows = incidentsQuery.data?.data ?? []
+  const incidentTotal = incidentsQuery.data?.total ?? incidentsQuery.data?.count ?? 0
+  const incidentTotalPages = incidentsQuery.data?.totalPages ?? 1
 
   const eligibleCount = useMemo(() => rows.filter((r) => r.eligible).length, [rows])
   const ineligibleCount = rows.length - eligibleCount
@@ -402,21 +499,27 @@ export function StormProtectionPage() {
     eligibilityMutations.evaluateAll.isPending ||
     riskMutations.calculateAll.isPending ||
     confirmationMutations.evaluateAll.isPending ||
-    safetyMutations.evaluateAll.isPending
+    safetyMutations.evaluateAll.isPending ||
+    orchestratorMutations.prepareAll.isPending
 
   const refreshAll = () => {
     void eligibilityQuery.refetch()
     void riskListQuery.refetch()
     void confirmationQuery.refetch()
     void safetyListQuery.refetch()
+    void incidentsQuery.refetch()
     if (selectedRisk) void selectedHistoryQuery.refetch()
+  }
+
+  const toggleSection = (key: string) => {
+    setExpandedSections((prev) => ({ ...prev, [key]: !prev[key] }))
   }
 
   return (
     <div className="space-y-8">
       <PageHeader
         title="Storm Protection"
-        description="Port eligibility gate and Layer-2 storm risk scoring — no mitigation is performed here"
+        description="Eligibility → risk → confirmation → safety → diagnostics → incident prepare. No interface shutdown is performed here."
         actions={
           <div className="flex flex-wrap items-center gap-2">
             {isAdmin ? (
@@ -467,6 +570,16 @@ export function StormProtectionPage() {
                   {safetyMutations.evaluateAll.isPending
                     ? 'Checking…'
                     : 'Evaluate safety'}
+                </Button>
+                <Button
+                  type="button"
+                  disabled={isBusy}
+                  onClick={() => orchestratorMutations.prepareAll.mutate()}
+                >
+                  <FileJson className="mr-2 h-4 w-4" />
+                  {orchestratorMutations.prepareAll.isPending
+                    ? 'Preparing…'
+                    : 'Prepare incidents'}
                 </Button>
               </>
             ) : null}
@@ -1237,6 +1350,264 @@ export function StormProtectionPage() {
             limit={safetyLimit}
             onPageChange={setSafetyPage}
             onLimitChange={setSafetyLimit}
+          />
+        ) : null}
+      </section>
+
+      {/* ── Storm Incidents ────────────────────────────────────────── */}
+      <section className="space-y-4">
+        <div>
+          <h2 className="text-lg font-semibold tracking-tight">Storm Incidents</h2>
+          <p className="text-sm text-muted-foreground">
+            Immutable pre-mitigation evidence packages. Diagnostics are captured
+            before every prepare — shutdown is not executed here.
+          </p>
+        </div>
+
+        <div className="flex flex-wrap gap-3">
+          <Input
+            type="search"
+            className="max-w-sm"
+            placeholder="Search incident, interface, host…"
+            value={incidentQuery}
+            onChange={(e) => setIncidentQuery(e.target.value)}
+          />
+          <Select value={incidentStatusFilter} onValueChange={setIncidentStatusFilter}>
+            <SelectTrigger className="w-[220px]">
+              <SelectValue placeholder="Status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All statuses</SelectItem>
+              <SelectItem value="OPEN">Open</SelectItem>
+              <SelectItem value="READY_FOR_MITIGATION">Ready for mitigation</SelectItem>
+              <SelectItem value="PREPARED">Prepared</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        {incidentsQuery.isLoading ? (
+          <TableSkeleton rows={6} />
+        ) : incidentsQuery.isError ? (
+          <ErrorState
+            title="Unable to load storm incidents"
+            message={
+              incidentsQuery.error instanceof Error
+                ? incidentsQuery.error.message
+                : 'Unexpected error'
+            }
+            onRetry={() => void incidentsQuery.refetch()}
+          />
+        ) : incidentRows.length === 0 ? (
+          <EmptyState
+            icon={FileJson}
+            title="No storm incidents"
+            description="When safety passes, the orchestrator captures diagnostics and creates one incident per storm."
+          />
+        ) : (
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1.55fr)_minmax(320px,1fr)]">
+            <Card>
+              <CardContent className="p-0">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Incident ID</TableHead>
+                      <TableHead>Device</TableHead>
+                      <TableHead>Interface</TableHead>
+                      <TableHead>Severity</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Risk</TableHead>
+                      <TableHead>Confirm</TableHead>
+                      <TableHead>Safety</TableHead>
+                      <TableHead>Created</TableHead>
+                      <TableHead>Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {incidentRows.map((row) => {
+                      const active = selectedIncident?.incidentId === row.incidentId
+                      return (
+                        <TableRow
+                          key={row.incidentId}
+                          className={cn('cursor-pointer', active && 'bg-primary/10')}
+                          onClick={() => {
+                            setSelectedIncident(row)
+                            setExpandedSections({})
+                          }}
+                        >
+                          <TableCell className="mono text-xs font-medium">
+                            {row.incidentId}
+                          </TableCell>
+                          <TableCell>
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-medium">
+                                {row.hostname || '—'}
+                              </p>
+                              <p className="truncate text-xs text-muted-foreground">
+                                {row.ipAddress || row.deviceId}
+                              </p>
+                            </div>
+                          </TableCell>
+                          <TableCell className="font-medium">{row.interface}</TableCell>
+                          <TableCell>
+                            <SeverityBadge severity={row.severity} />
+                          </TableCell>
+                          <TableCell>
+                            <IncidentStatusBadge status={row.status} />
+                          </TableCell>
+                          <TableCell className="mono text-xs">
+                            {row.trigger?.risk == null ? '—' : Number(row.trigger.risk).toFixed(0)}
+                          </TableCell>
+                          <TableCell>
+                            {row.trigger?.confirmation ? (
+                              <Badge variant="success">Yes</Badge>
+                            ) : (
+                              <Badge variant="muted">No</Badge>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            {row.trigger?.safety ? (
+                              <Badge variant="success">Yes</Badge>
+                            ) : (
+                              <Badge variant="danger">No</Badge>
+                            )}
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
+                            {formatRelative(row.createdAt) || '—'}
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex flex-wrap gap-1">
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setSelectedIncident(row)
+                                  setExpandedSections({
+                                    interface: true,
+                                    switchport: true,
+                                    mac: true,
+                                    neighbor: true,
+                                    timeline: true,
+                                  })
+                                }}
+                              >
+                                View
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setSelectedIncident(row)
+                                  setExpandedSections({
+                                    interface: true,
+                                    switchport: true,
+                                    mac: true,
+                                  })
+                                }}
+                              >
+                                Diagnostics
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="secondary"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  exportIncident(row)
+                                }}
+                              >
+                                Export
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">
+                  {selectedIncident
+                    ? selectedIncident.incidentId
+                    : 'Select an incident'}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {!selectedIncident ? (
+                  <p className="text-sm text-muted-foreground">
+                    Click a row to inspect evidence snapshots and timeline.
+                  </p>
+                ) : (
+                  <>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <SeverityBadge severity={selectedIncident.severity} />
+                      <IncidentStatusBadge status={selectedIncident.status} />
+                    </div>
+                    <p className="text-sm text-muted-foreground">
+                      {selectedIncident.interface} ·{' '}
+                      {selectedIncident.hostname || selectedIncident.deviceId}
+                    </p>
+                    <JsonSection
+                      title="Interface Snapshot"
+                      open={Boolean(expandedSections.interface)}
+                      onToggle={() => toggleSection('interface')}
+                      data={selectedIncident.interfaceSnapshot}
+                    />
+                    <JsonSection
+                      title="Switchport Snapshot"
+                      open={Boolean(expandedSections.switchport)}
+                      onToggle={() => toggleSection('switchport')}
+                      data={selectedIncident.switchportSnapshot}
+                    />
+                    <JsonSection
+                      title="MAC Table"
+                      open={Boolean(expandedSections.mac)}
+                      onToggle={() => toggleSection('mac')}
+                      data={selectedIncident.macTable}
+                    />
+                    <JsonSection
+                      title="Neighbor"
+                      open={Boolean(expandedSections.neighbor)}
+                      onToggle={() => toggleSection('neighbor')}
+                      data={selectedIncident.neighbor}
+                    />
+                    <JsonSection
+                      title="Timeline"
+                      open={Boolean(expandedSections.timeline)}
+                      onToggle={() => toggleSection('timeline')}
+                      data={selectedIncident.timeline}
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="w-full"
+                      onClick={() => exportIncident(selectedIncident)}
+                    >
+                      <FileJson className="mr-2 h-4 w-4" />
+                      Export Incident
+                    </Button>
+                  </>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
+        {incidentTotalPages > 1 || incidentTotal > incidentLimit ? (
+          <PaginationControls
+            page={incidentPage}
+            totalPages={Math.max(incidentTotalPages, 1)}
+            total={incidentTotal}
+            limit={incidentLimit}
+            onPageChange={setIncidentPage}
+            onLimitChange={setIncidentLimit}
           />
         ) : null}
       </section>
