@@ -19,6 +19,7 @@ import type {
   PaginationParams,
   PingHistory,
   ResponseTimeChartPoint,
+  RiskResult,
   ScanActivityChartPoint,
   StormConfig,
   UptimeRow,
@@ -46,6 +47,9 @@ function toQuery(params: PaginationParams = {}): string {
   if (params.mode && params.mode !== 'all') search.set('mode', params.mode)
   if (params.eligible === true) search.set('eligible', 'true')
   if (params.eligible === false) search.set('eligible', 'false')
+  if (params.severity && params.severity !== 'all') {
+    search.set('severity', params.severity)
+  }
 
   const query = search.toString()
   return query ? `?${query}` : ''
@@ -397,3 +401,57 @@ export const evaluateAllEligibility = () =>
 
 export const getStormConfig = () =>
   apiRequest<ApiItemResponse<StormConfig>>('/api/storm/config')
+
+export const getRiskResults = (params: PaginationParams = {}) =>
+  apiRequest<ApiListResponse<RiskResult>>(`/api/storm/risk${toQuery(params)}`)
+
+export const getDeviceRisk = (deviceId: string, params: PaginationParams = {}) =>
+  apiRequest<ApiListResponse<RiskResult>>(
+    `/api/storm/risk/${deviceId}${toQuery(params)}`,
+  )
+
+export const getInterfaceRisk = (
+  deviceId: string,
+  interfaceName: string,
+  params: PaginationParams & { history?: boolean } = {},
+) => {
+  const encoded = encodeURIComponent(interfaceName)
+  const search = new URLSearchParams()
+  if (params.page) search.set('page', String(params.page))
+  if (params.limit) search.set('limit', String(params.limit))
+  if (params.history) search.set('history', 'true')
+  const query = search.toString()
+  return apiRequest<
+    ApiItemResponse<RiskResult> & {
+      history?: RiskResult[]
+      total?: number
+      page?: number
+      limit?: number
+      totalPages?: number
+    }
+  >(`/api/storm/risk/${deviceId}/${encoded}${query ? `?${query}` : ''}`)
+}
+
+export const calculateInterfaceRisk = (payload: {
+  deviceId: string
+  interface: string
+  eligible?: boolean
+}) =>
+  apiRequest<ApiItemResponse<RiskResult>>('/api/storm/risk/calculate', {
+    method: 'POST',
+    body: payload,
+  })
+
+export const calculateAllRisk = () =>
+  apiRequest<{
+    success: boolean
+    message: string
+    total: number
+    scored: number
+    skipped: number
+    errors: number
+    disabled: boolean
+  }>('/api/storm/risk/calculate-all', {
+    method: 'POST',
+    timeoutMs: 300000,
+  })

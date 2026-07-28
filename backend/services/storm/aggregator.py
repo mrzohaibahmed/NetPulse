@@ -29,7 +29,13 @@ def aggregate_analyzer_results(
     """
     all_results = list(results)
     supported = [r for r in all_results if r.supported]
-    scored = [r for r in supported if r.value is not None]
+    # Include only analyzers that produced a value AND a non-zero score so
+    # idle metrics do not dilute a dominant storm signal. Zero-score rows
+    # remain visible in raw_metrics for explainability.
+    scored = [
+        r for r in supported
+        if r.value is not None and float(r.score) > 0
+    ]
 
     weight_sum = sum(max(float(r.weight), 0.0) for r in scored)
     if weight_sum <= 0:
@@ -45,9 +51,11 @@ def aggregate_analyzer_results(
         for r in sorted(scored, key=lambda x: x.score, reverse=True)
     ]
 
+    # Confidence: fraction of supported analyzers that yielded a rate/value.
+    valued = [r for r in supported if r.value is not None]
     total_analyzers = len(all_results)
     supported_count = len(supported)
-    valued_count = len(scored)
+    valued_count = len(valued)
 
     if supported_count == 0:
         confidence = 0.0

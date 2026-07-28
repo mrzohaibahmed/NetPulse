@@ -255,6 +255,7 @@ export interface PaginationParams {
   operStatus?: string
   mode?: string
   eligible?: boolean
+  severity?: string
 }
 
 export interface InterfaceNeighbor {
@@ -387,6 +388,43 @@ export interface StormConfig {
   allowInfrastructurePorts: boolean
   allowProtectedPorts: boolean
   confidence?: number
+  risk?: {
+    enableRisk?: boolean
+    weights?: Record<string, number>
+    thresholds?: Record<string, { low: number; medium: number; high: number; critical: number }>
+  }
+}
+
+export type RiskSeverity = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'
+
+export interface RiskContributor {
+  metric: string
+  value: number | null
+  score: number
+  weight: number
+}
+
+export interface RiskResult {
+  _id?: string | null
+  deviceId: string
+  interface: string
+  hostname?: string | null
+  ipAddress?: string | null
+  riskScore: number
+  severity: RiskSeverity | string
+  confidence: number
+  contributors: RiskContributor[]
+  rawMetrics?: Record<string, { value?: number | null; score?: number; supported?: boolean; weight?: number }>
+  eligible: boolean
+  skippedReason?: string | null
+  timestamp?: string | null
+  broadcastRate?: number | null
+  multicastRate?: number | null
+  unknownUnicastRate?: number | null
+  utilization?: number | null
+  errorRate?: number | null
+  discardRate?: number | null
+  crcRate?: number | null
 }
 
 export interface ApiItemResponse<T> {
