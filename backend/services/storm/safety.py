@@ -89,6 +89,7 @@ class SafetyEngine:
         *,
         context: Optional[SafetyContext] = None,
         probe_ssh: bool = True,
+        skip_check_codes: Optional[set[str]] = None,
         hostname: Optional[str] = None,
         ip_address: Optional[str] = None,
         persist: bool = False,
@@ -161,8 +162,18 @@ class SafetyEngine:
         failed_rule: Optional[str] = None
         fail_reason: Optional[str] = None
         passed_count = 0
+        skipped = set(skip_check_codes or ())
+        evaluated_total = 0
 
         for check in self._checks:
+            if check.code in skipped:
+                # Recovery policy already performs its own explicit SSH reachability
+                # probe. Skipping only RULE_3 here avoids a false negative when the
+                # reused Safety evaluation intentionally sets probe_ssh=False.
+                checks_out[check.key] = None
+                continue
+
+            evaluated_total += 1
             try:
                 passed, detail = check.runner(ctx, self._config)
             except Exception as exc:  # noqa: BLE001
@@ -184,8 +195,7 @@ class SafetyEngine:
             fail_reason = detail or check.reason_fail
             break
 
-        total = len(self._checks)
-        confidence = round((passed_count / max(total, 1)) * 100.0, 2)
+        confidence = round((passed_count / max(evaluated_total, 1)) * 100.0, 2)
 
         if failed_rule:
             status = "WAITING" if failed_rule == "RULE_8" else "UNSAFE"
@@ -224,7 +234,9 @@ class SafetyEngine:
             result = SafetyResult(
                 safe=True,
                 reason="All safety checks passed",
-                confidence=max(confidence, 99.0) if passed_count == total else confidence,
+                confidence=max(confidence, 99.0)
+                if passed_count == evaluated_total
+                else confidence,
                 failed_rule=None,
                 checks=checks_out,
                 timestamp=now,
@@ -303,6 +315,7 @@ def evaluate(
     *,
     context: Optional[SafetyContext] = None,
     probe_ssh: bool = True,
+    skip_check_codes: Optional[set[str]] = None,
     hostname: Optional[str] = None,
     ip_address: Optional[str] = None,
     persist: bool = False,
@@ -317,6 +330,7 @@ def evaluate(
         interface,
         context=context,
         probe_ssh=probe_ssh,
+        skip_check_codes=skip_check_codes,
         hostname=hostname,
         ip_address=ip_address,
         persist=persist,

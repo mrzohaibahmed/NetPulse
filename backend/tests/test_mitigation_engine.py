@@ -9,7 +9,6 @@ from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 from bson import ObjectId
-from pymongo.errors import DuplicateKeyError
 
 from services.storm.mitigation.engine import execute_mitigation, rollback_mitigation
 from services.storm.mitigation.ssh_executor import (
@@ -87,26 +86,27 @@ class MitigationEngineTests(unittest.TestCase):
         fake_db = MagicMock()
         fake_db.devices.find_one.return_value = self.device_doc
         # Lock insertion succeeds
-        fake_db.storm_mitigation_locks.insert_one.return_value = None
         mock_db_fn.return_value = fake_db
+        with patch(
+            "services.storm.mitigation.engine.LockService.acquire_mitigation_locks",
+            return_value=("device:lock", "interface:lock"),
+        ):
+            # Mock SSH commands output
+            mock_collector = MagicMock()
+            mock_ssh.return_value = mock_collector
+            # Mock verification command output (show running-config interface)
+            mock_collector.run_command.side_effect = lambda cmd, wait=0.4: (
+                "interface GigabitEthernet1/0/10\n shutdown\n"
+                if "show" in cmd
+                else "OK"
+            )
 
-        # Mock SSH commands output
-        mock_collector = MagicMock()
-        mock_ssh.return_value = mock_collector
-        # Mock verification command output (show running-config interface)
-        mock_collector.run_command.side_effect = lambda cmd, wait=0.4: (
-            "interface GigabitEthernet1/0/10\n shutdown\n"
-            if "show" in cmd
-            else "OK"
-        )
-
-        res = execute_mitigation(self.incident_id, "SHUTDOWN", operator="admin")
+            res = execute_mitigation(self.incident_id, "SHUTDOWN", operator="admin")
 
         self.assertTrue(res["success"])
         self.assertEqual(res["status"], "SUCCESS")
 
         # Verify locks were cleaned up
-        fake_db.storm_mitigation_locks.delete_many.assert_called_once()
         # Verify incident status was updated to MITIGATED
         fake_db.storm_incidents.update_one.assert_called_with(
             {"incidentId": self.incident_id},
@@ -123,20 +123,23 @@ class MitigationEngineTests(unittest.TestCase):
         # Mock database setup
         fake_db = MagicMock()
         fake_db.devices.find_one.return_value = self.device_doc
-        fake_db.storm_mitigation_locks.insert_one.return_value = None
         mock_db_fn.return_value = fake_db
 
-        # Mock SSH commands output
-        mock_collector = MagicMock()
-        mock_ssh.return_value = mock_collector
-        # Verification output fails (returns running-config without 'shutdown')
-        mock_collector.run_command.side_effect = lambda cmd, wait=0.4: (
-            "interface GigabitEthernet1/0/10\n no shutdown\n"
-            if "show" in cmd
-            else "OK"
-        )
+        with patch(
+            "services.storm.mitigation.engine.LockService.acquire_mitigation_locks",
+            return_value=("device:lock", "interface:lock"),
+        ):
+            # Mock SSH commands output
+            mock_collector = MagicMock()
+            mock_ssh.return_value = mock_collector
+            # Verification output fails (returns running-config without 'shutdown')
+            mock_collector.run_command.side_effect = lambda cmd, wait=0.4: (
+                "interface GigabitEthernet1/0/10\n no shutdown\n"
+                if "show" in cmd
+                else "OK"
+            )
 
-        res = execute_mitigation(self.incident_id, "SHUTDOWN", operator="admin")
+            res = execute_mitigation(self.incident_id, "SHUTDOWN", operator="admin")
 
         self.assertFalse(res["success"])
         self.assertEqual(res["status"], "ROLLBACK_SUCCESS")
@@ -157,13 +160,13 @@ class MitigationEngineTests(unittest.TestCase):
         """Test lock conflict raises ValueError."""
         mock_get_incident.return_value = self.incident_doc
 
-        # Mock database setup
         fake_db = MagicMock()
-        # Lock insertion raises duplicate key error
-        fake_db.storm_mitigation_locks.insert_one.side_effect = DuplicateKeyError("Conflict")
         mock_db_fn.return_value = fake_db
 
-        with self.assertRaises(ValueError) as ctx:
+        with patch(
+            "services.storm.mitigation.engine.LockService.acquire_mitigation_locks",
+            side_effect=ValueError("Mitigation lock conflict"),
+        ), self.assertRaises(ValueError) as ctx:
             execute_mitigation(self.incident_id, "SHUTDOWN", operator="admin")
 
         self.assertIn("lock conflict", str(ctx.exception))
@@ -180,7 +183,6 @@ class MitigationEngineTests(unittest.TestCase):
 
         fake_db = MagicMock()
         fake_db.devices.find_one.return_value = self.device_doc
-        fake_db.storm_mitigation_locks.insert_one.return_value = None
         mock_db_fn.return_value = fake_db
 
         # Collector connect raises error
@@ -190,7 +192,11 @@ class MitigationEngineTests(unittest.TestCase):
 
         mock_rollback.return_value = (True, ["no shutdown"])
 
-        res = execute_mitigation(self.incident_id, "SHUTDOWN", operator="admin")
+        with patch(
+            "services.storm.mitigation.engine.LockService.acquire_mitigation_locks",
+            return_value=("device:lock", "interface:lock"),
+        ):
+            res = execute_mitigation(self.incident_id, "SHUTDOWN", operator="admin")
 
         self.assertFalse(res["success"])
         self.assertEqual(res["status"], "ROLLBACK_SUCCESS")
@@ -208,7 +214,6 @@ class MitigationEngineTests(unittest.TestCase):
 
         fake_db = MagicMock()
         fake_db.devices.find_one.return_value = self.device_doc
-        fake_db.storm_mitigation_locks.insert_one.return_value = None
         mock_db_fn.return_value = fake_db
 
         # Execute fails
@@ -219,7 +224,11 @@ class MitigationEngineTests(unittest.TestCase):
         # Rollback fails too
         mock_rollback.return_value = (False, ["no shutdown"])
 
-        res = execute_mitigation(self.incident_id, "SHUTDOWN", operator="admin")
+        with patch(
+            "services.storm.mitigation.engine.LockService.acquire_mitigation_locks",
+            return_value=("device:lock", "interface:lock"),
+        ):
+            res = execute_mitigation(self.incident_id, "SHUTDOWN", operator="admin")
 
         self.assertFalse(res["success"])
         self.assertEqual(res["status"], "FAILURE")
@@ -236,7 +245,6 @@ class MitigationEngineTests(unittest.TestCase):
 
         fake_db = MagicMock()
         fake_db.devices.find_one.return_value = self.device_doc
-        fake_db.storm_mitigation_locks.insert_one.return_value = None
         mock_db_fn.return_value = fake_db
 
         mock_collector = MagicMock()
@@ -248,7 +256,11 @@ class MitigationEngineTests(unittest.TestCase):
             "status": "SUCCESS",
         }
 
-        res = rollback_mitigation(self.incident_id, operator="admin")
+        with patch(
+            "services.storm.mitigation.engine.LockService.acquire_mitigation_locks",
+            return_value=("device:lock", "interface:lock"),
+        ):
+            res = rollback_mitigation(self.incident_id, operator="admin")
 
         self.assertTrue(res["success"])
         self.assertEqual(res["status"], "ROLLBACK_SUCCESS")

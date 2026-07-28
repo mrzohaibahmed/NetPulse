@@ -44,6 +44,8 @@ import {
   useStormIncidentsQuery,
   useMitigationHistoryQuery,
   useMitigationMutations,
+  useRecoveryHistoryQuery,
+  useRecoveryMutations,
   useSettingsQuery,
   useSettingsMutation,
 } from '@/hooks/queries'
@@ -56,6 +58,7 @@ import type {
   SafetyResult,
   StormIncident,
   MitigationLog,
+  RecoveryLog,
 } from '@/types'
 import { formatDateTime, formatRelative } from '@/utils/format'
 
@@ -260,6 +263,44 @@ function MitigationStatusBadge({ status }: { status: string }) {
   )
 }
 
+function RecoveryStatusBadge({ status }: { status: string }) {
+  const value = (status || '').toUpperCase()
+  if (value === 'RECOVERED' || value === 'SUCCESS') {
+    return (
+      <Badge variant="success" className="font-semibold uppercase tracking-wide">
+        Recovered
+      </Badge>
+    )
+  }
+  if (value === 'MONITORING') {
+    return (
+      <Badge variant="warning" className="font-semibold uppercase tracking-wide">
+        Stabilizing
+      </Badge>
+    )
+  }
+  if (value === 'WAITING') {
+    return (
+      <Badge variant="secondary" className="font-semibold uppercase tracking-wide">
+        Waiting
+      </Badge>
+    )
+  }
+  if (value === 'REMITIGATED') {
+    return (
+      <Badge variant="danger" className="font-semibold uppercase tracking-wide">
+        Re-Mitigated
+      </Badge>
+    )
+  }
+  return (
+    <Badge variant="danger" className="font-semibold uppercase tracking-wide">
+      {status}
+    </Badge>
+  )
+}
+
+
 function JsonSection({
   title,
   open,
@@ -375,9 +416,16 @@ export function StormProtectionPage() {
   const [mitLimit, setMitLimit] = useState(DEFAULT_LIMIT)
   const [selectedMitigation, setSelectedMitigation] = useState<MitigationLog | null>(null)
 
+  const [recQuery, setRecQuery] = useState('')
+  const [debouncedRecQuery, setDebouncedRecQuery] = useState('')
+  const [recPage, setRecPage] = useState(1)
+  const [recLimit, setRecLimit] = useState(DEFAULT_LIMIT)
+  const [selectedRecovery, setSelectedRecovery] = useState<RecoveryLog | null>(null)
+
   const settingsQuery = useSettingsQuery()
   const settingsMutation = useSettingsMutation()
   const mitigationMutations = useMitigationMutations()
+  const recoveryMutations = useRecoveryMutations()
 
   useEffect(() => {
     const timer = window.setTimeout(() => setDebouncedQuery(query), 300)
@@ -410,6 +458,11 @@ export function StormProtectionPage() {
   }, [mitQuery])
 
   useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedRecQuery(recQuery), 300)
+    return () => window.clearTimeout(timer)
+  }, [recQuery])
+
+  useEffect(() => {
     setPage(1)
   }, [debouncedQuery, eligibleFilter, limit])
 
@@ -420,6 +473,10 @@ export function StormProtectionPage() {
   useEffect(() => {
     setConfirmPage(1)
   }, [debouncedConfirmQuery, confirmStateFilter, confirmLimit])
+
+  useEffect(() => {
+    setRecPage(1)
+  }, [debouncedRecQuery, recLimit])
 
   useEffect(() => {
     setSafetyPage(1)
@@ -477,6 +534,12 @@ export function StormProtectionPage() {
     page: mitPage,
     limit: mitLimit,
     q: debouncedMitQuery,
+  })
+
+  const recoveryHistoryQuery = useRecoveryHistoryQuery({
+    page: recPage,
+    limit: recLimit,
+    q: debouncedRecQuery,
   })
 
   const selectedHistoryQuery = useInterfaceRiskQuery(
@@ -563,7 +626,9 @@ export function StormProtectionPage() {
     safetyMutations.evaluateAll.isPending ||
     orchestratorMutations.prepareAll.isPending ||
     mitigationMutations.execute.isPending ||
-    mitigationMutations.rollback.isPending
+    mitigationMutations.rollback.isPending ||
+    recoveryMutations.execute.isPending ||
+    recoveryMutations.retry.isPending
 
   const refreshAll = () => {
     void eligibilityQuery.refetch()
@@ -572,6 +637,7 @@ export function StormProtectionPage() {
     void safetyListQuery.refetch()
     void incidentsQuery.refetch()
     void mitigationHistoryQuery.refetch()
+    void recoveryHistoryQuery.refetch()
     if (selectedRisk) void selectedHistoryQuery.refetch()
   }
 
@@ -1701,6 +1767,42 @@ export function StormProtectionPage() {
                         )}
                       </div>
                     )}
+                    {isAdmin && ['MITIGATED', 'RECOVERY_FAILED', 'MITIGATION_FAILED'].includes(selectedIncident.status) && (
+                      <div className="border-t border-border/50 pt-3 mt-3 space-y-2">
+                        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                          Recovery Controls
+                        </p>
+                        <div className="flex gap-2">
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            className="flex-1"
+                            disabled={recoveryMutations.retry.isPending}
+                            onClick={() =>
+                              recoveryMutations.retry.mutate({
+                                incidentId: selectedIncident.incidentId || '',
+                              })
+                            }
+                          >
+                            {recoveryMutations.retry.isPending ? 'Retrying…' : 'Retry Recovery'}
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="flex-1 border-primary text-primary hover:bg-primary/10"
+                            disabled={recoveryMutations.execute.isPending}
+                            onClick={() =>
+                              recoveryMutations.execute.mutate({
+                                incidentId: selectedIncident.incidentId || '',
+                                force: true,
+                              })
+                            }
+                          >
+                            {recoveryMutations.execute.isPending ? 'Recovering…' : 'Force Recovery'}
+                          </Button>
+                        </div>
+                      </div>
+                    )}
                     <Button
                       type="button"
                       variant="outline"
@@ -1934,6 +2036,222 @@ export function StormProtectionPage() {
             limit={mitLimit}
             onPageChange={setMitPage}
             onLimitChange={setMitLimit}
+          />
+        ) : null}
+      </section>
+
+      {/* ── Recovery Lifecycle & History ────────────────────────────── */}
+      <section className="space-y-4">
+        <div>
+          <h2 className="text-lg font-semibold tracking-tight">Enterprise Recovery Engine</h2>
+          <p className="text-sm text-muted-foreground">
+            Automatic recovery and traffic stabilization checking for mitigated interfaces.
+          </p>
+        </div>
+
+        {/* Runtime Auto Recovery Settings Toggle */}
+        <Card className="border-primary/20 bg-secondary/10">
+          <CardContent className="flex flex-wrap items-center justify-between gap-4 p-4">
+            <div className="space-y-1">
+              <p className="text-sm font-semibold">Auto Recovery Automation</p>
+              <p className="text-xs text-muted-foreground">
+                Automatic port recovery is currently{' '}
+                <span className="font-semibold text-primary uppercase">
+                  {settingsQuery.data?.autoRecovery ? 'enabled' : 'disabled'}
+                </span>
+                .
+              </p>
+            </div>
+            {isAdmin ? (
+              <div className="flex flex-wrap items-center gap-4">
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={settingsQuery.data?.autoRecovery ? 'default' : 'outline'}
+                    disabled={settingsMutation.isPending}
+                    onClick={() => settingsMutation.mutate({ autoRecovery: true })}
+                  >
+                    Enable Auto Recovery
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={!settingsQuery.data?.autoRecovery ? 'default' : 'outline'}
+                    disabled={settingsMutation.isPending}
+                    onClick={() => settingsMutation.mutate({ autoRecovery: false })}
+                  >
+                    Disable Auto Recovery
+                  </Button>
+                </div>
+                <div className="text-xs text-muted-foreground border-l border-border/80 pl-4 space-y-0.5">
+                  <p>Cooldown: <span className="font-semibold">{settingsQuery.data?.cooldownMinutes || 5} min</span></p>
+                  <p>Stabilization: <span className="font-semibold">{settingsQuery.data?.stabilizationSeconds || 60} sec</span></p>
+                  <p>Max Retries: <span className="font-semibold">{settingsQuery.data?.maximumRecoveryAttempts || 3}</span></p>
+                </div>
+              </div>
+            ) : (
+              <Badge variant="outline" className="uppercase">
+                Admin Configurable Only
+              </Badge>
+            )}
+          </CardContent>
+        </Card>
+
+        <div className="flex flex-wrap gap-3">
+          <Input
+            type="search"
+            className="max-w-sm"
+            placeholder="Search recovery log by incident..."
+            value={recQuery}
+            onChange={(e) => setRecQuery(e.target.value)}
+          />
+        </div>
+
+        {recoveryHistoryQuery.isLoading ? (
+          <TableSkeleton rows={6} />
+        ) : recoveryHistoryQuery.isError ? (
+          <ErrorState
+            title="Unable to load recovery history"
+            message={
+              recoveryHistoryQuery.error instanceof Error
+                ? recoveryHistoryQuery.error.message
+                : 'Unexpected error'
+            }
+            onRetry={() => void recoveryHistoryQuery.refetch()}
+          />
+        ) : (recoveryHistoryQuery.data?.data ?? []).length === 0 ? (
+          <EmptyState
+            icon={Activity}
+            title="No recovery logs found"
+            description="Ports in MITIGATED status will automatically trigger recovery attempts when their cooldown and safety policies pass."
+          />
+        ) : (
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1.55fr)_minmax(320px,1fr)]">
+            <Card>
+              <CardContent className="p-0">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Incident ID</TableHead>
+                      <TableHead>Interface</TableHead>
+                      <TableHead>Device ID</TableHead>
+                      <TableHead>Recovery Status</TableHead>
+                      <TableHead>Attempts</TableHead>
+                      <TableHead>Timestamp</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {(recoveryHistoryQuery.data?.data ?? []).map((row) => {
+                      const active = selectedRecovery?._id === row._id
+                      return (
+                        <TableRow
+                          key={row._id || row.incidentId}
+                          className={cn('cursor-pointer', active && 'bg-primary/10')}
+                          onClick={() => setSelectedRecovery(row)}
+                        >
+                          <TableCell className="mono text-xs font-medium">
+                            {row.incidentId}
+                          </TableCell>
+                          <TableCell className="font-medium">{row.interface}</TableCell>
+                          <TableCell>
+                            <span className="truncate text-xs font-mono text-muted-foreground block max-w-[120px]">
+                              {row.deviceId}
+                            </span>
+                          </TableCell>
+                          <TableCell>
+                            <RecoveryStatusBadge status={row.recoveryStatus} />
+                          </TableCell>
+                          <TableCell className="text-sm">
+                            {row.retryCount} attempts
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
+                            {formatRelative(row.timestamp) || '—'}
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">
+                  {selectedRecovery
+                    ? `Recovery details for ${selectedRecovery.incidentId}`
+                    : 'Select a recovery log row'}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {!selectedRecovery ? (
+                  <p className="text-sm text-muted-foreground">
+                    Click a row to inspect recovery verification outputs and traffic metrics.
+                  </p>
+                ) : (
+                  <>
+                    <div className="space-y-1">
+                      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        Recovery Context
+                      </p>
+                      <div className="text-sm space-y-1">
+                        <p>Interface: <span className="font-semibold text-primary">{selectedRecovery.interface}</span></p>
+                        <p>Attempts Run: <span className="font-semibold">{selectedRecovery.retryCount}</span></p>
+                        <p>Status: <RecoveryStatusBadge status={selectedRecovery.recoveryStatus} /></p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        Verification Output / CLI Log
+                      </p>
+                      {selectedRecovery.verificationResult?.output ? (
+                        <pre className="rounded-md bg-zinc-950 p-3 font-mono text-xs text-zinc-300 overflow-auto max-h-48 border border-border">
+                          {selectedRecovery.verificationResult.output}
+                        </pre>
+                      ) : selectedRecovery.verificationResult?.error ? (
+                        <div className="rounded-md bg-destructive/10 p-3 text-xs text-destructive border border-destructive/20 font-mono">
+                          {selectedRecovery.verificationResult.error}
+                        </div>
+                      ) : (
+                        <div className="text-xs text-muted-foreground italic">No output captured.</div>
+                      )}
+                    </div>
+
+                    {selectedRecovery.verificationResult?.stats && (
+                      <div className="space-y-2">
+                        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                          Post-Recovery Traffic Statistics
+                        </p>
+                        <div className="grid grid-cols-2 gap-2 text-xs border border-border/80 rounded-md p-3 bg-secondary/5">
+                          <p>Admin Status: <span className="font-semibold">{selectedRecovery.verificationResult.stats.adminStatus || '—'}</span></p>
+                          <p>Oper Status: <span className="font-semibold">{selectedRecovery.verificationResult.stats.operStatus || '—'}</span></p>
+                          <p>Broadcast Rate: <span className="font-mono text-muted-foreground">{selectedRecovery.verificationResult.stats.broadcastRate || 0} pps</span></p>
+                          <p>Multicast Rate: <span className="font-mono text-muted-foreground">{selectedRecovery.verificationResult.stats.multicastRate || 0} pps</span></p>
+                          <p>Utilization: <span className="font-mono text-muted-foreground">{(selectedRecovery.verificationResult.stats.utilization || 0.0).toFixed(2)}%</span></p>
+                          <p>Errors: <span className="font-mono text-muted-foreground">In: {selectedRecovery.verificationResult.stats.inputErrors || 0} / Out: {selectedRecovery.verificationResult.stats.outputErrors || 0}</span></p>
+                          <p>CRC: <span className="font-mono text-muted-foreground">{selectedRecovery.verificationResult.stats.crc || 0}</span></p>
+                          <p>Discards: <span className="font-mono text-muted-foreground">{selectedRecovery.verificationResult.stats.discards || 0}</span></p>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
+        {(recoveryHistoryQuery.data?.totalPages ?? 1) > 1 ||
+        (recoveryHistoryQuery.data?.total ?? 0) > recLimit ? (
+          <PaginationControls
+            page={recPage}
+            totalPages={Math.max(recoveryHistoryQuery.data?.totalPages ?? 1, 1)}
+            total={recoveryHistoryQuery.data?.total ?? 0}
+            limit={recLimit}
+            onPageChange={setRecPage}
+            onLimitChange={setRecLimit}
           />
         ) : null}
       </section>

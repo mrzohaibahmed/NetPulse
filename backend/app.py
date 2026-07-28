@@ -27,6 +27,7 @@ from services.storm.incident import ensure_incident_indexes
 from services.storm.risk_engine import ensure_risk_indexes
 from services.storm.safety import ensure_safety_indexes
 from services.storm.mitigation import ensure_mitigation_indexes
+from services.storm.recovery import ensure_recovery_indexes
 from services.user_service import ensure_default_admin
 
 # Serve built frontend (Vite) if present.
@@ -106,6 +107,7 @@ def bootstrap():
     ensure_safety_indexes()
     ensure_incident_indexes()
     ensure_mitigation_indexes()
+    ensure_recovery_indexes()
 
 
 bootstrap()

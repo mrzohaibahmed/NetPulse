@@ -33,6 +33,8 @@ export const queryKeys = {
   incident: (id: string) => ['storm-incident', id] as const,
   mitigationHistory: (params: object) => ['mitigation-history', params] as const,
   mitigationDetail: (id: string) => ['mitigation-detail', id] as const,
+  recoveryHistory: (params: object) => ['recovery-history', params] as const,
+  recoveryDetail: (id: string) => ['recovery-detail', id] as const,
   stormConfig: ['storm-config'] as const,
   settings: ['settings'] as const,
   users: ['users'] as const,

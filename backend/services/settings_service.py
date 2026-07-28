@@ -1,12 +1,13 @@
 import os
 from copy import deepcopy
 from datetime import datetime, timezone
+from typing import Any
 
 from config.database import db
 
 SETTINGS_ID = "global"
 
-DEFAULT_SETTINGS = {
+DEFAULT_SETTINGS: dict[str, Any] = {
     "_id": SETTINGS_ID,
     "pingInterval": int(os.getenv("SCAN_INTERVAL", "30")),
     "pingTimeoutMs": int(os.getenv("PING_TIMEOUT_MS", "1000")),
@@ -22,6 +23,11 @@ DEFAULT_SETTINGS = {
         "useTls": os.getenv("SMTP_USE_TLS", "true").lower() in ("1", "true", "yes"),
     },
     "mitigationMode": os.getenv("STORM_MITIGATION_MODE", "automatic"),
+    "autoRecovery": os.getenv("STORM_AUTO_RECOVERY", "true").lower() in ("1", "true", "yes"),
+    "cooldownMinutes": int(os.getenv("STORM_RECOVERY_COOLDOWN_MINUTES", "5")),
+    "stabilizationSeconds": int(os.getenv("STORM_RECOVERY_STABILIZATION_SECONDS", "60")),
+    "maximumRecoveryAttempts": int(os.getenv("STORM_RECOVERY_MAX_ATTEMPTS", "3")),
+    "reMitigationThreshold": int(os.getenv("STORM_RE_MITIGATION_THRESHOLD", "75")),
     "updatedAt": None,
 }
 
@@ -60,6 +66,11 @@ def get_public_settings():
             "useTls": smtp.get("useTls", True),
         },
         "mitigationMode": settings.get("mitigationMode", "automatic"),
+        "autoRecovery": bool(settings.get("autoRecovery", True)),
+        "cooldownMinutes": int(settings.get("cooldownMinutes", 5)),
+        "stabilizationSeconds": int(settings.get("stabilizationSeconds", 60)),
+        "maximumRecoveryAttempts": int(settings.get("maximumRecoveryAttempts", 3)),
+        "reMitigationThreshold": int(settings.get("reMitigationThreshold", 75)),
         "updatedAt": settings.get("updatedAt"),
     }
 
@@ -67,7 +78,7 @@ def get_public_settings():
 def update_settings(payload: dict):
     ensure_settings()
     current = get_settings()
-    update = {"updatedAt": datetime.now(timezone.utc)}
+    update: dict[str, Any] = {"updatedAt": datetime.now(timezone.utc)}
 
     if "pingInterval" in payload and payload["pingInterval"] is not None:
         value = int(payload["pingInterval"])
@@ -104,6 +115,33 @@ def update_settings(payload: dict):
         if val not in ("automatic", "manual"):
             raise ValueError("mitigationMode must be 'automatic' or 'manual'")
         update["mitigationMode"] = val
+
+    if "autoRecovery" in payload and payload["autoRecovery"] is not None:
+        update["autoRecovery"] = bool(payload["autoRecovery"])
+
+    if "cooldownMinutes" in payload and payload["cooldownMinutes"] is not None:
+        val = int(payload["cooldownMinutes"])
+        if val < 1:
+            raise ValueError("cooldownMinutes must be at least 1 minute")
+        update["cooldownMinutes"] = val
+
+    if "stabilizationSeconds" in payload and payload["stabilizationSeconds"] is not None:
+        val = int(payload["stabilizationSeconds"])
+        if val < 5:
+            raise ValueError("stabilizationSeconds must be at least 5 seconds")
+        update["stabilizationSeconds"] = val
+
+    if "maximumRecoveryAttempts" in payload and payload["maximumRecoveryAttempts"] is not None:
+        val = int(payload["maximumRecoveryAttempts"])
+        if val < 1:
+            raise ValueError("maximumRecoveryAttempts must be at least 1")
+        update["maximumRecoveryAttempts"] = val
+
+    if "reMitigationThreshold" in payload and payload["reMitigationThreshold"] is not None:
+        val = int(payload["reMitigationThreshold"])
+        if val < 1 or val > 100:
+            raise ValueError("reMitigationThreshold must be between 1 and 100")
+        update["reMitigationThreshold"] = val
 
     db.settings.update_one({"_id": SETTINGS_ID}, {"$set": update})
     return get_settings()
