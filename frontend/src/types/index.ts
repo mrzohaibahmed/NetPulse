@@ -257,6 +257,7 @@ export interface PaginationParams {
   eligible?: boolean
   severity?: string
   state?: string
+  safetyStatus?: string
 }
 
 export interface InterfaceNeighbor {
@@ -403,6 +404,17 @@ export interface StormConfig {
     resetOnLowRisk?: boolean
     pollStaleSeconds?: number
   }
+  safety?: {
+    safetyEnabled?: boolean
+    automationEnabled?: boolean
+    cooldownMinutes?: number
+    cpuThreshold?: number
+    memoryThreshold?: number
+    maximumAttempts?: number
+    allowManualOverride?: boolean
+    riskThreshold?: number
+    requireSsh?: boolean
+  }
 }
 
 export type RiskSeverity = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'
@@ -456,6 +468,27 @@ export interface ConfirmationResult {
   reason: string
   reset?: boolean
   resetReason?: string | null
+  timestamp?: string | null
+}
+
+export type SafetyStatus = 'SAFE' | 'UNSAFE' | 'WAITING'
+
+export interface SafetyResult {
+  _id?: string | null
+  deviceId: string
+  interface: string
+  hostname?: string | null
+  ipAddress?: string | null
+  safe: boolean
+  reason: string
+  failedRule?: string | null
+  confidence: number
+  checks: Record<string, boolean | null | undefined>
+  cooldownRemainingSeconds?: number
+  mitigationAttempts?: number
+  cpuPercent?: number | null
+  memoryPercent?: number | null
+  status: SafetyStatus | string
   timestamp?: string | null
 }
 

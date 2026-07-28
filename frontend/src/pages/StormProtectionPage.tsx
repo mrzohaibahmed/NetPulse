@@ -9,7 +9,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import { Activity, CheckCircle2, RefreshCw, Shield } from 'lucide-react'
+import { Activity, CheckCircle2, RefreshCw, Shield, ShieldCheck } from 'lucide-react'
 import { PortClassificationBadges } from '@/components/interfaces/InterfaceStatusBadge'
 import { EmptyState } from '@/components/shared/EmptyState'
 import { ErrorState } from '@/components/shared/ErrorState'
@@ -37,6 +37,8 @@ import {
   useInterfaceRiskQuery,
   useRiskMutations,
   useRiskQuery,
+  useSafetyMutations,
+  useSafetyQuery,
   useStormConfigQuery,
 } from '@/hooks/queries'
 import { cn } from '@/lib/utils'
@@ -45,6 +47,7 @@ import type {
   EligibilityResult,
   NetworkInterface,
   RiskResult,
+  SafetyResult,
 } from '@/types'
 import { formatDateTime, formatRelative } from '@/utils/format'
 
@@ -161,6 +164,41 @@ function ConfirmationProgressBar({
   )
 }
 
+function SafetyStatusBadge({ status }: { status: string }) {
+  const value = (status || 'UNSAFE').toUpperCase()
+  if (value === 'SAFE') {
+    return (
+      <Badge variant="success" className="font-semibold uppercase tracking-wide">
+        <span className="h-1.5 w-1.5 rounded-full bg-success" aria-hidden />
+        Safe
+      </Badge>
+    )
+  }
+  if (value === 'WAITING') {
+    return (
+      <Badge variant="warning" className="font-semibold uppercase tracking-wide">
+        <span className="h-1.5 w-1.5 rounded-full bg-warning" aria-hidden />
+        Waiting
+      </Badge>
+    )
+  }
+  return (
+    <Badge variant="danger" className="font-semibold uppercase tracking-wide">
+      <span className="h-1.5 w-1.5 rounded-full bg-danger" aria-hidden />
+      Unsafe
+    </Badge>
+  )
+}
+
+function formatCooldown(seconds: number | null | undefined): string {
+  const s = Math.max(0, Number(seconds) || 0)
+  if (s <= 0) return 'Ready'
+  const m = Math.floor(s / 60)
+  const rem = s % 60
+  if (m <= 0) return `${rem}s`
+  return `${m}m ${rem}s`
+}
+
 function classificationIface(row: EligibilityResult): Pick<
   NetworkInterface,
   | 'portMode'
@@ -189,6 +227,7 @@ export function StormProtectionPage() {
   const eligibilityMutations = useEligibilityMutations()
   const riskMutations = useRiskMutations()
   const confirmationMutations = useConfirmationMutations()
+  const safetyMutations = useSafetyMutations()
   const stormConfig = useStormConfigQuery()
 
   const [query, setQuery] = useState('')
@@ -210,6 +249,13 @@ export function StormProtectionPage() {
   const [confirmPage, setConfirmPage] = useState(1)
   const [confirmLimit, setConfirmLimit] = useState(DEFAULT_LIMIT)
 
+  const [safetyQueryText, setSafetyQueryText] = useState('')
+  const [debouncedSafetyQuery, setDebouncedSafetyQuery] = useState('')
+  const [safetyStatusFilter, setSafetyStatusFilter] = useState('all')
+  const [safetyPage, setSafetyPage] = useState(1)
+  const [safetyLimit, setSafetyLimit] = useState(DEFAULT_LIMIT)
+  const [selectedSafety, setSelectedSafety] = useState<SafetyResult | null>(null)
+
   useEffect(() => {
     const timer = window.setTimeout(() => setDebouncedQuery(query), 300)
     return () => window.clearTimeout(timer)
@@ -226,6 +272,11 @@ export function StormProtectionPage() {
   }, [confirmQuery])
 
   useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedSafetyQuery(safetyQueryText), 300)
+    return () => window.clearTimeout(timer)
+  }, [safetyQueryText])
+
+  useEffect(() => {
     setPage(1)
   }, [debouncedQuery, eligibleFilter, limit])
 
@@ -236,6 +287,10 @@ export function StormProtectionPage() {
   useEffect(() => {
     setConfirmPage(1)
   }, [debouncedConfirmQuery, confirmStateFilter, confirmLimit])
+
+  useEffect(() => {
+    setSafetyPage(1)
+  }, [debouncedSafetyQuery, safetyStatusFilter, safetyLimit])
 
   const eligibilityQuery = useEligibilityQuery({
     page,
@@ -263,6 +318,13 @@ export function StormProtectionPage() {
     state: confirmStateFilter === 'all' ? undefined : confirmStateFilter,
   })
 
+  const safetyListQuery = useSafetyQuery({
+    page: safetyPage,
+    limit: safetyLimit,
+    q: debouncedSafetyQuery,
+    safetyStatus: safetyStatusFilter === 'all' ? undefined : safetyStatusFilter,
+  })
+
   const selectedHistoryQuery = useInterfaceRiskQuery(
     selectedRisk?.deviceId || '',
     selectedRisk?.interface || '',
@@ -282,6 +344,10 @@ export function StormProtectionPage() {
     confirmationQuery.data?.total ?? confirmationQuery.data?.count ?? 0
   const confirmTotalPages = confirmationQuery.data?.totalPages ?? 1
 
+  const safetyRows = safetyListQuery.data?.data ?? []
+  const safetyTotal = safetyListQuery.data?.total ?? safetyListQuery.data?.count ?? 0
+  const safetyTotalPages = safetyListQuery.data?.totalPages ?? 1
+
   const eligibleCount = useMemo(() => rows.filter((r) => r.eligible).length, [rows])
   const ineligibleCount = rows.length - eligibleCount
 
@@ -292,6 +358,19 @@ export function StormProtectionPage() {
   const pendingCount = useMemo(
     () => confirmRows.filter((r) => String(r.state).toUpperCase() === 'PENDING').length,
     [confirmRows],
+  )
+
+  const safeCount = useMemo(
+    () => safetyRows.filter((r) => String(r.status).toUpperCase() === 'SAFE').length,
+    [safetyRows],
+  )
+  const unsafeCount = useMemo(
+    () => safetyRows.filter((r) => String(r.status).toUpperCase() === 'UNSAFE').length,
+    [safetyRows],
+  )
+  const waitingCount = useMemo(
+    () => safetyRows.filter((r) => String(r.status).toUpperCase() === 'WAITING').length,
+    [safetyRows],
   )
 
   const criticalCount = useMemo(
@@ -322,12 +401,14 @@ export function StormProtectionPage() {
   const isBusy =
     eligibilityMutations.evaluateAll.isPending ||
     riskMutations.calculateAll.isPending ||
-    confirmationMutations.evaluateAll.isPending
+    confirmationMutations.evaluateAll.isPending ||
+    safetyMutations.evaluateAll.isPending
 
   const refreshAll = () => {
     void eligibilityQuery.refetch()
     void riskListQuery.refetch()
     void confirmationQuery.refetch()
+    void safetyListQuery.refetch()
     if (selectedRisk) void selectedHistoryQuery.refetch()
   }
 
@@ -374,6 +455,18 @@ export function StormProtectionPage() {
                   {confirmationMutations.evaluateAll.isPending
                     ? 'Confirming…'
                     : 'Evaluate confirmation'}
+                </Button>
+                <Button
+                  type="button"
+                  disabled={
+                    isBusy || stormConfig.data?.safety?.safetyEnabled === false
+                  }
+                  onClick={() => safetyMutations.evaluateAll.mutate()}
+                >
+                  <ShieldCheck className="mr-2 h-4 w-4" />
+                  {safetyMutations.evaluateAll.isPending
+                    ? 'Checking…'
+                    : 'Evaluate safety'}
                 </Button>
               </>
             ) : null}
@@ -881,6 +974,269 @@ export function StormProtectionPage() {
             limit={confirmLimit}
             onPageChange={setConfirmPage}
             onLimitChange={setConfirmLimit}
+          />
+        ) : null}
+      </section>
+
+      {/* ── Safety ─────────────────────────────────────────────────── */}
+      <section className="space-y-4">
+        <div>
+          <h2 className="text-lg font-semibold tracking-tight">Safety</h2>
+          <p className="text-sm text-muted-foreground">
+            Final pre-mitigation gate for confirmed storms. Validates device,
+            SSH, automation, locks, cooldown, and health — never executes mitigation.
+          </p>
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-3">
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">
+                Safe (page)
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-2xl font-bold text-success">{safeCount}</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">
+                Waiting (page)
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-2xl font-bold text-warning">{waitingCount}</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">
+                Unsafe (page)
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-2xl font-bold text-danger">{unsafeCount}</p>
+            </CardContent>
+          </Card>
+        </div>
+
+        <div className="flex flex-wrap gap-3">
+          <Input
+            type="search"
+            className="max-w-sm"
+            placeholder="Search interface, host, reason, rule…"
+            value={safetyQueryText}
+            onChange={(e) => setSafetyQueryText(e.target.value)}
+          />
+          <Select value={safetyStatusFilter} onValueChange={setSafetyStatusFilter}>
+            <SelectTrigger className="w-[180px]">
+              <SelectValue placeholder="Status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All statuses</SelectItem>
+              <SelectItem value="SAFE">Safe</SelectItem>
+              <SelectItem value="WAITING">Waiting</SelectItem>
+              <SelectItem value="UNSAFE">Unsafe</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        {safetyListQuery.isLoading ? (
+          <TableSkeleton rows={8} />
+        ) : safetyListQuery.isError ? (
+          <ErrorState
+            title="Unable to load safety results"
+            message={
+              safetyListQuery.error instanceof Error
+                ? safetyListQuery.error.message
+                : 'Unexpected error'
+            }
+            onRetry={() => void safetyListQuery.refetch()}
+          />
+        ) : safetyRows.length === 0 ? (
+          <EmptyState
+            icon={ShieldCheck}
+            title="No safety results"
+            description="Confirm a storm first, then evaluate safety. The scheduler runs safety after confirmation."
+          />
+        ) : (
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1.55fr)_minmax(300px,1fr)]">
+            <Card>
+              <CardContent className="p-0">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Interface</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Reason</TableHead>
+                      <TableHead>Failed rule</TableHead>
+                      <TableHead>Confidence</TableHead>
+                      <TableHead>Cooldown</TableHead>
+                      <TableHead>Attempts</TableHead>
+                      <TableHead>Updated</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {safetyRows.map((row) => {
+                      const active =
+                        selectedSafety?.deviceId === row.deviceId &&
+                        selectedSafety?.interface === row.interface
+                      return (
+                        <TableRow
+                          key={`${row.deviceId}-${row.interface}-${row._id ?? ''}`}
+                          className={cn('cursor-pointer', active && 'bg-primary/10')}
+                          onClick={() => setSelectedSafety(row)}
+                        >
+                          <TableCell className="font-medium">
+                            <div>
+                              <Link
+                                to={`/interfaces/${row.deviceId}/${encodeURIComponent(row.interface)}`}
+                                className="text-primary hover:underline"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                {row.interface}
+                              </Link>
+                              <p className="text-xs text-muted-foreground">
+                                {row.hostname || row.ipAddress || row.deviceId}
+                              </p>
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <SafetyStatusBadge status={String(row.status)} />
+                          </TableCell>
+                          <TableCell className="max-w-[200px] truncate text-sm">
+                            {row.reason}
+                          </TableCell>
+                          <TableCell>
+                            {row.failedRule ? (
+                              <Badge variant="outline" className="font-mono text-xs">
+                                {row.failedRule}
+                              </Badge>
+                            ) : (
+                              <span className="text-muted-foreground">—</span>
+                            )}
+                          </TableCell>
+                          <TableCell>{Number(row.confidence).toFixed(0)}%</TableCell>
+                          <TableCell className="mono text-xs">
+                            {formatCooldown(row.cooldownRemainingSeconds)}
+                          </TableCell>
+                          <TableCell className="mono text-xs">
+                            {row.mitigationAttempts ?? 0}
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
+                            {formatRelative(row.timestamp) || '—'}
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">
+                  {selectedSafety
+                    ? `${selectedSafety.interface} checks`
+                    : 'Select an interface'}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {!selectedSafety ? (
+                  <p className="text-sm text-muted-foreground">
+                    Click a row to inspect check results, health, and automation.
+                  </p>
+                ) : (
+                  <>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <SafetyStatusBadge status={String(selectedSafety.status)} />
+                      <span className="text-sm text-muted-foreground">
+                        Confidence {Number(selectedSafety.confidence).toFixed(0)}%
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-sm">
+                      <div className="rounded-md border border-border/50 px-2.5 py-1.5">
+                        <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                          CPU
+                        </p>
+                        <p className="mono font-medium">
+                          {selectedSafety.cpuPercent == null
+                            ? '—'
+                            : `${Number(selectedSafety.cpuPercent).toFixed(1)}%`}
+                        </p>
+                      </div>
+                      <div className="rounded-md border border-border/50 px-2.5 py-1.5">
+                        <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                          Memory
+                        </p>
+                        <p className="mono font-medium">
+                          {selectedSafety.memoryPercent == null
+                            ? '—'
+                            : `${Number(selectedSafety.memoryPercent).toFixed(1)}%`}
+                        </p>
+                      </div>
+                      <div className="rounded-md border border-border/50 px-2.5 py-1.5">
+                        <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                          Cooldown
+                        </p>
+                        <p className="mono font-medium">
+                          {formatCooldown(selectedSafety.cooldownRemainingSeconds)}
+                        </p>
+                      </div>
+                      <div className="rounded-md border border-border/50 px-2.5 py-1.5">
+                        <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                          Attempts
+                        </p>
+                        <p className="mono font-medium">
+                          {selectedSafety.mitigationAttempts ?? 0}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="space-y-1.5">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        Check results
+                      </p>
+                      {Object.entries(selectedSafety.checks || {}).map(([key, value]) => {
+                        const hazardKeys = new Set([
+                          'maintenanceMode',
+                          'deviceLocked',
+                          'interfaceLocked',
+                          'mitigationRunning',
+                        ])
+                        const ok = hazardKeys.has(key) ? !value : Boolean(value)
+                        return (
+                          <div
+                            key={key}
+                            className="flex items-center justify-between rounded-md border border-border/50 px-2.5 py-1 text-sm"
+                          >
+                            <span className="text-muted-foreground">{key}</span>
+                            <Badge
+                              variant={ok ? 'success' : 'danger'}
+                              className="capitalize"
+                            >
+                              {String(value)}
+                            </Badge>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
+        {safetyTotalPages > 1 || safetyTotal > safetyLimit ? (
+          <PaginationControls
+            page={safetyPage}
+            totalPages={Math.max(safetyTotalPages, 1)}
+            total={safetyTotal}
+            limit={safetyLimit}
+            onPageChange={setSafetyPage}
+            onLimitChange={setSafetyLimit}
           />
         ) : null}
       </section>

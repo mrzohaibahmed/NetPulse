@@ -303,3 +303,25 @@ def serialize_confirmation_result(result: dict) -> dict:
         "timestamp": format_datetime(result.get("timestamp")),
     }
 
+
+def serialize_safety_result(result: dict) -> dict:
+    """Serialise a document from the ``storm_safety_history`` collection."""
+    return {
+        "_id": str(result["_id"]) if result.get("_id") is not None else None,
+        "deviceId": str(result["deviceId"]) if result.get("deviceId") is not None else None,
+        "interface": result.get("interface"),
+        "hostname": result.get("hostname"),
+        "ipAddress": result.get("ipAddress"),
+        "safe": bool(result.get("safe")),
+        "reason": result.get("reason") or "",
+        "failedRule": result.get("failedRule"),
+        "confidence": float(result.get("confidence") or 0),
+        "checks": result.get("checks") or {},
+        "cooldownRemainingSeconds": int(result.get("cooldownRemainingSeconds") or 0),
+        "mitigationAttempts": int(result.get("mitigationAttempts") or 0),
+        "cpuPercent": result.get("cpuPercent"),
+        "memoryPercent": result.get("memoryPercent"),
+        "status": result.get("status") or ("SAFE" if result.get("safe") else "UNSAFE"),
+        "timestamp": format_datetime(result.get("timestamp")),
+    }
+

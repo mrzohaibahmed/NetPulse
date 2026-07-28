@@ -28,6 +28,7 @@ export const queryKeys = {
   interfaceRisk: (id: string, name: string, params: object) =>
     ['interface-risk', id, name, params] as const,
   confirmation: (params: object) => ['confirmation', params] as const,
+  safety: (params: object) => ['safety', params] as const,
   stormConfig: ['storm-config'] as const,
   settings: ['settings'] as const,
   users: ['users'] as const,
