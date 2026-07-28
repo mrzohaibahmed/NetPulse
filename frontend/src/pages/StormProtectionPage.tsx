@@ -9,7 +9,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import { Activity, RefreshCw, Shield } from 'lucide-react'
+import { Activity, CheckCircle2, RefreshCw, Shield } from 'lucide-react'
 import { PortClassificationBadges } from '@/components/interfaces/InterfaceStatusBadge'
 import { EmptyState } from '@/components/shared/EmptyState'
 import { ErrorState } from '@/components/shared/ErrorState'
@@ -30,6 +30,8 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useAuth } from '@/auth/AuthContext'
 import {
+  useConfirmationMutations,
+  useConfirmationQuery,
   useEligibilityMutations,
   useEligibilityQuery,
   useInterfaceRiskQuery,
@@ -38,7 +40,12 @@ import {
   useStormConfigQuery,
 } from '@/hooks/queries'
 import { cn } from '@/lib/utils'
-import type { EligibilityResult, NetworkInterface, RiskResult } from '@/types'
+import type {
+  ConfirmationResult,
+  EligibilityResult,
+  NetworkInterface,
+  RiskResult,
+} from '@/types'
 import { formatDateTime, formatRelative } from '@/utils/format'
 
 const DEFAULT_LIMIT = 25
@@ -90,6 +97,70 @@ function formatRate(value: number | null | undefined, suffix = '/s'): string {
   return `${n.toFixed(n >= 10 ? 0 : 1)}${suffix}`
 }
 
+function ConfirmationStateBadge({ state }: { state: string }) {
+  const value = (state || 'NOT_CONFIRMED').toUpperCase()
+  if (value === 'CONFIRMED') {
+    return (
+      <Badge variant="success" className="font-semibold uppercase tracking-wide">
+        <span className="h-1.5 w-1.5 rounded-full bg-success" aria-hidden />
+        Confirmed
+      </Badge>
+    )
+  }
+  if (value === 'PENDING') {
+    return (
+      <Badge variant="warning" className="font-semibold uppercase tracking-wide">
+        <span className="h-1.5 w-1.5 rounded-full bg-warning" aria-hidden />
+        Pending
+      </Badge>
+    )
+  }
+  return (
+    <Badge variant="muted" className="font-semibold uppercase tracking-wide">
+      <span className="h-1.5 w-1.5 rounded-full bg-slate-400" aria-hidden />
+      Not confirmed
+    </Badge>
+  )
+}
+
+function ConfirmationProgressBar({
+  consecutive,
+  required,
+  state,
+}: {
+  consecutive: number
+  required: number
+  state: string
+}) {
+  const total = Math.max(required || 1, 1)
+  const filled = Math.min(Math.max(consecutive, 0), total)
+  const tone =
+    String(state).toUpperCase() === 'CONFIRMED'
+      ? 'bg-success'
+      : String(state).toUpperCase() === 'PENDING'
+        ? 'bg-warning'
+        : 'bg-slate-500'
+
+  return (
+    <div className="min-w-[120px] space-y-1">
+      <div className="flex gap-0.5" aria-hidden>
+        {Array.from({ length: total }).map((_, index) => (
+          <div
+            key={index}
+            className={cn(
+              'h-2 flex-1 rounded-sm',
+              index < filled ? tone : 'bg-secondary',
+            )}
+          />
+        ))}
+      </div>
+      <p className="mono text-xs text-muted-foreground">
+        {filled} / {total}
+      </p>
+    </div>
+  )
+}
+
 function classificationIface(row: EligibilityResult): Pick<
   NetworkInterface,
   | 'portMode'
@@ -117,6 +188,7 @@ export function StormProtectionPage() {
   const { isAdmin } = useAuth()
   const eligibilityMutations = useEligibilityMutations()
   const riskMutations = useRiskMutations()
+  const confirmationMutations = useConfirmationMutations()
   const stormConfig = useStormConfigQuery()
 
   const [query, setQuery] = useState('')
@@ -132,6 +204,12 @@ export function StormProtectionPage() {
   const [riskLimit, setRiskLimit] = useState(DEFAULT_LIMIT)
   const [selectedRisk, setSelectedRisk] = useState<RiskResult | null>(null)
 
+  const [confirmQuery, setConfirmQuery] = useState('')
+  const [debouncedConfirmQuery, setDebouncedConfirmQuery] = useState('')
+  const [confirmStateFilter, setConfirmStateFilter] = useState('all')
+  const [confirmPage, setConfirmPage] = useState(1)
+  const [confirmLimit, setConfirmLimit] = useState(DEFAULT_LIMIT)
+
   useEffect(() => {
     const timer = window.setTimeout(() => setDebouncedQuery(query), 300)
     return () => window.clearTimeout(timer)
@@ -143,12 +221,21 @@ export function StormProtectionPage() {
   }, [riskQuery])
 
   useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedConfirmQuery(confirmQuery), 300)
+    return () => window.clearTimeout(timer)
+  }, [confirmQuery])
+
+  useEffect(() => {
     setPage(1)
   }, [debouncedQuery, eligibleFilter, limit])
 
   useEffect(() => {
     setRiskPage(1)
   }, [debouncedRiskQuery, severityFilter, riskLimit])
+
+  useEffect(() => {
+    setConfirmPage(1)
+  }, [debouncedConfirmQuery, confirmStateFilter, confirmLimit])
 
   const eligibilityQuery = useEligibilityQuery({
     page,
@@ -169,6 +256,13 @@ export function StormProtectionPage() {
     severity: severityFilter === 'all' ? undefined : severityFilter,
   })
 
+  const confirmationQuery = useConfirmationQuery({
+    page: confirmPage,
+    limit: confirmLimit,
+    q: debouncedConfirmQuery,
+    state: confirmStateFilter === 'all' ? undefined : confirmStateFilter,
+  })
+
   const selectedHistoryQuery = useInterfaceRiskQuery(
     selectedRisk?.deviceId || '',
     selectedRisk?.interface || '',
@@ -183,8 +277,22 @@ export function StormProtectionPage() {
   const riskTotal = riskListQuery.data?.total ?? riskListQuery.data?.count ?? 0
   const riskTotalPages = riskListQuery.data?.totalPages ?? 1
 
+  const confirmRows = confirmationQuery.data?.data ?? []
+  const confirmTotal =
+    confirmationQuery.data?.total ?? confirmationQuery.data?.count ?? 0
+  const confirmTotalPages = confirmationQuery.data?.totalPages ?? 1
+
   const eligibleCount = useMemo(() => rows.filter((r) => r.eligible).length, [rows])
   const ineligibleCount = rows.length - eligibleCount
+
+  const confirmedCount = useMemo(
+    () => confirmRows.filter((r) => String(r.state).toUpperCase() === 'CONFIRMED').length,
+    [confirmRows],
+  )
+  const pendingCount = useMemo(
+    () => confirmRows.filter((r) => String(r.state).toUpperCase() === 'PENDING').length,
+    [confirmRows],
+  )
 
   const criticalCount = useMemo(
     () => riskRows.filter((r) => String(r.severity).toUpperCase() === 'CRITICAL').length,
@@ -212,11 +320,14 @@ export function StormProtectionPage() {
   }, [selectedHistoryQuery.data?.history])
 
   const isBusy =
-    eligibilityMutations.evaluateAll.isPending || riskMutations.calculateAll.isPending
+    eligibilityMutations.evaluateAll.isPending ||
+    riskMutations.calculateAll.isPending ||
+    confirmationMutations.evaluateAll.isPending
 
   const refreshAll = () => {
     void eligibilityQuery.refetch()
     void riskListQuery.refetch()
+    void confirmationQuery.refetch()
     if (selectedRisk) void selectedHistoryQuery.refetch()
   }
 
@@ -249,6 +360,20 @@ export function StormProtectionPage() {
                   {riskMutations.calculateAll.isPending
                     ? 'Scoring…'
                     : 'Calculate risk'}
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={
+                    isBusy ||
+                    stormConfig.data?.confirmation?.confirmationEnabled === false
+                  }
+                  onClick={() => confirmationMutations.evaluateAll.mutate()}
+                >
+                  <CheckCircle2 className="mr-2 h-4 w-4" />
+                  {confirmationMutations.evaluateAll.isPending
+                    ? 'Confirming…'
+                    : 'Evaluate confirmation'}
                 </Button>
               </>
             ) : null}
@@ -593,6 +718,169 @@ export function StormProtectionPage() {
             limit={riskLimit}
             onPageChange={setRiskPage}
             onLimitChange={setRiskLimit}
+          />
+        ) : null}
+      </section>
+
+      {/* ── Confirmation ───────────────────────────────────────────── */}
+      <section className="space-y-4">
+        <div>
+          <h2 className="text-lg font-semibold tracking-tight">Confirmation</h2>
+          <p className="text-sm text-muted-foreground">
+            Tracks whether high risk persists across consecutive polling cycles
+            before a storm is confirmed. No mitigation is performed here.
+          </p>
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-3">
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">
+                Tracked interfaces
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-2xl font-bold">{confirmTotal}</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">
+                Pending (page)
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-2xl font-bold text-warning">{pendingCount}</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">
+                Confirmed (page)
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-2xl font-bold text-success">{confirmedCount}</p>
+            </CardContent>
+          </Card>
+        </div>
+
+        <div className="flex flex-wrap gap-3">
+          <Input
+            type="search"
+            className="max-w-sm"
+            placeholder="Search interface, host, reason…"
+            value={confirmQuery}
+            onChange={(e) => setConfirmQuery(e.target.value)}
+          />
+          <Select value={confirmStateFilter} onValueChange={setConfirmStateFilter}>
+            <SelectTrigger className="w-[200px]">
+              <SelectValue placeholder="State" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All states</SelectItem>
+              <SelectItem value="NOT_CONFIRMED">Not confirmed</SelectItem>
+              <SelectItem value="PENDING">Pending</SelectItem>
+              <SelectItem value="CONFIRMED">Confirmed</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        {confirmationQuery.isLoading ? (
+          <TableSkeleton rows={8} />
+        ) : confirmationQuery.isError ? (
+          <ErrorState
+            title="Unable to load confirmation results"
+            message={
+              confirmationQuery.error instanceof Error
+                ? confirmationQuery.error.message
+                : 'Unexpected error'
+            }
+            onRetry={() => void confirmationQuery.refetch()}
+          />
+        ) : confirmRows.length === 0 ? (
+          <EmptyState
+            icon={CheckCircle2}
+            title="No confirmation results"
+            description="Calculate risk first, then evaluate confirmation. The scheduler confirms after each risk cycle."
+          />
+        ) : (
+          <Card>
+            <CardContent className="p-0">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Interface</TableHead>
+                    <TableHead>State</TableHead>
+                    <TableHead>Current risk</TableHead>
+                    <TableHead>Highest</TableHead>
+                    <TableHead>Average</TableHead>
+                    <TableHead>Progress</TableHead>
+                    <TableHead>Reason</TableHead>
+                    <TableHead>Last updated</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {confirmRows.map((row: ConfirmationResult) => (
+                    <TableRow
+                      key={`${row.deviceId}-${row.interface}-${row._id ?? ''}`}
+                    >
+                      <TableCell className="font-medium">
+                        <div>
+                          <Link
+                            to={`/interfaces/${row.deviceId}/${encodeURIComponent(row.interface)}`}
+                            className="text-primary hover:underline"
+                          >
+                            {row.interface}
+                          </Link>
+                          <p className="text-xs text-muted-foreground">
+                            {row.hostname || row.ipAddress || row.deviceId}
+                          </p>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <ConfirmationStateBadge state={String(row.state)} />
+                      </TableCell>
+                      <TableCell className="mono text-sm">
+                        {Number(row.currentRisk).toFixed(1)}
+                      </TableCell>
+                      <TableCell className="mono text-sm">
+                        {Number(row.highestRisk).toFixed(1)}
+                      </TableCell>
+                      <TableCell className="mono text-sm">
+                        {Number(row.averageRisk).toFixed(1)}
+                      </TableCell>
+                      <TableCell>
+                        <ConfirmationProgressBar
+                          consecutive={row.consecutiveHighSamples}
+                          required={row.requiredSamples}
+                          state={String(row.state)}
+                        />
+                      </TableCell>
+                      <TableCell className="max-w-[260px] truncate text-sm text-muted-foreground">
+                        {row.reason}
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
+                        <div title={formatDateTime(row.timestamp) || undefined}>
+                          {formatRelative(row.timestamp) || '—'}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        )}
+
+        {confirmTotalPages > 1 || confirmTotal > confirmLimit ? (
+          <PaginationControls
+            page={confirmPage}
+            totalPages={Math.max(confirmTotalPages, 1)}
+            total={confirmTotal}
+            limit={confirmLimit}
+            onPageChange={setConfirmPage}
+            onLimitChange={setConfirmLimit}
           />
         ) : null}
       </section>

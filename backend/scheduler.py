@@ -32,10 +32,11 @@ def _run_interface_stats_then_eligibility() -> None:
         Interface Statistics
         → Eligibility Engine
         → Risk Score Engine
-        → Store Risk History
+        → Confirmation Engine
+        → Store Confirmation History
 
-    Failures in eligibility/risk never abort stats or the scheduler.
-    Confirmation / mitigation are intentionally NOT invoked here.
+    Failures never abort stats or the scheduler.
+    Safety / mitigation are intentionally NOT invoked here.
     """
     from services.interface_collection.stats_collector import (  # noqa: PLC0415
         collect_all_interface_stats,
@@ -60,6 +61,18 @@ def _run_interface_stats_then_eligibility() -> None:
     except Exception as exc:  # noqa: BLE001
         logger.error(
             "Risk scoring failed after eligibility: %s",
+            exc,
+        )
+
+    try:
+        from services.storm.confirmation import (  # noqa: PLC0415
+            evaluate_all_confirmations,
+        )
+
+        evaluate_all_confirmations()
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            "Confirmation evaluation failed after risk scoring: %s",
             exc,
         )
 
