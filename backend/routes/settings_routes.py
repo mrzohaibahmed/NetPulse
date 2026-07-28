@@ -44,6 +44,11 @@ def update_settings_route():
                 "pingRetries": updated.get("pingRetries"),
                 "smtpUpdated": "smtp" in data,
                 "mitigationMode": updated.get("mitigationMode"),
+                "autoRecovery": updated.get("autoRecovery"),
+                "cooldownMinutes": updated.get("cooldownMinutes"),
+                "stabilizationSeconds": updated.get("stabilizationSeconds"),
+                "maximumRecoveryAttempts": updated.get("maximumRecoveryAttempts"),
+                "reMitigationThreshold": updated.get("reMitigationThreshold"),
             },
         )
 

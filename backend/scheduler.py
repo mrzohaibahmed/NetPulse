@@ -23,6 +23,7 @@ JOB_ID = "device_monitor_job"
 NMAP_JOB_ID = "nmap_scan_job"
 INTERFACE_JOB_ID = "interface_discovery_job"
 INTERFACE_STATS_JOB_ID = "interface_stats_job"
+RECOVERY_JOB_ID = "storm_recovery_job"
 
 
 def _run_interface_stats_then_eligibility() -> None:
@@ -242,6 +243,31 @@ def _start_interface_stats_job() -> None:
         )
 
 
+def _start_recovery_job() -> None:
+    """Register storm recovery scheduler check job."""
+    try:
+        scheduler.add_job(
+            func=_run_recovery_cycle,
+            trigger="interval",
+            seconds=30,
+            id=RECOVERY_JOB_ID,
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        logger.info("Storm recovery job registered | interval=30s")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Storm recovery job could not be registered: %s", exc)
+
+
+def _run_recovery_cycle() -> None:
+    try:
+        from services.storm.recovery import run_recovery_cycle  # noqa: PLC0415
+        run_recovery_cycle()
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Periodic recovery cycle execution failed: %s", exc)
+
+
 # ---------------------------------------------------------------------------
 # Public functions (unchanged signatures for existing callers)
 # ---------------------------------------------------------------------------
@@ -275,6 +301,9 @@ def start_scheduler():
 
     # Job 4: Interface statistics (SNMP preferred, SSH fallback).
     _start_interface_stats_job()
+
+    # Job 5: Storm Recovery periodic auto-recovery checks (30s interval).
+    _start_recovery_job()
 
 
 def reschedule_monitor_job(interval_seconds: int):

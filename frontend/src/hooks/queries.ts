@@ -43,6 +43,10 @@ import {
   getMitigationHistoryDetail,
   executeStormMitigation,
   rollbackStormMitigation,
+  getRecoveryHistory,
+  getRecoveryHistoryDetail,
+  executeStormRecovery,
+  retryStormRecovery,
   getUptimeReport,
   getUsers,
   importDevicesCsv,
@@ -596,6 +600,64 @@ export function useMitigationMutations() {
 
   return { execute, rollback }
 }
+
+export function useRecoveryHistoryQuery(params: PaginationParams) {
+  return useQuery({
+    queryKey: queryKeys.recoveryHistory(params),
+    queryFn: () => getRecoveryHistory(params),
+    refetchInterval: 10_000,
+    placeholderData: (prev) => prev,
+  })
+}
+
+export function useRecoveryDetailQuery(incidentId: string, enabled = false) {
+  return useQuery({
+    queryKey: queryKeys.recoveryDetail(incidentId),
+    queryFn: () => getRecoveryHistoryDetail(incidentId),
+    enabled: enabled && !!incidentId,
+  })
+}
+
+export function useRecoveryMutations() {
+  const qc = useQueryClient()
+  const invalidate = () =>
+    Promise.all([
+      qc.invalidateQueries({ queryKey: ['storm-incidents'] }),
+      qc.invalidateQueries({ queryKey: ['recovery-history'] }),
+      qc.invalidateQueries({ queryKey: ['safety'] }),
+    ])
+
+  const execute = useMutation({
+    mutationFn: (payload: { incidentId: string; force?: boolean }) =>
+      executeStormRecovery(payload),
+    onSuccess: async (res) => {
+      if (res.success) {
+        toast.success(`Recovery triggered successfully!`)
+      } else {
+        toast.error(`Recovery failed: ${res.error || 'Check history'}`)
+      }
+      await invalidate()
+    },
+    onError: (err: Error) => toast.error(err.message),
+  })
+
+  const retry = useMutation({
+    mutationFn: (payload: { incidentId: string }) =>
+      retryStormRecovery(payload),
+    onSuccess: async (res) => {
+      if (res.success) {
+        toast.success(`Recovery retry triggered successfully!`)
+      } else {
+        toast.error(`Retry failed: ${res.error || 'Check history'}`)
+      }
+      await invalidate()
+    },
+    onError: (err: Error) => toast.error(err.message),
+  })
+
+  return { execute, retry }
+}
+
 
 export function useSettingsQuery(enabled = true) {
   return useQuery({

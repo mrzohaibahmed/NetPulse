@@ -27,6 +27,7 @@ import type {
   StormIncident,
   PrepareResult,
   MitigationLog,
+  RecoveryLog,
   UptimeRow,
   User,
 } from '../types'
@@ -596,4 +597,33 @@ export const rollbackStormMitigation = (payload: { incidentId: string }) =>
       timeoutMs: 180000,
     },
   )
+
+export const getRecoveryHistory = (params: PaginationParams = {}) =>
+  apiRequest<ApiListResponse<RecoveryLog>>(`/api/storm/recovery/history${toQuery(params)}`)
+
+export const getRecoveryHistoryDetail = (incidentId: string) =>
+  apiRequest<{ success: boolean; count: number; data: RecoveryLog[] }>(
+    `/api/storm/recovery/history/${encodeURIComponent(incidentId)}`,
+  )
+
+export const executeStormRecovery = (payload: { incidentId: string; force?: boolean }) =>
+  apiRequest<{ success: boolean; status: string; incidentId: string; error?: string }>(
+    '/api/storm/recovery/execute',
+    {
+      method: 'POST',
+      body: payload,
+      timeoutMs: 180000,
+    },
+  )
+
+export const retryStormRecovery = (payload: { incidentId: string }) =>
+  apiRequest<{ success: boolean; status: string; incidentId: string; error?: string }>(
+    '/api/storm/recovery/retry',
+    {
+      method: 'POST',
+      body: payload,
+      timeoutMs: 180000,
+    },
+  )
+
 

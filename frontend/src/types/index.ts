@@ -169,6 +169,11 @@ export interface AppSettings {
     useTls: boolean
   }
   mitigationMode?: string
+  autoRecovery?: boolean
+  cooldownMinutes?: number
+  stabilizationSeconds?: number
+  maximumRecoveryAttempts?: number
+  reMitigationThreshold?: number
   updatedAt: string | null
 }
 
@@ -569,6 +574,32 @@ export interface MitigationLog {
   }
   rollbackPerformed: boolean
   operator: string
+  timestamp: string
+}
+
+export interface RecoveryLog {
+  _id?: string | null
+  incidentId: string
+  deviceId: string
+  interface: string
+  recoveryStatus: string
+  verificationResult: {
+    success?: boolean
+    error?: string
+    output?: string
+    stats?: {
+      adminStatus?: string
+      operStatus?: string
+      broadcastRate?: number
+      multicastRate?: number
+      utilization?: number
+      inputErrors?: number
+      outputErrors?: number
+      crc?: number
+      discards?: number
+    }
+  }
+  retryCount: number
   timestamp: string
 }
 

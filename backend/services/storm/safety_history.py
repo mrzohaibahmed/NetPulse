@@ -12,11 +12,12 @@ from typing import Any, Optional
 
 from bson import ObjectId
 
+from services.storm.lock_service import LockService
+
 
 SAFETY_COLLECTION = "storm_safety_history"
 CONFIRM_COLLECTION = "storm_confirmation_history"
 RISK_COLLECTION = "storm_risk_history"
-MITIGATION_JOBS = "storm_mitigation_jobs"
 
 
 def _db():
@@ -97,18 +98,8 @@ def load_last_safe_timestamp(device_id, interface: str) -> Optional[datetime]:
 
 
 def is_mitigation_running(device_id, interface: str) -> bool:
-    """Future mitigation jobs collection — empty ⇒ none running."""
-    try:
-        job = _db()[MITIGATION_JOBS].find_one(
-            {
-                "deviceId": _as_oid(device_id),
-                "interface": interface,
-                "status": {"$in": ["running", "pending", "in_progress"]},
-            }
-        )
-        return job is not None
-    except Exception:  # noqa: BLE001
-        return False
+    """Read the same active mitigation locks used by the execution engine."""
+    return LockService.is_mitigation_active(_as_oid(device_id), interface)
 
 
 def count_mitigation_attempts(device_id, interface: str) -> int:

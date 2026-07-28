@@ -3,7 +3,7 @@ import { Navigate } from 'react-router-dom'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { Mail, Save, Timer } from 'lucide-react'
+import { Mail, Save, Timer, Activity } from 'lucide-react'
 import { useAuth } from '@/auth/AuthContext'
 import { useSettingsMutation, useSettingsQuery } from '@/hooks/queries'
 import { ErrorState } from '@/components/shared/ErrorState'
@@ -27,6 +27,10 @@ const schema = z.object({
   smtpFrom: z.string(),
   smtpTo: z.string(),
   useTls: z.boolean(),
+  cooldownMinutes: z.number().min(1),
+  stabilizationSeconds: z.number().min(5),
+  maximumRecoveryAttempts: z.number().min(1),
+  reMitigationThreshold: z.number().min(1).max(100),
 })
 
 type FormValues = z.infer<typeof schema>
@@ -50,6 +54,10 @@ export function SettingsPage() {
       smtpFrom: '',
       smtpTo: '',
       useTls: true,
+      cooldownMinutes: 5,
+      stabilizationSeconds: 60,
+      maximumRecoveryAttempts: 3,
+      reMitigationThreshold: 75,
     },
   })
 
@@ -68,6 +76,10 @@ export function SettingsPage() {
       smtpFrom: data.smtp.fromAddress,
       smtpTo: data.smtp.toAddress,
       useTls: data.smtp.useTls,
+      cooldownMinutes: data.cooldownMinutes ?? 5,
+      stabilizationSeconds: data.stabilizationSeconds ?? 60,
+      maximumRecoveryAttempts: data.maximumRecoveryAttempts ?? 3,
+      reMitigationThreshold: data.reMitigationThreshold ?? 75,
     })
   }, [settingsQuery.data, form])
 
@@ -103,6 +115,10 @@ export function SettingsPage() {
       pingTimeoutMs: values.pingTimeoutMs,
       pingRetries: values.pingRetries,
       smtp,
+      cooldownMinutes: values.cooldownMinutes,
+      stabilizationSeconds: values.stabilizationSeconds,
+      maximumRecoveryAttempts: values.maximumRecoveryAttempts,
+      reMitigationThreshold: values.reMitigationThreshold,
     })
     form.setValue('smtpPassword', '')
   })
@@ -216,6 +232,57 @@ export function SettingsPage() {
               />
               Use TLS
             </label>
+          </CardContent>
+        </Card>
+
+        <Card className="glass">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Activity className="h-5 w-5 text-primary" />
+              Recovery protection
+            </CardTitle>
+            <CardDescription>
+              Adjust validation thresholds, recovery limits, and stabilization timing for port automatic recovery.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="cooldownMinutes">Cooldown (minutes)</Label>
+              <Input
+                id="cooldownMinutes"
+                type="number"
+                min={1}
+                {...form.register('cooldownMinutes', { valueAsNumber: true })}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="stabilizationSeconds">Stabilization (seconds)</Label>
+              <Input
+                id="stabilizationSeconds"
+                type="number"
+                min={5}
+                {...form.register('stabilizationSeconds', { valueAsNumber: true })}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="maximumRecoveryAttempts">Max attempts</Label>
+              <Input
+                id="maximumRecoveryAttempts"
+                type="number"
+                min={1}
+                {...form.register('maximumRecoveryAttempts', { valueAsNumber: true })}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="reMitigationThreshold">Re-mitigation risk threshold (%)</Label>
+              <Input
+                id="reMitigationThreshold"
+                type="number"
+                min={1}
+                max={100}
+                {...form.register('reMitigationThreshold', { valueAsNumber: true })}
+              />
+            </div>
           </CardContent>
         </Card>
 

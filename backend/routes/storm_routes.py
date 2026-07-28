@@ -40,6 +40,7 @@ GET  /api/storm/config
 
 from __future__ import annotations
 
+from typing import Any
 from urllib.parse import unquote
 
 from bson import ObjectId
@@ -87,6 +88,12 @@ from services.storm.mitigation import (
     rollback_mitigation,
     get_mitigation_history,
     serialize_mitigation_log,
+)
+from services.storm.recovery import (
+    execute_recovery,
+    retry_recovery,
+    get_recovery_history,
+    serialize_recovery_log,
 )
 from utils.auth import require_auth
 from utils.pagination import clamp_page, pagination_payload, parse_pagination
@@ -361,7 +368,7 @@ def get_interface_eligibility(device_id: str, interface: str):
                 "message": "No eligibility evaluation found for this interface",
             }), 404
 
-        payload = {
+        payload: dict[str, Any] = {
             "success": True,
             "data": _enrich_with_classification(latest_rows[0]),
         }
@@ -569,7 +576,7 @@ def get_interface_risk(device_id: str, interface: str):
                 "message": "No risk score found for this interface",
             }), 404
 
-        payload = {
+        payload: dict[str, Any] = {
             "success": True,
             "data": serialize_risk_result(latest_rows[0]),
         }
@@ -772,7 +779,7 @@ def get_interface_confirmation(device_id: str, interface: str):
                 "message": "No confirmation result found for this interface",
             }), 404
 
-        payload = {
+        payload: dict[str, Any] = {
             "success": True,
             "data": serialize_confirmation_result(latest_rows[0]),
         }
@@ -983,7 +990,7 @@ def get_interface_safety(device_id: str, interface: str):
                 "message": "No safety result found for this interface",
             }), 404
 
-        payload = {
+        payload: dict[str, Any] = {
             "success": True,
             "data": serialize_safety_result(latest_rows[0]),
         }
@@ -1283,4 +1290,114 @@ def get_mitigation_history_detail_route(incident_id: str):
             "message": f"Failed to retrieve mitigation logs for incident {incident_id}",
             "error": str(error),
         }), 500
+
+
+# ---------------------------------------------------------------------------
+# Recovery Engine REST APIs
+# ---------------------------------------------------------------------------
+
+
+@storm_bp.route("/storm/recovery/execute", methods=["POST"])
+@require_auth(roles=["admin"])
+def execute_recovery_route():
+    try:
+        body = request.get_json(silent=True) or {}
+        incident_id = body.get("incidentId") or body.get("incident_id")
+        force = body.get("force", False)
+
+        if not incident_id:
+            return jsonify({
+                "success": False,
+                "message": "incidentId is required",
+            }), 400
+
+        operator = "SYSTEM"
+        if hasattr(g, "user") and g.user:
+            operator = g.user.get("username") or "admin"
+
+        res = execute_recovery(
+            str(incident_id).strip(),
+            force=bool(force),
+            operator=operator,
+        )
+        status_code = 200 if res.get("success") else 400
+        return jsonify(res), status_code
+    except Exception as error:  # noqa: BLE001
+        return jsonify({
+            "success": False,
+            "message": "Recovery execution failed",
+            "error": str(error),
+        }), 500
+
+
+@storm_bp.route("/storm/recovery/retry", methods=["POST"])
+@require_auth(roles=["admin"])
+def retry_recovery_route():
+    try:
+        body = request.get_json(silent=True) or {}
+        incident_id = body.get("incidentId") or body.get("incident_id")
+
+        if not incident_id:
+            return jsonify({
+                "success": False,
+                "message": "incidentId is required",
+            }), 400
+
+        operator = "SYSTEM"
+        if hasattr(g, "user") and g.user:
+            operator = g.user.get("username") or "admin"
+
+        res = retry_recovery(
+            str(incident_id).strip(),
+            operator=operator,
+        )
+        status_code = 200 if res.get("success") else 400
+        return jsonify(res), status_code
+    except Exception as error:  # noqa: BLE001
+        return jsonify({
+            "success": False,
+            "message": "Recovery retry failed",
+            "error": str(error),
+        }), 500
+
+
+@storm_bp.route("/storm/recovery/history", methods=["GET"])
+@require_auth()
+def list_recovery_history_route():
+    try:
+        page, limit = parse_pagination(default_limit=50, max_limit=500)
+        skip = (page - 1) * limit
+        rows, total = get_recovery_history(skip=skip, limit=limit)
+        total_pages = max(1, (total + limit - 1) // limit)
+        return jsonify({
+            "success": True,
+            "count": len(rows),
+            "data": [serialize_recovery_log(row) for row in rows],
+            **pagination_payload(total, page, limit, total_pages),
+        }), 200
+    except Exception as error:  # noqa: BLE001
+        return jsonify({
+            "success": False,
+            "message": "Failed to retrieve recovery history",
+            "error": str(error),
+        }), 500
+
+
+@storm_bp.route("/storm/recovery/history/<incident_id>", methods=["GET"])
+@require_auth()
+def get_recovery_history_detail_route(incident_id: str):
+    try:
+        rows, _ = get_recovery_history(incident_id=str(incident_id).strip())
+        return jsonify({
+            "success": True,
+            "count": len(rows),
+            "data": [serialize_recovery_log(row) for row in rows],
+        }), 200
+    except Exception as error:  # noqa: BLE001
+        return jsonify({
+            "success": False,
+            "message": f"Failed to retrieve recovery logs for incident {incident_id}",
+            "error": str(error),
+        }), 500
+
 

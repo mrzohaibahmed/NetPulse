@@ -9,9 +9,9 @@ from datetime import datetime, timezone
 from typing import Any
 
 from bson import ObjectId
-from pymongo.errors import DuplicateKeyError
 
 from services.storm.incident import append_timeline_event, get_incident
+from services.storm.lock_service import LockService
 from services.storm.mitigation.audit import record_mitigation_history
 from services.storm.mitigation.rollback import execute_rollback
 from services.storm.mitigation.ssh_executor import SSHMitigationExecutor
@@ -81,40 +81,10 @@ def execute_mitigation(
     if not device:
         raise ValueError(f"Device not found for ID: {device_id}")
 
-    # 1) Concurrency Locking (Distributed Mongo Lock)
-    lock_coll = db.storm_mitigation_locks
-    device_lock_id = f"device:{device_id}"
-    interface_lock_id = f"interface:{device_id}:{interface}"
-
-    try:
-        lock_coll.insert_one(
-            {
-                "_id": device_lock_id,
-                "deviceId": _oid(device_id),
-                "createdAt": datetime.now(timezone.utc),
-            }
-        )
-    except DuplicateKeyError as exc:
-        raise ValueError(
-            f"Mitigation lock conflict: Device {device_id} is currently executing another mitigation."
-        ) from exc
-
-    try:
-        lock_coll.insert_one(
-            {
-                "_id": interface_lock_id,
-                "deviceId": _oid(device_id),
-                "interface": interface,
-                "createdAt": datetime.now(timezone.utc),
-            }
-        )
-    except DuplicateKeyError as exc:
-        # Revert device lock
-        lock_coll.delete_one({"_id": device_lock_id})
-        raise ValueError(
-            f"Mitigation lock conflict: Interface {interface} on Device {device_id} "
-            f"is currently executing another mitigation."
-        ) from exc
+    # 1) Concurrency Locking (shared with Safety and Recovery)
+    device_lock_id, interface_lock_id = LockService.acquire_mitigation_locks(
+        _oid(device_id), interface
+    )
 
     # Execution State variables
     commands_executed: list[str] = []
@@ -264,7 +234,7 @@ def execute_mitigation(
 
     finally:
         # Concurrency Release Locks
-        lock_coll.delete_many({"_id": {"$in": [device_lock_id, interface_lock_id]}})
+        LockService.release_mitigation_locks(device_lock_id, interface_lock_id)
 
 
 def rollback_mitigation(
@@ -289,38 +259,10 @@ def rollback_mitigation(
     if not device:
         raise ValueError(f"Device not found for ID: {device_id}")
 
-    # Concurrency Locking (Distributed Mongo Lock)
-    lock_coll = db.storm_mitigation_locks
-    device_lock_id = f"device:{device_id}"
-    interface_lock_id = f"interface:{device_id}:{interface}"
-
-    try:
-        lock_coll.insert_one(
-            {
-                "_id": device_lock_id,
-                "deviceId": _oid(device_id),
-                "createdAt": datetime.now(timezone.utc),
-            }
-        )
-    except DuplicateKeyError as exc:
-        raise ValueError(
-            f"Mitigation lock conflict: Device {device_id} is busy with another mitigation."
-        ) from exc
-
-    try:
-        lock_coll.insert_one(
-            {
-                "_id": interface_lock_id,
-                "deviceId": _oid(device_id),
-                "interface": interface,
-                "createdAt": datetime.now(timezone.utc),
-            }
-        )
-    except DuplicateKeyError as exc:
-        lock_coll.delete_one({"_id": device_lock_id})
-        raise ValueError(
-            f"Mitigation lock conflict: Interface {interface} on Device {device_id} is busy."
-        ) from exc
+    # Concurrency Locking (shared with Safety and Recovery)
+    device_lock_id, interface_lock_id = LockService.acquire_mitigation_locks(
+        _oid(device_id), interface
+    )
 
     append_timeline_event(
         incident_id,
@@ -401,5 +343,5 @@ def rollback_mitigation(
             }
 
     finally:
-        lock_coll.delete_many({"_id": {"$in": [device_lock_id, interface_lock_id]}})
+        LockService.release_mitigation_locks(device_lock_id, interface_lock_id)
 

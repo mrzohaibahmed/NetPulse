@@ -9,9 +9,10 @@ Run::
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
 from services.storm.safety import SafetyEngine
-from services.storm.safety_history import SafetyContext
+from services.storm.safety_history import SafetyContext, is_mitigation_running
 from services.storm.safety_rules import SafetyConfig
 
 
@@ -96,6 +97,23 @@ class SafetyEngineTests(unittest.TestCase):
         self.assertFalse(result.safe)
         self.assertEqual(result.failed_rule, "RULE_3")
 
+    def test_normal_mitigation_still_validates_ssh(self):
+        result = self._eval(_base_ctx(ssh_reachable=None))
+        self.assertFalse(result.safe)
+        self.assertEqual(result.failed_rule, "RULE_3")
+
+    def test_recovery_policy_can_skip_only_ssh_rule(self):
+        result = self.engine.evaluate(
+            "dev1",
+            "Gi1/0/10",
+            context=_base_ctx(ssh_reachable=None),
+            probe_ssh=False,
+            skip_check_codes={"RULE_3"},
+            persist=False,
+        )
+        self.assertTrue(result.safe)
+        self.assertIsNone(result.checks.get("sshReachable"))
+
     def test_maintenance_mode(self):
         result = self._eval(_base_ctx(extras={"maintenance_mode": True}))
         self.assertFalse(result.safe)
@@ -128,6 +146,12 @@ class SafetyEngineTests(unittest.TestCase):
         self.assertFalse(result.safe)
         self.assertEqual(result.failed_rule, "RULE_7")
         self.assertTrue(result.checks.get("mitigationRunning"))
+
+    @patch("services.storm.safety_history.LockService.is_mitigation_active")
+    def test_safety_uses_shared_mitigation_lock_service(self, mock_is_active):
+        mock_is_active.return_value = True
+        self.assertTrue(is_mitigation_running("507f1f77bcf86cd799439011", "Gi1/0/10"))
+        mock_is_active.assert_called_once()
 
     def test_automation_disabled(self):
         engine = SafetyEngine(
