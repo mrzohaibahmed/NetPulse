@@ -474,3 +474,27 @@ def create_safety_document(
         "status": result.status,
         "timestamp": now,
     }
+
+
+@dataclass
+class PrepareResult:
+    """Public result of ``orchestrator.prepare`` (no mitigation executed)."""
+
+    ready: bool
+    status: str
+    incident_id: Optional[str]
+    device_id: str
+    interface: str
+    reason: str = ""
+    context: dict[str, Any] = field(default_factory=dict)
+
+    def to_api_dict(self) -> dict[str, Any]:
+        return {
+            "ready": self.ready,
+            "status": self.status,
+            "incidentId": self.incident_id,
+            "deviceId": self.device_id,
+            "interface": self.interface,
+            "reason": self.reason,
+            "context": self.context,
+        }

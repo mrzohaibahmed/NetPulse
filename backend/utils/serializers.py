@@ -325,3 +325,21 @@ def serialize_safety_result(result: dict) -> dict:
         "timestamp": format_datetime(result.get("timestamp")),
     }
 
+
+def serialize_incident(doc: dict) -> dict:
+    """Serialise a document from the ``storm_incidents`` collection."""
+    from services.storm.diagnostics.serializer import (  # noqa: PLC0415
+        serialize_incident as _serialize,
+    )
+
+    return _serialize(doc)
+
+
+def serialize_prepare_result(result: dict) -> dict:
+    """Serialise an orchestrator.prepare() response."""
+    from services.storm.diagnostics.serializer import (  # noqa: PLC0415
+        serialize_prepare_result as _serialize,
+    )
+
+    return _serialize(result)
+

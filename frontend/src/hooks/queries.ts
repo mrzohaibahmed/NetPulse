@@ -37,6 +37,8 @@ import {
   getScanActivityChart,
   getSettings,
   getStormConfig,
+  getStormIncidents,
+  prepareAllStormMitigation,
   getUptimeReport,
   getUsers,
   importDevicesCsv,
@@ -497,6 +499,41 @@ export function useSafetyMutations() {
   })
 
   return { evaluateAll }
+}
+
+export function useStormIncidentsQuery(params: PaginationParams) {
+  return useQuery({
+    queryKey: queryKeys.incidents(params),
+    queryFn: () => getStormIncidents(params),
+    refetchInterval: ELIGIBILITY_INTERVAL,
+    placeholderData: (prev) => prev,
+  })
+}
+
+export function useOrchestratorMutations() {
+  const qc = useQueryClient()
+  const invalidate = () =>
+    Promise.all([
+      qc.invalidateQueries({ queryKey: ['storm-incidents'] }),
+      qc.invalidateQueries({ queryKey: ['safety'] }),
+    ])
+
+  const prepareAll = useMutation({
+    mutationFn: () => prepareAllStormMitigation({ probeSsh: true }),
+    onSuccess: async (res) => {
+      if ((res.errors ?? 0) > 0) {
+        toast.warning(
+          `${res.message || 'Prepare finished'} (${res.errors} error(s))`,
+        )
+      } else {
+        toast.success(res.message || 'Mitigation preparation complete')
+      }
+      await invalidate()
+    },
+    onError: (err: Error) => toast.error(err.message),
+  })
+
+  return { prepareAll }
 }
 
 export function useSettingsQuery(enabled = true) {

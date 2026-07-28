@@ -24,6 +24,8 @@ import type {
   ScanActivityChartPoint,
   SafetyResult,
   StormConfig,
+  StormIncident,
+  PrepareResult,
   UptimeRow,
   User,
 } from '../types'
@@ -528,6 +530,39 @@ export const evaluateAllSafety = (payload: { probeSsh?: boolean } = {}) =>
     errors: number
     disabled: boolean
   }>('/api/storm/safety/evaluate-all', {
+    method: 'POST',
+    body: payload,
+    timeoutMs: 300000,
+  })
+
+export const getStormIncidents = (params: PaginationParams = {}) =>
+  apiRequest<ApiListResponse<StormIncident>>(`/api/storm/incidents${toQuery(params)}`)
+
+export const getStormIncident = (incidentId: string) =>
+  apiRequest<ApiItemResponse<StormIncident>>(
+    `/api/storm/incidents/${encodeURIComponent(incidentId)}`,
+  )
+
+export const prepareStormMitigation = (payload: {
+  deviceId: string
+  interface: string
+  probeSsh?: boolean
+}) =>
+  apiRequest<ApiItemResponse<PrepareResult>>('/api/storm/orchestrator/prepare', {
+    method: 'POST',
+    body: payload,
+    timeoutMs: 180000,
+  })
+
+export const prepareAllStormMitigation = (payload: { probeSsh?: boolean } = {}) =>
+  apiRequest<{
+    success: boolean
+    message: string
+    total: number
+    ready: number
+    blocked: number
+    errors: number
+  }>('/api/storm/orchestrator/prepare-all', {
     method: 'POST',
     body: payload,
     timeoutMs: 300000,

@@ -492,6 +492,54 @@ export interface SafetyResult {
   timestamp?: string | null
 }
 
+export interface StormIncidentTrigger {
+  risk?: number | null
+  confirmation?: boolean
+  safety?: boolean
+}
+
+export interface StormIncidentTimelineEvent {
+  event: string
+  time?: string | null
+  detail?: string | null
+}
+
+export interface StormIncident {
+  _id?: string | null
+  incidentId: string
+  deviceId: string
+  interface: string
+  hostname?: string | null
+  ipAddress?: string | null
+  status: string
+  severity: string
+  trigger: StormIncidentTrigger
+  interfaceSnapshot?: Record<string, unknown>
+  switchportSnapshot?: Record<string, unknown>
+  macTable?: Record<string, unknown>
+  statistics?: Record<string, unknown>
+  neighbor?: Record<string, unknown> | null
+  deviceHealth?: Record<string, unknown>
+  eligibility?: Record<string, unknown> | null
+  risk?: Record<string, unknown> | null
+  confirmation?: Record<string, unknown> | null
+  safety?: Record<string, unknown> | null
+  diagnosticsMeta?: Record<string, unknown>
+  timeline: StormIncidentTimelineEvent[]
+  createdAt?: string | null
+  updatedAt?: string | null
+}
+
+export interface PrepareResult {
+  ready: boolean
+  status: string
+  incidentId?: string | null
+  deviceId: string
+  interface: string
+  reason?: string
+  context?: Record<string, unknown>
+}
+
 export interface ApiItemResponse<T> {
   success: boolean
   message?: string

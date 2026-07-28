@@ -6,6 +6,8 @@ Engines:
 - Risk Score
 - Confirmation
 - Safety
+- Diagnostics Capture
+- Mitigation Orchestrator (prepare only — never executes config)
 """
 
 from services.storm.confirmation import (
@@ -22,13 +24,16 @@ from services.storm.eligibility import (
     ensure_eligibility_indexes,
     get_eligibility_engine,
 )
+from services.storm.incident import ensure_incident_indexes
 from services.storm.models import (
     ConfirmationResult,
     EligibilityChecks,
     EligibilityResult,
+    PrepareResult,
     RiskScoreResult,
     SafetyResult,
 )
+from services.storm.orchestrator import prepare, prepare_all_safe
 from services.storm.risk_engine import (
     RiskScoreEngine,
     calculate_all_risks,
@@ -50,6 +55,7 @@ __all__ = [
     "EligibilityChecks",
     "EligibilityEngine",
     "EligibilityResult",
+    "PrepareResult",
     "RiskScoreEngine",
     "RiskScoreResult",
     "SafetyEngine",
@@ -64,10 +70,13 @@ __all__ = [
     "evaluate_safety",
     "ensure_confirmation_indexes",
     "ensure_eligibility_indexes",
+    "ensure_incident_indexes",
     "ensure_risk_indexes",
     "ensure_safety_indexes",
     "get_confirmation_engine",
     "get_eligibility_engine",
     "get_risk_engine",
     "get_safety_engine",
+    "prepare",
+    "prepare_all_safe",
 ]
