@@ -392,3 +392,85 @@ def create_confirmation_document(
         "resetReason": result.reset_reason,
         "timestamp": now,
     }
+
+
+# ---------------------------------------------------------------------------
+# Safety Engine models
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class SafetyResult:
+    """
+    Pre-mitigation safety decision.
+
+    Future Mitigation Engine consumes this via ``safety.evaluate(...)``.
+    """
+
+    safe: bool
+    reason: str
+    confidence: float = 99.0
+    failed_rule: Optional[str] = None
+    checks: dict[str, Any] = field(default_factory=dict)
+    timestamp: Optional[datetime] = None
+    device_id: Optional[str] = None
+    interface: Optional[str] = None
+    cooldown_remaining_seconds: int = 0
+    mitigation_attempts: int = 0
+    cpu_percent: Optional[float] = None
+    memory_percent: Optional[float] = None
+    status: str = "UNSAFE"  # SAFE | UNSAFE | WAITING
+
+    def to_api_dict(self) -> dict[str, Any]:
+        from datetime import timezone
+
+        from utils.serializers import format_datetime
+
+        ts = self.timestamp or datetime.now(timezone.utc)
+        return {
+            "safe": bool(self.safe),
+            "reason": self.reason,
+            "confidence": round(float(self.confidence), 2),
+            "failedRule": self.failed_rule,
+            "checks": dict(self.checks),
+            "timestamp": format_datetime(ts),
+            "deviceId": self.device_id,
+            "interface": self.interface,
+            "cooldownRemainingSeconds": int(self.cooldown_remaining_seconds),
+            "mitigationAttempts": int(self.mitigation_attempts),
+            "cpuPercent": self.cpu_percent,
+            "memoryPercent": self.memory_percent,
+            "status": self.status,
+        }
+
+
+def create_safety_document(
+    *,
+    device_id,
+    interface: str,
+    result: SafetyResult,
+    timestamp: Optional[datetime] = None,
+    hostname: Optional[str] = None,
+    ip_address: Optional[str] = None,
+) -> dict[str, Any]:
+    """Factory for append-only ``storm_safety_history`` documents."""
+    from datetime import timezone
+
+    now = timestamp or result.timestamp or datetime.now(timezone.utc)
+    return {
+        "deviceId": device_id,
+        "interface": interface,
+        "hostname": hostname,
+        "ipAddress": ip_address,
+        "safe": bool(result.safe),
+        "reason": result.reason,
+        "failedRule": result.failed_rule,
+        "confidence": round(float(result.confidence), 2),
+        "checks": dict(result.checks),
+        "cooldownRemainingSeconds": int(result.cooldown_remaining_seconds),
+        "mitigationAttempts": int(result.mitigation_attempts),
+        "cpuPercent": result.cpu_percent,
+        "memoryPercent": result.memory_percent,
+        "status": result.status,
+        "timestamp": now,
+    }

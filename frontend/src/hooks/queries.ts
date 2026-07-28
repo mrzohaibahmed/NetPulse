@@ -11,6 +11,7 @@ import {
   evaluateAllEligibility,
   calculateAllRisk,
   evaluateAllConfirmation,
+  evaluateAllSafety,
   getAlerts,
   getConfirmationResults,
   getDashboardStatistics,
@@ -32,6 +33,7 @@ import {
   getRecentHistory,
   getResponseTimeChart,
   getRiskResults,
+  getSafetyResults,
   getScanActivityChart,
   getSettings,
   getStormConfig,
@@ -454,6 +456,40 @@ export function useConfirmationMutations() {
         )
       } else {
         toast.success(res.message || 'Confirmation evaluation complete')
+      }
+      await invalidate()
+    },
+    onError: (err: Error) => toast.error(err.message),
+  })
+
+  return { evaluateAll }
+}
+
+export function useSafetyQuery(params: PaginationParams) {
+  return useQuery({
+    queryKey: queryKeys.safety(params),
+    queryFn: () => getSafetyResults(params),
+    refetchInterval: ELIGIBILITY_INTERVAL,
+    placeholderData: (prev) => prev,
+  })
+}
+
+export function useSafetyMutations() {
+  const qc = useQueryClient()
+  const invalidate = () =>
+    Promise.all([qc.invalidateQueries({ queryKey: ['safety'] })])
+
+  const evaluateAll = useMutation({
+    mutationFn: () => evaluateAllSafety({ probeSsh: true }),
+    onSuccess: async (res) => {
+      if (res.disabled) {
+        toast.warning(res.message || 'Safety evaluation is disabled')
+      } else if ((res.errors ?? 0) > 0) {
+        toast.warning(
+          `${res.message || 'Safety finished'} (${res.errors} error(s))`,
+        )
+      } else {
+        toast.success(res.message || 'Safety evaluation complete')
       }
       await invalidate()
     },

@@ -2,9 +2,10 @@
 Storm Protection package.
 
 Engines:
-- Port Eligibility (Milestone 1)
-- Risk Score (Milestone 2)
-- Confirmation (Milestone 3)
+- Port Eligibility
+- Risk Score
+- Confirmation
+- Safety
 """
 
 from services.storm.confirmation import (
@@ -26,6 +27,7 @@ from services.storm.models import (
     EligibilityChecks,
     EligibilityResult,
     RiskScoreResult,
+    SafetyResult,
 )
 from services.storm.risk_engine import (
     RiskScoreEngine,
@@ -33,6 +35,13 @@ from services.storm.risk_engine import (
     calculate_risk,
     ensure_risk_indexes,
     get_risk_engine,
+)
+from services.storm.safety import (
+    SafetyEngine,
+    ensure_safety_indexes,
+    evaluate as evaluate_safety,
+    evaluate_all_safety,
+    get_safety_engine,
 )
 
 __all__ = [
@@ -43,16 +52,22 @@ __all__ = [
     "EligibilityResult",
     "RiskScoreEngine",
     "RiskScoreResult",
+    "SafetyEngine",
+    "SafetyResult",
     "calculate_all_risks",
     "calculate_risk",
     "evaluate",
     "evaluate_all_confirmations",
     "evaluate_all_interfaces",
+    "evaluate_all_safety",
     "evaluate_confirmation",
+    "evaluate_safety",
     "ensure_confirmation_indexes",
     "ensure_eligibility_indexes",
     "ensure_risk_indexes",
+    "ensure_safety_indexes",
     "get_confirmation_engine",
     "get_eligibility_engine",
     "get_risk_engine",
+    "get_safety_engine",
 ]

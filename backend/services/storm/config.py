@@ -66,11 +66,13 @@ def reload_storm_config() -> StormConfig:
 def storm_config_as_dict() -> dict:
     """Public helper returning the active storm_config document shape."""
     from services.storm.confirmation_rules import get_confirmation_config
+    from services.storm.safety_rules import get_safety_config
     from services.storm.thresholds import get_risk_config
 
     payload = get_storm_config().to_dict()
     payload["risk"] = get_risk_config().to_dict()
     payload["confirmation"] = get_confirmation_config().to_dict()
+    payload["safety"] = get_safety_config().to_dict()
     return payload
 
 

@@ -21,9 +21,10 @@ from scheduler import start_scheduler
 from services.interface_collection.collector import ensure_interface_indexes
 from services.interface_collection.stats_collector import ensure_interface_stats_indexes
 from services.settings_service import ensure_settings
-from services.storm.eligibility import ensure_eligibility_indexes
 from services.storm.confirmation import ensure_confirmation_indexes
+from services.storm.eligibility import ensure_eligibility_indexes
 from services.storm.risk_engine import ensure_risk_indexes
+from services.storm.safety import ensure_safety_indexes
 from services.user_service import ensure_default_admin
 
 # Serve built frontend (Vite) if present.
@@ -100,6 +101,7 @@ def bootstrap():
     ensure_eligibility_indexes()
     ensure_risk_indexes()
     ensure_confirmation_indexes()
+    ensure_safety_indexes()
 
 
 bootstrap()

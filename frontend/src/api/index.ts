@@ -22,6 +22,7 @@ import type {
   RiskResult,
   ConfirmationResult,
   ScanActivityChartPoint,
+  SafetyResult,
   StormConfig,
   UptimeRow,
   User,
@@ -53,6 +54,9 @@ function toQuery(params: PaginationParams = {}): string {
   }
   if (params.state && params.state !== 'all') {
     search.set('state', params.state)
+  }
+  if (params.safetyStatus && params.safetyStatus !== 'all') {
+    search.set('status', params.safetyStatus)
   }
 
   const query = search.toString()
@@ -507,5 +511,24 @@ export const evaluateAllConfirmation = () =>
     disabled: boolean
   }>('/api/storm/confirmation/evaluate-all', {
     method: 'POST',
+    timeoutMs: 300000,
+  })
+
+export const getSafetyResults = (params: PaginationParams = {}) =>
+  apiRequest<ApiListResponse<SafetyResult>>(`/api/storm/safety${toQuery(params)}`)
+
+export const evaluateAllSafety = (payload: { probeSsh?: boolean } = {}) =>
+  apiRequest<{
+    success: boolean
+    message: string
+    total: number
+    safe: number
+    unsafe: number
+    waiting: number
+    errors: number
+    disabled: boolean
+  }>('/api/storm/safety/evaluate-all', {
+    method: 'POST',
+    body: payload,
     timeoutMs: 300000,
   })
