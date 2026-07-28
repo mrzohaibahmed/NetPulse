@@ -94,9 +94,28 @@ def _run_interface_stats_then_eligibility() -> None:
 
         # Diagnostics + incident prep only — never executes mitigation.
         prepare_all_safe(probe_ssh=True)
+
+        # Automatic Mitigation Engine execution check
+        from services.settings_service import get_settings  # noqa: PLC0415
+        settings = get_settings()
+        if settings.get("mitigationMode") == "automatic":
+            from config.database import db  # noqa: PLC0415
+            from services.storm.mitigation.engine import execute_mitigation  # noqa: PLC0415
+
+            ready_incidents = list(db.storm_incidents.find({"status": "READY_FOR_MITIGATION"}))
+            if ready_incidents:
+                logger.info(
+                    "[SCHEDULER] Automatic mitigation active. Found %d ready incident(s)",
+                    len(ready_incidents),
+                )
+                for inc in ready_incidents:
+                    inc_id = inc.get("incidentId")
+                    logger.info("[SCHEDULER] Auto-executing mitigation for %s", inc_id)
+                    res = execute_mitigation(inc_id, "SHUTDOWN", operator="SYSTEM")
+                    logger.info("[SCHEDULER] Auto-mitigation status for %s: %s", inc_id, res.get("status"))
     except Exception as exc:  # noqa: BLE001
         logger.error(
-            "Orchestrator prepare failed after safety: %s",
+            "Orchestrator prepare / automatic mitigation failed after safety: %s",
             exc,
         )
 

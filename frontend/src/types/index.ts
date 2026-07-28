@@ -168,6 +168,7 @@ export interface AppSettings {
     toAddress: string
     useTls: boolean
   }
+  mitigationMode?: string
   updatedAt: string | null
 }
 
@@ -551,3 +552,23 @@ export interface ApiError {
   message: string
   error?: string
 }
+
+export interface MitigationLog {
+  _id?: string | null
+  incidentId: string
+  deviceId: string
+  interface: string
+  strategy: string
+  status: string
+  commandsExecuted: string[]
+  verificationResult: {
+    success?: boolean
+    output?: string
+    error?: string
+    note?: string
+  }
+  rollbackPerformed: boolean
+  operator: string
+  timestamp: string
+}
+

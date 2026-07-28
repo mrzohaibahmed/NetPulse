@@ -39,6 +39,10 @@ import {
   getStormConfig,
   getStormIncidents,
   prepareAllStormMitigation,
+  getMitigationHistory,
+  getMitigationHistoryDetail,
+  executeStormMitigation,
+  rollbackStormMitigation,
   getUptimeReport,
   getUsers,
   importDevicesCsv,
@@ -534,6 +538,63 @@ export function useOrchestratorMutations() {
   })
 
   return { prepareAll }
+}
+
+export function useMitigationHistoryQuery(params: PaginationParams) {
+  return useQuery({
+    queryKey: queryKeys.mitigationHistory(params),
+    queryFn: () => getMitigationHistory(params),
+    refetchInterval: 10_000,
+    placeholderData: (prev) => prev,
+  })
+}
+
+export function useMitigationDetailQuery(incidentId: string, enabled = false) {
+  return useQuery({
+    queryKey: queryKeys.mitigationDetail(incidentId),
+    queryFn: () => getMitigationHistoryDetail(incidentId),
+    enabled: enabled && !!incidentId,
+  })
+}
+
+export function useMitigationMutations() {
+  const qc = useQueryClient()
+  const invalidate = () =>
+    Promise.all([
+      qc.invalidateQueries({ queryKey: ['storm-incidents'] }),
+      qc.invalidateQueries({ queryKey: ['mitigation-history'] }),
+      qc.invalidateQueries({ queryKey: ['safety'] }),
+    ])
+
+  const execute = useMutation({
+    mutationFn: (payload: { incidentId: string; strategy?: string }) =>
+      executeStormMitigation(payload),
+    onSuccess: async (res) => {
+      if (res.success) {
+        toast.success(`Mitigation completed successfully!`)
+      } else {
+        toast.error(`Mitigation failed: ${res.error || 'Check history'}`)
+      }
+      await invalidate()
+    },
+    onError: (err: Error) => toast.error(err.message),
+  })
+
+  const rollback = useMutation({
+    mutationFn: (payload: { incidentId: string }) =>
+      rollbackStormMitigation(payload),
+    onSuccess: async (res) => {
+      if (res.success) {
+        toast.success(`Rollback completed successfully!`)
+      } else {
+        toast.error(`Rollback failed: ${res.error || 'Check history'}`)
+      }
+      await invalidate()
+    },
+    onError: (err: Error) => toast.error(err.message),
+  })
+
+  return { execute, rollback }
 }
 
 export function useSettingsQuery(enabled = true) {

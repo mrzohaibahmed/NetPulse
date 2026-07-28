@@ -42,6 +42,10 @@ import {
   useSafetyQuery,
   useStormConfigQuery,
   useStormIncidentsQuery,
+  useMitigationHistoryQuery,
+  useMitigationMutations,
+  useSettingsQuery,
+  useSettingsMutation,
 } from '@/hooks/queries'
 import { cn } from '@/lib/utils'
 import type {
@@ -51,6 +55,7 @@ import type {
   RiskResult,
   SafetyResult,
   StormIncident,
+  MitigationLog,
 } from '@/types'
 import { formatDateTime, formatRelative } from '@/utils/format'
 
@@ -225,6 +230,36 @@ function IncidentStatusBadge({ status }: { status: string }) {
   )
 }
 
+function MitigationStatusBadge({ status }: { status: string }) {
+  const value = (status || '').toUpperCase()
+  if (value === 'SUCCESS') {
+    return (
+      <Badge variant="success" className="font-semibold uppercase tracking-wide">
+        Success
+      </Badge>
+    )
+  }
+  if (value === 'ROLLBACK_SUCCESS') {
+    return (
+      <Badge variant="warning" className="font-semibold uppercase tracking-wide">
+        Rolled Back
+      </Badge>
+    )
+  }
+  if (value === 'ROLLBACK_FAILURE') {
+    return (
+      <Badge variant="danger" className="font-semibold uppercase tracking-wide">
+        Rollback Failed
+      </Badge>
+    )
+  }
+  return (
+    <Badge variant="danger" className="font-semibold uppercase tracking-wide">
+      {status}
+    </Badge>
+  )
+}
+
 function JsonSection({
   title,
   open,
@@ -333,6 +368,17 @@ export function StormProtectionPage() {
   const [selectedIncident, setSelectedIncident] = useState<StormIncident | null>(null)
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({})
 
+  // Mitigation Engine Hooks and States
+  const [mitQuery, setMitQuery] = useState('')
+  const [debouncedMitQuery, setDebouncedMitQuery] = useState('')
+  const [mitPage, setMitPage] = useState(1)
+  const [mitLimit, setMitLimit] = useState(DEFAULT_LIMIT)
+  const [selectedMitigation, setSelectedMitigation] = useState<MitigationLog | null>(null)
+
+  const settingsQuery = useSettingsQuery()
+  const settingsMutation = useSettingsMutation()
+  const mitigationMutations = useMitigationMutations()
+
   useEffect(() => {
     const timer = window.setTimeout(() => setDebouncedQuery(query), 300)
     return () => window.clearTimeout(timer)
@@ -359,6 +405,11 @@ export function StormProtectionPage() {
   }, [incidentQuery])
 
   useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedMitQuery(mitQuery), 300)
+    return () => window.clearTimeout(timer)
+  }, [mitQuery])
+
+  useEffect(() => {
     setPage(1)
   }, [debouncedQuery, eligibleFilter, limit])
 
@@ -377,6 +428,10 @@ export function StormProtectionPage() {
   useEffect(() => {
     setIncidentPage(1)
   }, [debouncedIncidentQuery, incidentStatusFilter, incidentLimit])
+
+  useEffect(() => {
+    setMitPage(1)
+  }, [debouncedMitQuery, mitLimit])
 
   const eligibilityQuery = useEligibilityQuery({
     page,
@@ -416,6 +471,12 @@ export function StormProtectionPage() {
     limit: incidentLimit,
     q: debouncedIncidentQuery,
     status: incidentStatusFilter === 'all' ? undefined : incidentStatusFilter,
+  })
+
+  const mitigationHistoryQuery = useMitigationHistoryQuery({
+    page: mitPage,
+    limit: mitLimit,
+    q: debouncedMitQuery,
   })
 
   const selectedHistoryQuery = useInterfaceRiskQuery(
@@ -500,7 +561,9 @@ export function StormProtectionPage() {
     riskMutations.calculateAll.isPending ||
     confirmationMutations.evaluateAll.isPending ||
     safetyMutations.evaluateAll.isPending ||
-    orchestratorMutations.prepareAll.isPending
+    orchestratorMutations.prepareAll.isPending ||
+    mitigationMutations.execute.isPending ||
+    mitigationMutations.rollback.isPending
 
   const refreshAll = () => {
     void eligibilityQuery.refetch()
@@ -508,6 +571,7 @@ export function StormProtectionPage() {
     void confirmationQuery.refetch()
     void safetyListQuery.refetch()
     void incidentsQuery.refetch()
+    void mitigationHistoryQuery.refetch()
     if (selectedRisk) void selectedHistoryQuery.refetch()
   }
 
@@ -1584,6 +1648,59 @@ export function StormProtectionPage() {
                       onToggle={() => toggleSection('timeline')}
                       data={selectedIncident.timeline}
                     />
+                    {isAdmin && (
+                      <div className="border-t border-border/50 pt-3 mt-3 space-y-2">
+                        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                          Mitigation Controls
+                        </p>
+                        {['READY_FOR_MITIGATION', 'PREPARED', 'OPEN', 'MITIGATION_FAILED'].includes(selectedIncident.status) && (
+                          <Button
+                            type="button"
+                            className="w-full bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                            disabled={mitigationMutations.execute.isPending}
+                            onClick={() =>
+                              mitigationMutations.execute.mutate({
+                                incidentId: selectedIncident.incidentId || '',
+                                strategy: 'SHUTDOWN',
+                              })
+                            }
+                          >
+                            {mitigationMutations.execute.isPending ? 'Executing Shutdown…' : 'Execute Shutdown'}
+                          </Button>
+                        )}
+                        {selectedIncident.status === 'MITIGATED' && (
+                          <div className="flex gap-2">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="flex-1 border-destructive text-destructive hover:bg-destructive/10"
+                              disabled={mitigationMutations.rollback.isPending}
+                              onClick={() =>
+                                mitigationMutations.rollback.mutate({
+                                  incidentId: selectedIncident.incidentId || '',
+                                })
+                              }
+                            >
+                              {mitigationMutations.rollback.isPending ? 'Rolling back…' : 'Rollback'}
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              className="flex-1"
+                              disabled={mitigationMutations.execute.isPending}
+                              onClick={() =>
+                                mitigationMutations.execute.mutate({
+                                  incidentId: selectedIncident.incidentId || '',
+                                  strategy: 'NO_SHUTDOWN',
+                                })
+                              }
+                            >
+                              {mitigationMutations.execute.isPending ? 'Recovering…' : 'Recover Port'}
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    )}
                     <Button
                       type="button"
                       variant="outline"
@@ -1608,6 +1725,215 @@ export function StormProtectionPage() {
             limit={incidentLimit}
             onPageChange={setIncidentPage}
             onLimitChange={setIncidentLimit}
+          />
+        ) : null}
+      </section>
+
+      {/* ── Mitigation History ──────────────────────────────────────── */}
+      <section className="space-y-4">
+        <div>
+          <h2 className="text-lg font-semibold tracking-tight">Mitigation Orchestrator & Execution</h2>
+          <p className="text-sm text-muted-foreground">
+            Execute manual or automatic port shutdown mitigations and rollback recovery.
+          </p>
+        </div>
+
+        {/* Runtime Mitigation Mode Configuration */}
+        <Card className="border-primary/20 bg-secondary/10">
+          <CardContent className="flex flex-wrap items-center justify-between gap-4 p-4">
+            <div className="space-y-1">
+              <p className="text-sm font-semibold">Mitigation Automation Mode</p>
+              <p className="text-xs text-muted-foreground">
+                Current active mode:{' '}
+                <span className="font-semibold text-primary uppercase">
+                  {settingsQuery.data?.mitigationMode || 'automatic'}
+                </span>
+              </p>
+            </div>
+            {isAdmin ? (
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={settingsQuery.data?.mitigationMode === 'automatic' ? 'default' : 'outline'}
+                  disabled={settingsMutation.isPending}
+                  onClick={() => settingsMutation.mutate({ mitigationMode: 'automatic' })}
+                >
+                  Automatic Mode
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={settingsQuery.data?.mitigationMode === 'manual' ? 'default' : 'outline'}
+                  disabled={settingsMutation.isPending}
+                  onClick={() => settingsMutation.mutate({ mitigationMode: 'manual' })}
+                >
+                  Manual Approval
+                </Button>
+              </div>
+            ) : (
+              <Badge variant="outline" className="uppercase">
+                Admin Configurable Only
+              </Badge>
+            )}
+          </CardContent>
+        </Card>
+
+        <div className="flex flex-wrap gap-3">
+          <Input
+            type="search"
+            className="max-w-sm"
+            placeholder="Search mitigation log by incident..."
+            value={mitQuery}
+            onChange={(e) => setMitQuery(e.target.value)}
+          />
+        </div>
+
+        {mitigationHistoryQuery.isLoading ? (
+          <TableSkeleton rows={6} />
+        ) : mitigationHistoryQuery.isError ? (
+          <ErrorState
+            title="Unable to load mitigation history"
+            message={
+              mitigationHistoryQuery.error instanceof Error
+                ? mitigationHistoryQuery.error.message
+                : 'Unexpected error'
+            }
+            onRetry={() => void mitigationHistoryQuery.refetch()}
+          />
+        ) : (mitigationHistoryQuery.data?.data ?? []).length === 0 ? (
+          <EmptyState
+            icon={Activity}
+            title="No mitigation logs found"
+            description="Run a port mitigation strategy manually from the Storm Incidents panel, or enable Automatic Mode for automated executions."
+          />
+        ) : (
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1.55fr)_minmax(320px,1fr)]">
+            <Card>
+              <CardContent className="p-0">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Incident ID</TableHead>
+                      <TableHead>Interface</TableHead>
+                      <TableHead>Device</TableHead>
+                      <TableHead>Strategy</TableHead>
+                      <TableHead>Execution Status</TableHead>
+                      <TableHead>Rollback Status</TableHead>
+                      <TableHead>Operator</TableHead>
+                      <TableHead>Execution Time</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {(mitigationHistoryQuery.data?.data ?? []).map((row) => {
+                      const active = selectedMitigation?._id === row._id
+                      return (
+                        <TableRow
+                          key={row._id || row.incidentId}
+                          className={cn('cursor-pointer', active && 'bg-primary/10')}
+                          onClick={() => setSelectedMitigation(row)}
+                        >
+                          <TableCell className="mono text-xs font-medium">
+                            {row.incidentId}
+                          </TableCell>
+                          <TableCell className="font-medium">{row.interface}</TableCell>
+                          <TableCell>
+                            <span className="truncate text-xs font-mono text-muted-foreground block max-w-[120px]">
+                              {row.deviceId}
+                            </span>
+                          </TableCell>
+                          <TableCell className="text-xs uppercase font-semibold text-sky-400">
+                            {row.strategy}
+                          </TableCell>
+                          <TableCell>
+                            <MitigationStatusBadge status={row.status} />
+                          </TableCell>
+                          <TableCell>
+                            {row.rollbackPerformed ? (
+                              <Badge variant="warning">Performed</Badge>
+                            ) : (
+                              <span className="text-muted-foreground text-xs">—</span>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-sm font-mono text-muted-foreground">
+                            {row.operator}
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
+                            {formatRelative(row.timestamp) || '—'}
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">
+                  {selectedMitigation
+                    ? `Mitigation for ${selectedMitigation.incidentId}`
+                    : 'Select a log row'}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {!selectedMitigation ? (
+                  <p className="text-sm text-muted-foreground">
+                    Click a row to inspect execution command logs and verification outputs.
+                  </p>
+                ) : (
+                  <>
+                    <div className="space-y-1">
+                      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        Mitigation Context
+                      </p>
+                      <div className="text-sm space-y-1">
+                        <p>Interface: <span className="font-semibold text-primary">{selectedMitigation.interface}</span></p>
+                        <p>Operator: <span className="font-mono text-muted-foreground">{selectedMitigation.operator}</span></p>
+                        <p>Status: <MitigationStatusBadge status={selectedMitigation.status} /></p>
+                        <p>Rollback Triggered: <span className="font-semibold">{selectedMitigation.rollbackPerformed ? 'Yes' : 'No'}</span></p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        Executed Command Log (Sanitized)
+                      </p>
+                      <div className="rounded-md bg-zinc-950 p-3 font-mono text-xs text-green-400 overflow-auto max-h-48 border border-border">
+                        {selectedMitigation.commandsExecuted.map((cmd, idx) => (
+                          <div key={idx} className="leading-relaxed">
+                            <span className="text-zinc-600 mr-2">$</span>
+                            {cmd}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        Verification / Output Detail
+                      </p>
+                      <pre className="rounded-md bg-zinc-950/80 p-3 font-mono text-xs text-zinc-300 overflow-auto max-h-48 border border-border">
+                        {JSON.stringify(selectedMitigation.verificationResult, null, 2)}
+                      </pre>
+                    </div>
+                  </>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
+        {(mitigationHistoryQuery.data?.totalPages ?? 1) > 1 ||
+        (mitigationHistoryQuery.data?.total ?? 0) > mitLimit ? (
+          <PaginationControls
+            page={mitPage}
+            totalPages={Math.max(mitigationHistoryQuery.data?.totalPages ?? 1, 1)}
+            total={mitigationHistoryQuery.data?.total ?? 0}
+            limit={mitLimit}
+            onPageChange={setMitPage}
+            onLimitChange={setMitLimit}
           />
         ) : null}
       </section>

@@ -26,6 +26,7 @@ import type {
   StormConfig,
   StormIncident,
   PrepareResult,
+  MitigationLog,
   UptimeRow,
   User,
 } from '../types'
@@ -567,3 +568,32 @@ export const prepareAllStormMitigation = (payload: { probeSsh?: boolean } = {}) 
     body: payload,
     timeoutMs: 300000,
   })
+
+export const getMitigationHistory = (params: PaginationParams = {}) =>
+  apiRequest<ApiListResponse<MitigationLog>>(`/api/storm/mitigation/history${toQuery(params)}`)
+
+export const getMitigationHistoryDetail = (incidentId: string) =>
+  apiRequest<{ success: boolean; count: number; data: MitigationLog[] }>(
+    `/api/storm/mitigation/history/${encodeURIComponent(incidentId)}`,
+  )
+
+export const executeStormMitigation = (payload: { incidentId: string; strategy?: string }) =>
+  apiRequest<{ success: boolean; status: string; incidentId: string; error?: string }>(
+    '/api/storm/mitigation/execute',
+    {
+      method: 'POST',
+      body: payload,
+      timeoutMs: 180000,
+    },
+  )
+
+export const rollbackStormMitigation = (payload: { incidentId: string }) =>
+  apiRequest<{ success: boolean; status: string; incidentId: string; error?: string }>(
+    '/api/storm/mitigation/rollback',
+    {
+      method: 'POST',
+      body: payload,
+      timeoutMs: 180000,
+    },
+  )
+
