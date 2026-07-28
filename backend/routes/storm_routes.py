@@ -43,7 +43,7 @@ from __future__ import annotations
 from urllib.parse import unquote
 
 from bson import ObjectId
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, g
 
 from config.database import db
 from services.storm.confirmation import (
@@ -81,6 +81,12 @@ from services.storm.safety import (
     evaluate_all_safety,
     get_latest_safety_results,
     get_safety_history,
+)
+from services.storm.mitigation import (
+    execute_mitigation,
+    rollback_mitigation,
+    get_mitigation_history,
+    serialize_mitigation_log,
 )
 from utils.auth import require_auth
 from utils.pagination import clamp_page, pagination_payload, parse_pagination
@@ -1168,3 +1174,113 @@ def prepare_all_orchestrator_route():
             "message": "Failed to run bulk orchestrator prepare",
             "error": str(error),
         }), 500
+
+
+# ---------------------------------------------------------------------------
+# Mitigation Engine REST APIs
+# ---------------------------------------------------------------------------
+
+
+@storm_bp.route("/storm/mitigation/execute", methods=["POST"])
+@require_auth(roles=["admin"])
+def execute_mitigation_route():
+    try:
+        body = request.get_json(silent=True) or {}
+        incident_id = body.get("incidentId") or body.get("incident_id")
+        strategy = body.get("strategy") or "SHUTDOWN"
+
+        if not incident_id:
+            return jsonify({
+                "success": False,
+                "message": "incidentId is required",
+            }), 400
+
+        operator = "SYSTEM"
+        if hasattr(g, "user") and g.user:
+            operator = g.user.get("username") or "admin"
+
+        res = execute_mitigation(
+            str(incident_id).strip(),
+            str(strategy).strip().upper(),
+            operator=operator,
+        )
+        status_code = 200 if res.get("success") else 400
+        return jsonify(res), status_code
+    except Exception as error:  # noqa: BLE001
+        return jsonify({
+            "success": False,
+            "message": "Mitigation execution failed",
+            "error": str(error),
+        }), 500
+
+
+@storm_bp.route("/storm/mitigation/rollback", methods=["POST"])
+@require_auth(roles=["admin"])
+def rollback_mitigation_route():
+    try:
+        body = request.get_json(silent=True) or {}
+        incident_id = body.get("incidentId") or body.get("incident_id")
+
+        if not incident_id:
+            return jsonify({
+                "success": False,
+                "message": "incidentId is required",
+            }), 400
+
+        operator = "SYSTEM"
+        if hasattr(g, "user") and g.user:
+            operator = g.user.get("username") or "admin"
+
+        res = rollback_mitigation(
+            str(incident_id).strip(),
+            operator=operator,
+        )
+        status_code = 200 if res.get("success") else 400
+        return jsonify(res), status_code
+    except Exception as error:  # noqa: BLE001
+        return jsonify({
+            "success": False,
+            "message": "Rollback execution failed",
+            "error": str(error),
+        }), 500
+
+
+@storm_bp.route("/storm/mitigation/history", methods=["GET"])
+@require_auth()
+def list_mitigation_history_route():
+    try:
+        page, limit = parse_pagination(default_limit=50, max_limit=500)
+        skip = (page - 1) * limit
+        rows, total = get_mitigation_history(skip=skip, limit=limit)
+        total_pages = max(1, (total + limit - 1) // limit)
+        return jsonify({
+            "success": True,
+            "count": len(rows),
+            "data": [serialize_mitigation_log(row) for row in rows],
+            **pagination_payload(total, page, limit, total_pages),
+        }), 200
+    except Exception as error:  # noqa: BLE001
+        return jsonify({
+            "success": False,
+            "message": "Failed to retrieve mitigation history",
+            "error": str(error),
+        }), 500
+
+
+@storm_bp.route("/storm/mitigation/history/<incident_id>", methods=["GET"])
+@require_auth()
+def get_mitigation_history_detail_route(incident_id: str):
+    try:
+        rows, _ = get_mitigation_history(incident_id=str(incident_id).strip())
+        return jsonify({
+            "success": True,
+            "count": len(rows),
+            "data": [serialize_mitigation_log(row) for row in rows],
+        }), 200
+    except Exception as error:  # noqa: BLE001
+        return jsonify({
+            "success": False,
+            "message": f"Failed to retrieve mitigation logs for incident {incident_id}",
+            "error": str(error),
+        }), 500
+

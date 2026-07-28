@@ -43,6 +43,7 @@ def update_settings_route():
                 "pingTimeoutMs": updated.get("pingTimeoutMs"),
                 "pingRetries": updated.get("pingRetries"),
                 "smtpUpdated": "smtp" in data,
+                "mitigationMode": updated.get("mitigationMode"),
             },
         )
 

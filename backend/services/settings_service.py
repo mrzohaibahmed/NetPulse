@@ -21,6 +21,7 @@ DEFAULT_SETTINGS = {
         "toAddress": (os.getenv("ALERT_EMAIL_TO") or "").strip(),
         "useTls": os.getenv("SMTP_USE_TLS", "true").lower() in ("1", "true", "yes"),
     },
+    "mitigationMode": os.getenv("STORM_MITIGATION_MODE", "automatic"),
     "updatedAt": None,
 }
 
@@ -58,6 +59,7 @@ def get_public_settings():
             "toAddress": smtp.get("toAddress", ""),
             "useTls": smtp.get("useTls", True),
         },
+        "mitigationMode": settings.get("mitigationMode", "automatic"),
         "updatedAt": settings.get("updatedAt"),
     }
 
@@ -96,6 +98,12 @@ def update_settings(payload: dict):
         if "port" in smtp:
             smtp["port"] = int(smtp["port"])
         update["smtp"] = smtp
+
+    if "mitigationMode" in payload and payload["mitigationMode"] is not None:
+        val = str(payload["mitigationMode"]).strip().lower()
+        if val not in ("automatic", "manual"):
+            raise ValueError("mitigationMode must be 'automatic' or 'manual'")
+        update["mitigationMode"] = val
 
     db.settings.update_one({"_id": SETTINGS_ID}, {"$set": update})
     return get_settings()
