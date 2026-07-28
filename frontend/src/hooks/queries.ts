@@ -10,7 +10,9 @@ import {
   discoverDeviceInterfaces,
   evaluateAllEligibility,
   calculateAllRisk,
+  evaluateAllConfirmation,
   getAlerts,
+  getConfirmationResults,
   getDashboardStatistics,
   getDashboardSummary,
   getDeviceHistory,
@@ -423,6 +425,42 @@ export function useRiskMutations() {
   })
 
   return { calculateAll }
+}
+
+export function useConfirmationQuery(params: PaginationParams) {
+  return useQuery({
+    queryKey: queryKeys.confirmation(params),
+    queryFn: () => getConfirmationResults(params),
+    refetchInterval: ELIGIBILITY_INTERVAL,
+    placeholderData: (prev) => prev,
+  })
+}
+
+export function useConfirmationMutations() {
+  const qc = useQueryClient()
+  const invalidate = () =>
+    Promise.all([
+      qc.invalidateQueries({ queryKey: ['confirmation'] }),
+    ])
+
+  const evaluateAll = useMutation({
+    mutationFn: () => evaluateAllConfirmation(),
+    onSuccess: async (res) => {
+      if (res.disabled) {
+        toast.warning(res.message || 'Confirmation is disabled')
+      } else if ((res.errors ?? 0) > 0) {
+        toast.warning(
+          `${res.message || 'Confirmation finished'} (${res.errors} error(s))`,
+        )
+      } else {
+        toast.success(res.message || 'Confirmation evaluation complete')
+      }
+      await invalidate()
+    },
+    onError: (err: Error) => toast.error(err.message),
+  })
+
+  return { evaluateAll }
 }
 
 export function useSettingsQuery(enabled = true) {

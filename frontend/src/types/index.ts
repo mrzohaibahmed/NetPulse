@@ -256,6 +256,7 @@ export interface PaginationParams {
   mode?: string
   eligible?: boolean
   severity?: string
+  state?: string
 }
 
 export interface InterfaceNeighbor {
@@ -393,9 +394,20 @@ export interface StormConfig {
     weights?: Record<string, number>
     thresholds?: Record<string, { low: number; medium: number; high: number; critical: number }>
   }
+  confirmation?: {
+    confirmationEnabled?: boolean
+    requiredConfirmations?: number
+    riskThreshold?: number
+    resetOnPollFailure?: boolean
+    resetOnIneligible?: boolean
+    resetOnLowRisk?: boolean
+    pollStaleSeconds?: number
+  }
 }
 
 export type RiskSeverity = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'
+
+export type ConfirmationState = 'NOT_CONFIRMED' | 'PENDING' | 'CONFIRMED'
 
 export interface RiskContributor {
   metric: string
@@ -425,6 +437,26 @@ export interface RiskResult {
   errorRate?: number | null
   discardRate?: number | null
   crcRate?: number | null
+}
+
+export interface ConfirmationResult {
+  _id?: string | null
+  deviceId: string
+  interface: string
+  hostname?: string | null
+  ipAddress?: string | null
+  confirmed: boolean
+  state: ConfirmationState | string
+  currentRisk: number
+  highestRisk: number
+  averageRisk: number
+  consecutiveHighSamples: number
+  requiredSamples: number
+  progress?: number
+  reason: string
+  reset?: boolean
+  resetReason?: string | null
+  timestamp?: string | null
 }
 
 export interface ApiItemResponse<T> {

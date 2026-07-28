@@ -310,3 +310,85 @@ def create_risk_document(
         "skippedReason": result.skipped_reason,
         "timestamp": now,
     }
+
+
+# ---------------------------------------------------------------------------
+# Confirmation Engine models
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ConfirmationResult:
+    """
+    Persistent-storm confirmation decision for one interface.
+
+    Future Safety Engine consumes this via ``confirmation.evaluate(...)``.
+    """
+
+    confirmed: bool
+    state: str
+    current_risk: float
+    highest_risk: float
+    average_risk: float
+    consecutive_high_samples: int
+    required_samples: int
+    reason: str
+    timestamp: Optional[datetime] = None
+    device_id: Optional[str] = None
+    interface: Optional[str] = None
+    reset: bool = False
+    reset_reason: Optional[str] = None
+
+    def to_api_dict(self) -> dict[str, Any]:
+        from datetime import timezone
+
+        from utils.serializers import format_datetime
+
+        ts = self.timestamp or datetime.now(timezone.utc)
+        return {
+            "confirmed": bool(self.confirmed),
+            "state": self.state,
+            "currentRisk": round(float(self.current_risk), 2),
+            "highestRisk": round(float(self.highest_risk), 2),
+            "averageRisk": round(float(self.average_risk), 2),
+            "consecutiveHighSamples": int(self.consecutive_high_samples),
+            "requiredSamples": int(self.required_samples),
+            "reason": self.reason,
+            "timestamp": format_datetime(ts),
+            "deviceId": self.device_id,
+            "interface": self.interface,
+            "reset": bool(self.reset),
+            "resetReason": self.reset_reason,
+        }
+
+
+def create_confirmation_document(
+    *,
+    device_id,
+    interface: str,
+    result: ConfirmationResult,
+    timestamp: Optional[datetime] = None,
+    hostname: Optional[str] = None,
+    ip_address: Optional[str] = None,
+) -> dict[str, Any]:
+    """Factory for append-only ``storm_confirmation_history`` documents."""
+    from datetime import timezone
+
+    now = timestamp or result.timestamp or datetime.now(timezone.utc)
+    return {
+        "deviceId": device_id,
+        "interface": interface,
+        "hostname": hostname,
+        "ipAddress": ip_address,
+        "confirmed": bool(result.confirmed),
+        "state": result.state,
+        "currentRisk": round(float(result.current_risk), 2),
+        "highestRisk": round(float(result.highest_risk), 2),
+        "averageRisk": round(float(result.average_risk), 2),
+        "consecutiveHighSamples": int(result.consecutive_high_samples),
+        "requiredSamples": int(result.required_samples),
+        "reason": result.reason,
+        "reset": bool(result.reset),
+        "resetReason": result.reset_reason,
+        "timestamp": now,
+    }

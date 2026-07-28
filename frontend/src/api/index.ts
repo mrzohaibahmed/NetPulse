@@ -20,6 +20,7 @@ import type {
   PingHistory,
   ResponseTimeChartPoint,
   RiskResult,
+  ConfirmationResult,
   ScanActivityChartPoint,
   StormConfig,
   UptimeRow,
@@ -49,6 +50,9 @@ function toQuery(params: PaginationParams = {}): string {
   if (params.eligible === false) search.set('eligible', 'false')
   if (params.severity && params.severity !== 'all') {
     search.set('severity', params.severity)
+  }
+  if (params.state && params.state !== 'all') {
+    search.set('state', params.state)
   }
 
   const query = search.toString()
@@ -452,6 +456,56 @@ export const calculateAllRisk = () =>
     errors: number
     disabled: boolean
   }>('/api/storm/risk/calculate-all', {
+    method: 'POST',
+    timeoutMs: 300000,
+  })
+
+export const getConfirmationResults = (params: PaginationParams = {}) =>
+  apiRequest<ApiListResponse<ConfirmationResult>>(
+    `/api/storm/confirmation${toQuery(params)}`,
+  )
+
+export const getDeviceConfirmation = (
+  deviceId: string,
+  params: PaginationParams = {},
+) =>
+  apiRequest<ApiListResponse<ConfirmationResult>>(
+    `/api/storm/confirmation/${deviceId}${toQuery(params)}`,
+  )
+
+export const getInterfaceConfirmation = (
+  deviceId: string,
+  interfaceName: string,
+  params: PaginationParams & { history?: boolean } = {},
+) => {
+  const encoded = encodeURIComponent(interfaceName)
+  const search = new URLSearchParams()
+  if (params.page) search.set('page', String(params.page))
+  if (params.limit) search.set('limit', String(params.limit))
+  if (params.history) search.set('history', 'true')
+  const query = search.toString()
+  return apiRequest<
+    ApiItemResponse<ConfirmationResult> & {
+      history?: ConfirmationResult[]
+      total?: number
+      page?: number
+      limit?: number
+      totalPages?: number
+    }
+  >(`/api/storm/confirmation/${deviceId}/${encoded}${query ? `?${query}` : ''}`)
+}
+
+export const evaluateAllConfirmation = () =>
+  apiRequest<{
+    success: boolean
+    message: string
+    total: number
+    confirmed: number
+    pending: number
+    notConfirmed: number
+    errors: number
+    disabled: boolean
+  }>('/api/storm/confirmation/evaluate-all', {
     method: 'POST',
     timeoutMs: 300000,
   })

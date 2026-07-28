@@ -274,3 +274,32 @@ def serialize_risk_result(result: dict) -> dict:
         "crcRate": _metric_value("crc"),
     }
 
+
+def serialize_confirmation_result(result: dict) -> dict:
+    """Serialise a document from the ``storm_confirmation_history`` collection."""
+    consecutive = int(result.get("consecutiveHighSamples") or 0)
+    required = int(result.get("requiredSamples") or 4)
+    progress = 0.0
+    if required > 0:
+        progress = round(min(100.0, (consecutive / required) * 100.0), 2)
+
+    return {
+        "_id": str(result["_id"]) if result.get("_id") is not None else None,
+        "deviceId": str(result["deviceId"]) if result.get("deviceId") is not None else None,
+        "interface": result.get("interface"),
+        "hostname": result.get("hostname"),
+        "ipAddress": result.get("ipAddress"),
+        "confirmed": bool(result.get("confirmed")),
+        "state": result.get("state") or "NOT_CONFIRMED",
+        "currentRisk": float(result.get("currentRisk") or 0),
+        "highestRisk": float(result.get("highestRisk") or 0),
+        "averageRisk": float(result.get("averageRisk") or 0),
+        "consecutiveHighSamples": consecutive,
+        "requiredSamples": required,
+        "progress": progress,
+        "reason": result.get("reason") or "",
+        "reset": bool(result.get("reset", False)),
+        "resetReason": result.get("resetReason"),
+        "timestamp": format_datetime(result.get("timestamp")),
+    }
+

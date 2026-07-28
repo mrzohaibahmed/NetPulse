@@ -19,6 +19,14 @@ GET  /api/storm/risk/<device_id>/<interface>
 POST /api/storm/risk/calculate
 POST /api/storm/risk/calculate-all
 
+Confirmation
+------------
+GET  /api/storm/confirmation
+GET  /api/storm/confirmation/<device_id>
+GET  /api/storm/confirmation/<device_id>/<interface>
+POST /api/storm/confirmation/evaluate
+POST /api/storm/confirmation/evaluate-all
+
 GET  /api/storm/config
 """
 
@@ -30,6 +38,12 @@ from bson import ObjectId
 from flask import Blueprint, jsonify, request
 
 from config.database import db
+from services.storm.confirmation import (
+    evaluate as evaluate_confirmation,
+    evaluate_all_confirmations,
+    get_confirmation_history,
+    get_latest_confirmation_results,
+)
 from services.storm.config import storm_config_as_dict
 from services.storm.eligibility import (
     evaluate_all_interfaces,
@@ -50,7 +64,11 @@ from services.storm.risk_engine import (
 )
 from utils.auth import require_auth
 from utils.pagination import clamp_page, pagination_payload, parse_pagination
-from utils.serializers import serialize_eligibility_result, serialize_risk_result
+from utils.serializers import (
+    serialize_confirmation_result,
+    serialize_eligibility_result,
+    serialize_risk_result,
+)
 
 storm_bp = Blueprint("storm", __name__)
 
@@ -541,5 +559,210 @@ def get_interface_risk(device_id: str, interface: str):
         return jsonify({
             "success": False,
             "message": "Failed to fetch interface risk",
+            "error": str(error),
+        }), 500
+
+
+# ---------------------------------------------------------------------------
+# Confirmation Engine
+# ---------------------------------------------------------------------------
+
+
+def _confirmation_filters():
+    state = (request.args.get("state") or "").strip() or None
+    return {
+        "search": (request.args.get("q") or "").strip() or None,
+        "state": state,
+    }
+
+
+@storm_bp.route("/storm/confirmation/evaluate", methods=["POST"])
+@require_auth(roles=["admin"])
+def evaluate_single_confirmation():
+    """Evaluate confirmation for one interface from MongoDB risk history."""
+    try:
+        body = request.get_json(silent=True) or {}
+        device_id = body.get("deviceId") or body.get("device_id")
+        name = (
+            body.get("interface")
+            or body.get("name")
+            or body.get("interfaceName")
+        )
+        if not device_id or not name:
+            return jsonify({
+                "success": False,
+                "message": "deviceId and interface are required",
+            }), 400
+        if not ObjectId.is_valid(str(device_id)):
+            return jsonify({
+                "success": False,
+                "message": "Invalid device ID",
+            }), 400
+
+        oid = ObjectId(str(device_id))
+        name = str(name).strip()
+        iface = db.interfaces.find_one(
+            {"deviceId": oid, "name": name},
+            {"hostname": 1, "ipAddress": 1},
+        )
+        result = evaluate_confirmation(
+            oid,
+            name,
+            hostname=(iface or {}).get("hostname"),
+            ip_address=(iface or {}).get("ipAddress"),
+            persist=True,
+        )
+        return jsonify({
+            "success": True,
+            "message": (
+                f"Confirmation {result.state} "
+                f"({result.consecutive_high_samples}/{result.required_samples})"
+            ),
+            "data": result.to_api_dict(),
+        }), 200
+    except Exception as error:  # noqa: BLE001
+        return jsonify({
+            "success": False,
+            "message": "Failed to evaluate confirmation",
+            "error": str(error),
+        }), 500
+
+
+@storm_bp.route("/storm/confirmation/evaluate-all", methods=["POST"])
+@require_auth(roles=["admin"])
+def evaluate_all_confirmation_route():
+    try:
+        summary = evaluate_all_confirmations()
+        return jsonify({
+            "success": True,
+            "message": (
+                "Confirmation evaluation skipped (disabled)"
+                if summary.get("disabled")
+                else (
+                    f"Confirmation completed: "
+                    f"{summary['confirmed']} confirmed / "
+                    f"{summary['pending']} pending / "
+                    f"{summary['notConfirmed']} not confirmed "
+                    f"({summary['total']} interface(s))"
+                )
+            ),
+            **summary,
+        }), 200
+    except Exception as error:  # noqa: BLE001
+        return jsonify({
+            "success": False,
+            "message": "Failed to run bulk confirmation evaluation",
+            "error": str(error),
+        }), 500
+
+
+@storm_bp.route("/storm/confirmation", methods=["GET"])
+@require_auth()
+def list_confirmation():
+    try:
+        page, limit = parse_pagination(default_limit=50, max_limit=500)
+        filters = _confirmation_filters()
+        _, total = get_latest_confirmation_results(skip=0, limit=1, **filters)
+        page, skip, total_pages = clamp_page(page, total, limit)
+        rows, total = get_latest_confirmation_results(
+            skip=skip, limit=limit, **filters
+        )
+        return jsonify({
+            "success": True,
+            "count": len(rows),
+            "data": [serialize_confirmation_result(row) for row in rows],
+            **pagination_payload(total, page, limit, total_pages),
+        }), 200
+    except Exception as error:  # noqa: BLE001
+        return jsonify({
+            "success": False,
+            "message": "Failed to list confirmation results",
+            "error": str(error),
+        }), 500
+
+
+@storm_bp.route("/storm/confirmation/<device_id>", methods=["GET"])
+@require_auth()
+def list_device_confirmation(device_id: str):
+    try:
+        oid = _parse_device_id(device_id)
+        if oid is None:
+            return jsonify({"success": False, "message": "Invalid device ID"}), 400
+
+        page, limit = parse_pagination(default_limit=50, max_limit=500)
+        filters = _confirmation_filters()
+        _, total = get_latest_confirmation_results(
+            device_id=oid, skip=0, limit=1, **filters
+        )
+        page, skip, total_pages = clamp_page(page, total, limit)
+        rows, total = get_latest_confirmation_results(
+            device_id=oid, skip=skip, limit=limit, **filters
+        )
+        return jsonify({
+            "success": True,
+            "count": len(rows),
+            "data": [serialize_confirmation_result(row) for row in rows],
+            **pagination_payload(total, page, limit, total_pages),
+        }), 200
+    except Exception as error:  # noqa: BLE001
+        return jsonify({
+            "success": False,
+            "message": "Failed to list device confirmation results",
+            "error": str(error),
+        }), 500
+
+
+@storm_bp.route(
+    "/storm/confirmation/<device_id>/<path:interface>",
+    methods=["GET"],
+)
+@require_auth()
+def get_interface_confirmation(device_id: str, interface: str):
+    try:
+        oid = _parse_device_id(device_id)
+        if oid is None:
+            return jsonify({"success": False, "message": "Invalid device ID"}), 400
+
+        name = unquote(interface).strip()
+        if not name:
+            return jsonify({
+                "success": False,
+                "message": "Interface name is required",
+            }), 400
+
+        include_history = (
+            (request.args.get("history") or "").strip().lower()
+            in ("1", "true", "yes")
+        )
+        page, limit = parse_pagination(default_limit=50, max_limit=200)
+
+        latest_rows, _ = get_latest_confirmation_results(
+            device_id=oid, interface=name, skip=0, limit=1
+        )
+        if not latest_rows:
+            return jsonify({
+                "success": False,
+                "message": "No confirmation result found for this interface",
+            }), 404
+
+        payload = {
+            "success": True,
+            "data": serialize_confirmation_result(latest_rows[0]),
+        }
+        if include_history:
+            history, total = get_confirmation_history(
+                oid, name, skip=(page - 1) * limit, limit=limit
+            )
+            total_pages = (total + limit - 1) // limit if total else 0
+            payload["history"] = [
+                serialize_confirmation_result(row) for row in history
+            ]
+            payload.update(pagination_payload(total, page, limit, total_pages))
+
+        return jsonify(payload), 200
+    except Exception as error:  # noqa: BLE001
+        return jsonify({
+            "success": False,
+            "message": "Failed to fetch interface confirmation",
             "error": str(error),
         }), 500
