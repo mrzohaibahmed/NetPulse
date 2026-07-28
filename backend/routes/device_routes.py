@@ -7,7 +7,7 @@ from bson import ObjectId
 from flask import Blueprint, jsonify, request
 
 from config.database import db
-from models.device import create_device
+from models.device import create_device, normalize_device_credentials
 from services.audit_service import log_audit
 from utils.auth import require_auth
 from utils.pagination import clamp_page, pagination_payload, parse_pagination
@@ -89,6 +89,14 @@ def add_device():
                 "message": "Device with this IP address already exists",
             }), 409
 
+        try:
+            credentials = normalize_device_credentials(data.get("credentials"))
+        except ValueError as error:
+            return jsonify({
+                "success": False,
+                "message": str(error),
+            }), 400
+
         device = create_device(
             hostname=data["hostname"].strip(),
             ip_address=data["ipAddress"].strip(),
@@ -98,6 +106,7 @@ def add_device():
             ping_interval=_optional_int(data.get("pingInterval")),
             ping_timeout_ms=_optional_int(data.get("pingTimeoutMs")),
             ping_retries=_optional_int(data.get("pingRetries")),
+            credentials=credentials,
         )
 
         result = db.devices.insert_one(device)
@@ -326,6 +335,26 @@ def update_device(device_id):
             if field in data:
                 update_data[field] = data[field]
 
+        if "credentials" in data:
+            try:
+                update_data["credentials"] = normalize_device_credentials(
+                    data.get("credentials"),
+                    existing=device.get("credentials"),
+                )
+            except ValueError as error:
+                return jsonify({
+                    "success": False,
+                    "message": str(error),
+                }), 400
+
+            # Never write secrets into the audit trail.
+            audit_details = {
+                k: v for k, v in update_data.items() if k != "credentials"
+            }
+            audit_details["credentialsUpdated"] = True
+        else:
+            audit_details = update_data
+
         if not update_data:
             return jsonify({
                 "success": False,
@@ -371,7 +400,7 @@ def update_device(device_id):
             action="device_updated",
             entity_type="device",
             entity_id=device_id,
-            details=update_data,
+            details=audit_details,
         )
 
         return jsonify({
@@ -408,6 +437,8 @@ def delete_device(device_id):
             }), 404
 
         db.pingHistory.delete_many({"deviceId": ObjectId(device_id)})
+        db.interfaces.delete_many({"deviceId": ObjectId(device_id)})
+        db["interface_stats"].delete_many({"deviceId": ObjectId(device_id)})
 
         log_audit(
             action="device_deleted",

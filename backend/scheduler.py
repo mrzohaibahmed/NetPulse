@@ -2,7 +2,11 @@ import atexit
 
 from apscheduler.schedulers.background import BackgroundScheduler
 
-from config.database import NMAP_SCAN_INTERVAL
+from config.database import (
+    INTERFACE_SCAN_INTERVAL,
+    INTERFACE_STATS_INTERVAL,
+    NMAP_SCAN_INTERVAL,
+)
 from services.monitor_service import monitor_all_devices
 from services.settings_service import get_settings
 from utils.monitor_logger import get_monitor_logger
@@ -10,13 +14,54 @@ from utils.monitor_logger import get_monitor_logger
 logger = get_monitor_logger("scheduler")
 
 # Single shared scheduler instance.
-# Both the ping job and the nmap job run on this same scheduler so they share
-# one background thread pool and one lifecycle (start / shutdown).
+# Ping, Nmap, interface discovery, interface stats, and eligibility share one
+# scheduler. Eligibility runs after stats in the same job chain.
 scheduler = BackgroundScheduler()
 
 # Job IDs — kept as named constants to make reschedule helpers readable.
 JOB_ID = "device_monitor_job"
 NMAP_JOB_ID = "nmap_scan_job"
+INTERFACE_JOB_ID = "interface_discovery_job"
+INTERFACE_STATS_JOB_ID = "interface_stats_job"
+
+
+def _run_interface_stats_then_eligibility() -> None:
+    """
+    Scheduler chain:
+
+        Interface Statistics
+        → Eligibility Engine
+        → Risk Score Engine
+        → Store Risk History
+
+    Failures in eligibility/risk never abort stats or the scheduler.
+    Confirmation / mitigation are intentionally NOT invoked here.
+    """
+    from services.interface_collection.stats_collector import (  # noqa: PLC0415
+        collect_all_interface_stats,
+    )
+
+    collect_all_interface_stats()
+
+    try:
+        from services.storm.eligibility import evaluate_all_interfaces  # noqa: PLC0415
+
+        evaluate_all_interfaces()
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            "Eligibility evaluation failed after interface stats: %s",
+            exc,
+        )
+
+    try:
+        from services.storm.risk_engine import calculate_all_risks  # noqa: PLC0415
+
+        calculate_all_risks()
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            "Risk scoring failed after eligibility: %s",
+            exc,
+        )
 
 
 def _start_nmap_job() -> None:
@@ -61,6 +106,86 @@ def _start_nmap_job() -> None:
         )
 
 
+def _start_interface_job() -> None:
+    """
+    Register the SSH interface discovery job on the shared scheduler.
+
+    Independent of ping and Nmap. Disabled when INTERFACE_SCAN_INTERVAL is 0.
+    """
+    try:
+        interval = int(INTERFACE_SCAN_INTERVAL)
+        if interval <= 0:
+            logger.info(
+                "Interface discovery job disabled "
+                "(INTERFACE_SCAN_INTERVAL=%s)",
+                INTERFACE_SCAN_INTERVAL,
+            )
+            return
+
+        from services.interface_collection.collector import (  # noqa: PLC0415
+            discover_all_switch_interfaces,
+        )
+
+        interval = max(interval, 60)
+
+        scheduler.add_job(
+            func=discover_all_switch_interfaces,
+            trigger="interval",
+            seconds=interval,
+            id=INTERFACE_JOB_ID,
+            replace_existing=True,
+        )
+        logger.info(
+            "Interface discovery job registered | interval=%ss (%dm)",
+            interval,
+            interval // 60,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "Interface discovery job could not be registered: %s",
+            exc,
+        )
+
+
+def _start_interface_stats_job() -> None:
+    """
+    Register periodic interface statistics collection.
+
+    Completely independent of the ping monitor job — failures here never
+    affect device reachability monitoring.
+    """
+    try:
+        interval = int(INTERFACE_STATS_INTERVAL)
+        if interval <= 0:
+            logger.info(
+                "Interface stats job disabled (INTERFACE_STATS_INTERVAL=%s)",
+                INTERFACE_STATS_INTERVAL,
+            )
+            return
+
+        interval = max(interval, 15)
+
+        # Stats collection followed by Port Eligibility Engine (append-only).
+        scheduler.add_job(
+            func=_run_interface_stats_then_eligibility,
+            trigger="interval",
+            seconds=interval,
+            id=INTERFACE_STATS_JOB_ID,
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        logger.info(
+            "Interface stats + eligibility job registered | interval=%ss",
+            interval,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "Interface stats job could not be registered: %s",
+            exc,
+        )
+
+
 # ---------------------------------------------------------------------------
 # Public functions (unchanged signatures for existing callers)
 # ---------------------------------------------------------------------------
@@ -88,6 +213,12 @@ def start_scheduler():
 
     # Job 2: Nmap metadata scan (independent; registered after scheduler.start).
     _start_nmap_job()
+
+    # Job 3: SSH interface discovery (independent of ping / Nmap).
+    _start_interface_job()
+
+    # Job 4: Interface statistics (SNMP preferred, SSH fallback).
+    _start_interface_stats_job()
 
 
 def reschedule_monitor_job(interval_seconds: int):

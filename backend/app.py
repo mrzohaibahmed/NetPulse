@@ -11,12 +11,18 @@ from routes.dashboard_routes import dashboard_bp
 from routes.device_routes import device_bp
 from routes.discovery_routes import discovery_bp
 from routes.history_routes import history_bp
+from routes.interface_routes import interface_bp
 from routes.nmap_routes import nmap_bp
 from routes.report_routes import report_bp
 from routes.scan_routes import scan_bp
 from routes.settings_routes import settings_bp
+from routes.storm_routes import storm_bp
 from scheduler import start_scheduler
+from services.interface_collection.collector import ensure_interface_indexes
+from services.interface_collection.stats_collector import ensure_interface_stats_indexes
 from services.settings_service import ensure_settings
+from services.storm.eligibility import ensure_eligibility_indexes
+from services.storm.risk_engine import ensure_risk_indexes
 from services.user_service import ensure_default_admin
 
 # Serve built frontend (Vite) if present.
@@ -38,6 +44,8 @@ app.register_blueprint(scan_bp, url_prefix="/api")
 app.register_blueprint(history_bp, url_prefix="/api")
 app.register_blueprint(dashboard_bp, url_prefix="/api")
 app.register_blueprint(discovery_bp, url_prefix="/api")
+app.register_blueprint(interface_bp, url_prefix="/api")
+app.register_blueprint(storm_bp, url_prefix="/api")
 app.register_blueprint(alert_bp, url_prefix="/api")
 app.register_blueprint(settings_bp, url_prefix="/api")
 app.register_blueprint(report_bp, url_prefix="/api")
@@ -86,6 +94,10 @@ def health():
 def bootstrap():
     ensure_settings()
     ensure_default_admin()
+    ensure_interface_indexes()
+    ensure_interface_stats_indexes()
+    ensure_eligibility_indexes()
+    ensure_risk_indexes()
 
 
 bootstrap()

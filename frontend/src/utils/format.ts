@@ -45,3 +45,39 @@ export function formatRelative(value: string | null | undefined): string {
   const days = Math.floor(hours / 24)
   return `${days}d ago`
 }
+
+export function formatBytes(value: number | null | undefined): string {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return '—'
+  const n = Number(value)
+  if (n < 1000) return `${n} B`
+  const units = ['KB', 'MB', 'GB', 'TB', 'PB']
+  let size = n
+  let unit = -1
+  do {
+    size /= 1000
+    unit += 1
+  } while (size >= 1000 && unit < units.length - 1)
+  return `${size.toFixed(size >= 100 ? 0 : size >= 10 ? 1 : 2)} ${units[unit]}`
+}
+
+export function formatPackets(value: number | null | undefined): string {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return '—'
+  const n = Number(value)
+  if (n < 1000) return String(n)
+  if (n < 1_000_000) return `${(n / 1000).toFixed(1)}K`
+  if (n < 1_000_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+  return `${(n / 1_000_000_000).toFixed(2)}B`
+}
+
+export function formatUtilization(value: number | null | undefined): string {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return '—'
+  return `${Number(value).toFixed(1)}%`
+}
+
+export function formatSpeedBps(value: number | null | undefined): string {
+  if (value === null || value === undefined || value <= 0) return '—'
+  if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(value % 1_000_000_000 === 0 ? 0 : 1)} Gbps`
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(value % 1_000_000 === 0 ? 0 : 1)} Mbps`
+  if (value >= 1000) return `${(value / 1000).toFixed(0)} Kbps`
+  return `${value} bps`
+}

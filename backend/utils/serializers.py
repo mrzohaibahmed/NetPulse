@@ -36,6 +36,140 @@ def serialize_network_info(network_info: dict | None) -> dict | None:
     return result
 
 
+def serialize_interface_stat(stat: dict) -> dict:
+    """Serialise a document from the ``interface_stats`` collection."""
+    return {
+        "_id": str(stat["_id"]),
+        "deviceId": str(stat["deviceId"]),
+        "hostname": stat.get("hostname"),
+        "ipAddress": stat.get("ipAddress"),
+        "interfaceName": stat.get("interfaceName"),
+        "ifIndex": stat.get("ifIndex"),
+        "rxBytes": stat.get("rxBytes", 0),
+        "txBytes": stat.get("txBytes", 0),
+        "rxPackets": stat.get("rxPackets", 0),
+        "txPackets": stat.get("txPackets", 0),
+        "broadcastPackets": stat.get("broadcastPackets", 0),
+        "multicastPackets": stat.get("multicastPackets", 0),
+        "inputErrors": stat.get("inputErrors", 0),
+        "outputErrors": stat.get("outputErrors", 0),
+        "discards": stat.get("discards", 0),
+        "utilization": stat.get("utilization"),
+        "rxUtilization": stat.get("rxUtilization"),
+        "txUtilization": stat.get("txUtilization"),
+        "speedBps": stat.get("speedBps"),
+        "collectionMethod": stat.get("collectionMethod") or "snmp",
+        "timestamp": format_datetime(stat.get("timestamp")),
+    }
+
+
+def serialize_credentials(credentials: dict | None) -> dict | None:
+    """
+    Serialise device SSH/SNMP credentials without exposing secrets.
+
+    Passwords / enable secrets are replaced with a boolean ``configured`` flag.
+    """
+    if not credentials:
+        return None
+
+    has_password = bool(credentials.get("sshPassword"))
+    has_secret = bool(credentials.get("sshSecret"))
+
+    return {
+        "sshUsername": credentials.get("sshUsername") or "",
+        "sshPort": credentials.get("sshPort") or 22,
+        "sshVendor": credentials.get("sshVendor") or "",
+        "sshPasswordConfigured": has_password,
+        "sshSecretConfigured": has_secret,
+        "snmpCommunityConfigured": bool(credentials.get("snmpCommunity")),
+        "snmpPort": credentials.get("snmpPort") or 161,
+        "snmpVersion": credentials.get("snmpVersion") or "2c",
+    }
+
+
+def serialize_interface(interface: dict) -> dict:
+    """Serialise a document from the ``interfaces`` collection."""
+    port_mode = (
+        interface.get("portMode")
+        or interface.get("mode")
+        or "unknown"
+    )
+    neighbor = _serialize_neighbor(interface.get("neighbor"))
+
+    return {
+        "_id": str(interface["_id"]),
+        "deviceId": str(interface["deviceId"]),
+        "hostname": interface.get("hostname"),
+        "ipAddress": interface.get("ipAddress"),
+        "name": interface.get("name"),
+        "description": interface.get("description") or "",
+        "adminStatus": interface.get("adminStatus") or "unknown",
+        "operStatus": interface.get("operStatus") or "unknown",
+        "mode": port_mode,
+        "portMode": port_mode,
+        "isAccess": bool(interface.get("isAccess", port_mode == "access")),
+        "isTrunk": bool(interface.get("isTrunk", port_mode == "trunk")),
+        "isUplink": bool(interface.get("isUplink", False)),
+        "isInfrastructure": bool(interface.get("isInfrastructure", False)),
+        "isManagement": bool(interface.get("isManagement", False)),
+        "isProtected": bool(interface.get("isProtected", False)),
+        "monitoringEnabled": bool(interface.get("monitoringEnabled", True)),
+        "accessVlan": interface.get("accessVlan"),
+        "voiceVlan": interface.get("voiceVlan"),
+        "nativeVlan": interface.get("nativeVlan"),
+        "allowedVlans": list(interface.get("allowedVlans") or []),
+        "vlan": interface.get("vlan") if interface.get("vlan") is not None else "",
+        "speed": interface.get("speed") or "",
+        "speedMbps": interface.get("speedMbps"),
+        "duplex": interface.get("duplex") or "",
+        "neighbor": neighbor,
+        "ifIndex": interface.get("ifIndex"),
+        "macAddress": interface.get("macAddress") or "",
+        "vendor": interface.get("vendor") or "",
+        "collectionMethod": interface.get("collectionMethod") or "ssh",
+        "lastUpdated": format_datetime(interface.get("lastUpdated")),
+        "createdAt": format_datetime(interface.get("createdAt")),
+        "updatedAt": format_datetime(interface.get("updatedAt")),
+    }
+
+
+def _serialize_neighbor(neighbor) -> dict | None:
+    if not neighbor or not isinstance(neighbor, dict):
+        return None
+
+    interface = (
+        neighbor.get("interface")
+        or neighbor.get("port")
+        or ""
+    )
+    return {
+        "hostname": neighbor.get("hostname") or "",
+        "ip": neighbor.get("ip") or "",
+        "platform": neighbor.get("platform") or "",
+        "deviceType": (
+            neighbor.get("deviceType")
+            or neighbor.get("device_type")
+            or "Unknown"
+        ),
+        "interface": interface,
+        # Backward-compatible alias for older clients
+        "port": interface,
+        "protocol": neighbor.get("protocol") or "",
+        "managementAddress": (
+            neighbor.get("managementAddress")
+            or neighbor.get("management_address")
+            or neighbor.get("ip")
+            or ""
+        ),
+        "systemDescription": (
+            neighbor.get("systemDescription")
+            or neighbor.get("system_description")
+            or ""
+        ),
+        "capabilities": list(neighbor.get("capabilities") or []),
+    }
+
+
 def serialize_device(device):
     return {
         "_id": str(device["_id"]),
@@ -56,5 +190,87 @@ def serialize_device(device):
         "updatedAt": format_datetime(device.get("updatedAt")),
         # Nmap metadata — present after the first successful scan, None before.
         "networkInfo": serialize_network_info(device.get("networkInfo")),
+        # SSH credentials metadata (secrets never returned).
+        "credentials": serialize_credentials(device.get("credentials")),
+    }
+
+
+def serialize_eligibility_result(result: dict, interface: dict | None = None) -> dict:
+    """Serialise a document from the ``eligibility_results`` collection."""
+    port_mode = None
+    if interface:
+        port_mode = (
+            interface.get("portMode")
+            or interface.get("mode")
+            or "unknown"
+        )
+
+    payload = {
+        "_id": str(result["_id"]) if result.get("_id") is not None else None,
+        "deviceId": str(result["deviceId"]) if result.get("deviceId") is not None else None,
+        "interface": result.get("interface"),
+        "hostname": result.get("hostname") or (interface or {}).get("hostname"),
+        "ipAddress": result.get("ipAddress") or (interface or {}).get("ipAddress"),
+        "eligible": bool(result.get("eligible")),
+        "reason": result.get("reason") or "",
+        "failedRule": result.get("failedRule"),
+        "confidence": int(result.get("confidence") or 100),
+        "checks": result.get("checks") or {},
+        "timestamp": format_datetime(result.get("timestamp")),
+    }
+
+    if interface is not None:
+        payload.update({
+            "adminStatus": interface.get("adminStatus") or "unknown",
+            "operStatus": interface.get("operStatus") or "unknown",
+            "portMode": port_mode,
+            "isAccess": bool(interface.get("isAccess", port_mode == "access")),
+            "isTrunk": bool(interface.get("isTrunk", port_mode == "trunk")),
+            "isUplink": bool(interface.get("isUplink", False)),
+            "isInfrastructure": bool(interface.get("isInfrastructure", False)),
+            "isManagement": bool(interface.get("isManagement", False)),
+            "isProtected": bool(interface.get("isProtected", False)),
+            "monitoringEnabled": bool(interface.get("monitoringEnabled", True)),
+        })
+
+    return payload
+
+
+def serialize_risk_result(result: dict) -> dict:
+    """Serialise a document from the ``storm_risk_history`` collection."""
+    raw = result.get("rawMetrics") or result.get("raw_metrics") or {}
+    contributors = result.get("contributors") or []
+
+    def _metric_value(name: str):
+        entry = raw.get(name) or {}
+        if isinstance(entry, dict) and "value" in entry:
+            return entry.get("value")
+        for item in contributors:
+            if item.get("metric") == name:
+                return item.get("value")
+        return None
+
+    return {
+        "_id": str(result["_id"]) if result.get("_id") is not None else None,
+        "deviceId": str(result["deviceId"]) if result.get("deviceId") is not None else None,
+        "interface": result.get("interface"),
+        "hostname": result.get("hostname"),
+        "ipAddress": result.get("ipAddress"),
+        "riskScore": float(result.get("riskScore") or 0),
+        "severity": result.get("severity") or "LOW",
+        "confidence": float(result.get("confidence") or 0),
+        "contributors": contributors,
+        "rawMetrics": raw,
+        "eligible": bool(result.get("eligible", True)),
+        "skippedReason": result.get("skippedReason"),
+        "timestamp": format_datetime(result.get("timestamp")),
+        # Flattened rates for the Storm Protection UI
+        "broadcastRate": _metric_value("broadcast"),
+        "multicastRate": _metric_value("multicast"),
+        "unknownUnicastRate": _metric_value("unknown_unicast"),
+        "utilization": _metric_value("utilization"),
+        "errorRate": _metric_value("errors"),
+        "discardRate": _metric_value("discards"),
+        "crcRate": _metric_value("crc"),
     }
 

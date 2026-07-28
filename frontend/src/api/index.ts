@@ -12,11 +12,15 @@ import type {
   DevicePayload,
   DeviceStatusRow,
   DiscoveryResult,
+  EligibilityResult,
+  InterfaceStat,
   NetworkHint,
+  NetworkInterface,
   PaginationParams,
   PingHistory,
   ResponseTimeChartPoint,
   ScanActivityChartPoint,
+  StormConfig,
   UptimeRow,
   User,
 } from '../types'
@@ -33,6 +37,15 @@ function toQuery(params: PaginationParams = {}): string {
   if (params.deviceId) search.set('deviceId', params.deviceId)
   if (params.startDate) search.set('startDate', params.startDate)
   if (params.endDate) search.set('endDate', params.endDate)
+  if (params.adminStatus && params.adminStatus !== 'all') {
+    search.set('adminStatus', params.adminStatus)
+  }
+  if (params.operStatus && params.operStatus !== 'all') {
+    search.set('operStatus', params.operStatus)
+  }
+  if (params.mode && params.mode !== 'all') search.set('mode', params.mode)
+  if (params.eligible === true) search.set('eligible', 'true')
+  if (params.eligible === false) search.set('eligible', 'false')
 
   const query = search.toString()
   return query ? `?${query}` : ''
@@ -245,3 +258,142 @@ export const getHealth = () =>
     timeoutMs: 5000,
     skipAuth: true,
   })
+
+export const getInterfaces = (params: PaginationParams = {}) =>
+  apiRequest<ApiListResponse<NetworkInterface>>(`/api/interfaces${toQuery(params)}`)
+
+export const getDeviceInterfaces = (deviceId: string, params: PaginationParams = {}) =>
+  apiRequest<
+    ApiListResponse<NetworkInterface> & {
+      deviceId: string
+      hostname?: string
+      ipAddress?: string
+    }
+  >(`/api/interfaces/${deviceId}${toQuery(params)}`)
+
+export const getDeviceInterfaceStats = (deviceId: string) =>
+  apiRequest<{
+    success: boolean
+    deviceId: string
+    hostname?: string
+    ipAddress?: string
+    count: number
+    data: InterfaceStat[]
+  }>(`/api/interfaces/${deviceId}/stats`)
+
+export const getInterfaceHistory = (
+  deviceId: string,
+  interfaceName: string,
+  params: PaginationParams = {},
+) => {
+  const encoded = encodeURIComponent(interfaceName)
+  return apiRequest<
+    ApiListResponse<InterfaceStat> & {
+      deviceId: string
+      interfaceName: string
+      hostname?: string
+      ipAddress?: string
+    }
+  >(`/api/interfaces/${deviceId}/${encoded}/history${toQuery(params)}`)
+}
+
+export const discoverDeviceInterfaces = (deviceId: string) =>
+  apiRequest<{
+    success: boolean
+    message: string
+    summary?: unknown
+    count?: number
+    data?: NetworkInterface[]
+  }>(`/api/interfaces/discover/${deviceId}`, {
+    method: 'POST',
+    timeoutMs: 180000,
+  })
+
+export const discoverAllInterfaces = () =>
+  apiRequest<{
+    success: boolean
+    message: string
+    total: number
+    discoveredDevices: number
+    failed: number
+    interfaceCount: number
+    errors: Array<{ ip?: string; deviceId?: string; error?: string }>
+  }>('/api/interfaces/discover-all', {
+    method: 'POST',
+    timeoutMs: 300000,
+  })
+
+export const collectDeviceInterfaceStats = (deviceId: string) =>
+  apiRequest<{
+    success: boolean
+    message: string
+    summary?: unknown
+    count?: number
+    data?: InterfaceStat[]
+  }>(`/api/interfaces/${deviceId}/stats/collect`, {
+    method: 'POST',
+    timeoutMs: 180000,
+  })
+
+export const collectAllInterfaceStats = () =>
+  apiRequest<{
+    success: boolean
+    message: string
+    total: number
+    succeeded: number
+    failed: number
+    samples: number
+    errors: Array<{ ip?: string; deviceId?: string; error?: string }>
+  }>('/api/interfaces/stats/collect-all', {
+    method: 'POST',
+    timeoutMs: 300000,
+  })
+
+export const getEligibilityResults = (params: PaginationParams = {}) =>
+  apiRequest<ApiListResponse<EligibilityResult>>(
+    `/api/storm/eligibility${toQuery(params)}`,
+  )
+
+export const getDeviceEligibility = (deviceId: string, params: PaginationParams = {}) =>
+  apiRequest<ApiListResponse<EligibilityResult>>(
+    `/api/storm/eligibility/${deviceId}${toQuery(params)}`,
+  )
+
+export const getInterfaceEligibility = (
+  deviceId: string,
+  interfaceName: string,
+  params: PaginationParams = {},
+) => {
+  const encoded = encodeURIComponent(interfaceName)
+  return apiRequest<ApiItemResponse<EligibilityResult>>(
+    `/api/storm/eligibility/${deviceId}/${encoded}${toQuery(params)}`,
+  )
+}
+
+export const evaluateInterfaceEligibility = (payload: {
+  deviceId?: string
+  interface?: string
+  name?: string
+  [key: string]: unknown
+}) =>
+  apiRequest<ApiItemResponse<EligibilityResult>>('/api/storm/eligibility/evaluate', {
+    method: 'POST',
+    body: payload,
+  })
+
+export const evaluateAllEligibility = () =>
+  apiRequest<{
+    success: boolean
+    message: string
+    total: number
+    eligible: number
+    ineligible: number
+    errors: number
+    skipped: boolean
+  }>('/api/storm/eligibility/evaluate-all', {
+    method: 'POST',
+    timeoutMs: 300000,
+  })
+
+export const getStormConfig = () =>
+  apiRequest<ApiItemResponse<StormConfig>>('/api/storm/config')
