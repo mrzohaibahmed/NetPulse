@@ -16,6 +16,15 @@ export const queryKeys = {
   device: (id: string) => ['device', id] as const,
   deviceHistory: (id: string, params: object) => ['device-history', id, params] as const,
   history: (params: object) => ['history', params] as const,
+  interfaces: (params: object) => ['interfaces', params] as const,
+  deviceInterfaces: (id: string, params: object) => ['device-interfaces', id, params] as const,
+  interfaceStats: (id: string) => ['interface-stats', id] as const,
+  interfaceHistory: (id: string, name: string, params: object) =>
+    ['interface-history', id, name, params] as const,
+  eligibility: (params: object) => ['eligibility', params] as const,
+  deviceEligibility: (id: string, params: object) =>
+    ['device-eligibility', id, params] as const,
+  stormConfig: ['storm-config'] as const,
   settings: ['settings'] as const,
   users: ['users'] as const,
   networkHint: ['network-hint'] as const,

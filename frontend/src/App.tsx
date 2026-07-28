@@ -25,6 +25,12 @@ const DashboardPage = lazy(() =>
 const DevicesPage = lazy(() =>
   import('@/pages/DevicesPage').then((m) => ({ default: m.DevicesPage })),
 )
+const InterfacesPage = lazy(() =>
+  import('@/pages/InterfacesPage').then((m) => ({ default: m.InterfacesPage })),
+)
+const InterfaceDetailPage = lazy(() =>
+  import('@/pages/InterfaceDetailPage').then((m) => ({ default: m.InterfaceDetailPage })),
+)
 const DiscoveryPage = lazy(() =>
   import('@/pages/DiscoveryPage').then((m) => ({ default: m.DiscoveryPage })),
 )
@@ -42,6 +48,9 @@ const SettingsPage = lazy(() =>
 )
 const AlertsPage = lazy(() =>
   import('@/pages/AlertsPage').then((m) => ({ default: m.AlertsPage })),
+)
+const StormProtectionPage = lazy(() =>
+  import('@/pages/StormProtectionPage').then((m) => ({ default: m.StormProtectionPage })),
 )
 const LoginPage = lazy(() =>
   import('@/pages/LoginPage').then((m) => ({ default: m.LoginPage })),
@@ -65,7 +74,13 @@ export default function App() {
                     <Route element={<Layout />}>
                       <Route index element={<DashboardPage />} />
                       <Route path="devices/:deviceId?" element={<DevicesPage />} />
+                      <Route path="interfaces" element={<InterfacesPage />} />
+                      <Route
+                        path="interfaces/:deviceId/:interfaceName"
+                        element={<InterfaceDetailPage />}
+                      />
                       <Route path="alerts" element={<AlertsPage />} />
+                      <Route path="storm" element={<StormProtectionPage />} />
                       <Route path="discovery" element={<DiscoveryPage />} />
                       <Route path="history" element={<HistoryPage />} />
                       <Route path="reports" element={<ReportsPage />} />

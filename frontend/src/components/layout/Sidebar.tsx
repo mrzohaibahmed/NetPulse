@@ -8,11 +8,13 @@ import {
   History,
   LayoutDashboard,
   Menu,
+  Network,
   Pin,
   PinOff,
   Radar,
   Server,
   Settings,
+  Shield,
   UserCircle,
   X,
 } from 'lucide-react'
@@ -48,6 +50,8 @@ export function Sidebar({ pinned, onPinnedChange, mobileOpen, onMobileOpenChange
   const monitorItems: NavItem[] = [
     { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
     { to: '/devices', label: 'Devices', icon: Server },
+    { to: '/interfaces', label: 'Interfaces', icon: Network },
+    { to: '/storm', label: 'Storm Protection', icon: Shield },
     { to: '/alerts', label: 'Alerts', icon: Bell },
     { to: '/discovery', label: 'Discovery', icon: Radar, adminOnly: true },
   ]

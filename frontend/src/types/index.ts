@@ -251,6 +251,142 @@ export interface PaginationParams {
   deviceId?: string
   startDate?: string
   endDate?: string
+  adminStatus?: string
+  operStatus?: string
+  mode?: string
+  eligible?: boolean
+}
+
+export interface InterfaceNeighbor {
+  hostname: string
+  ip?: string
+  platform?: string
+  deviceType?: string
+  interface?: string
+  /** @deprecated Prefer `interface` — retained for backward compatibility */
+  port?: string
+  protocol?: string
+  managementAddress?: string
+  systemDescription?: string
+  capabilities?: string[]
+}
+
+export interface NetworkInterface {
+  _id: string
+  deviceId: string
+  hostname?: string | null
+  ipAddress?: string | null
+  name: string
+  description: string
+  adminStatus: string
+  operStatus: string
+  mode: string
+  portMode: string
+  isAccess: boolean
+  isTrunk: boolean
+  isUplink: boolean
+  isInfrastructure: boolean
+  isManagement: boolean
+  isProtected: boolean
+  monitoringEnabled: boolean
+  accessVlan: number | null
+  voiceVlan?: number | null
+  nativeVlan: number | null
+  allowedVlans: number[]
+  vlan: string | number
+  speed: string
+  speedMbps?: number | null
+  duplex: string
+  neighbor?: InterfaceNeighbor | null
+  ifIndex?: number | null
+  macAddress: string
+  vendor: string
+  collectionMethod: string
+  lastUpdated: string | null
+  createdAt?: string | null
+  updatedAt?: string | null
+}
+
+export interface InterfaceStat {
+  _id: string
+  deviceId: string
+  hostname?: string | null
+  ipAddress?: string | null
+  interfaceName: string
+  ifIndex?: number | null
+  rxBytes: number
+  txBytes: number
+  rxPackets: number
+  txPackets: number
+  broadcastPackets: number
+  multicastPackets: number
+  inputErrors: number
+  outputErrors: number
+  discards: number
+  utilization?: number | null
+  rxUtilization?: number | null
+  txUtilization?: number | null
+  speedBps?: number | null
+  collectionMethod: string
+  timestamp: string | null
+}
+
+export interface InterfaceListRow extends NetworkInterface {
+  utilization?: number | null
+  rxUtilization?: number | null
+  txUtilization?: number | null
+  broadcastPackets?: number | null
+  multicastPackets?: number | null
+  inputErrors?: number | null
+  outputErrors?: number | null
+  discards?: number | null
+  statsTimestamp?: string | null
+  speedBps?: number | null
+}
+
+export interface EligibilityChecks {
+  monitoring?: boolean | null
+  admin?: boolean | null
+  oper?: boolean | null
+  access?: boolean | null
+  trunk?: boolean | null
+  uplink?: boolean | null
+  infrastructure?: boolean | null
+  management?: boolean | null
+  protected?: boolean | null
+}
+
+export interface EligibilityResult {
+  _id?: string | null
+  deviceId: string
+  interface: string
+  hostname?: string | null
+  ipAddress?: string | null
+  eligible: boolean
+  reason: string
+  failedRule?: string | null
+  confidence: number
+  checks?: EligibilityChecks
+  timestamp?: string | null
+  adminStatus?: string
+  operStatus?: string
+  portMode?: string
+  isAccess?: boolean
+  isTrunk?: boolean
+  isUplink?: boolean
+  isInfrastructure?: boolean
+  isManagement?: boolean
+  isProtected?: boolean
+  monitoringEnabled?: boolean
+}
+
+export interface StormConfig {
+  enableEligibility: boolean
+  allowManagementPorts: boolean
+  allowTrunks: boolean
+  allowInfrastructurePorts: boolean
+  allowProtectedPorts: boolean
+  confidence?: number
 }
 
 export interface ApiItemResponse<T> {

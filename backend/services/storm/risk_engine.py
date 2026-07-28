@@ -1,0 +1,513 @@
+"""
+Advanced Risk Score Engine
+==========================
+Estimates the probability that an eligible interface is experiencing a
+Layer-2 network storm.
+
+Responsibility
+--------------
+Risk calculation only — no SSH, SNMP, confirmation, or mitigation.
+
+Public API
+----------
+    from services.storm.risk_engine import calculate_risk
+    result = calculate_risk(device_id, interface, eligible=True)
+
+Consumes MongoDB only:
+- Eligibility result (caller-supplied or latest stored)
+- Interface statistics history
+- Interface metadata
+"""
+
+from __future__ import annotations
+
+import time
+from datetime import datetime, timezone
+from typing import Any, Optional
+
+from bson import ObjectId
+from pymongo import ASCENDING, DESCENDING
+
+from services.storm.aggregator import aggregate_analyzer_results
+from services.storm.analyzers.broadcast import BroadcastAnalyzer
+from services.storm.analyzers.crc import CrcAnalyzer
+from services.storm.analyzers.discards import DiscardAnalyzer
+from services.storm.analyzers.errors import ErrorAnalyzer
+from services.storm.analyzers.multicast import MulticastAnalyzer
+from services.storm.analyzers.unknown_unicast import UnknownUnicastAnalyzer
+from services.storm.analyzers.utilization import UtilizationAnalyzer
+from services.storm.history import load_stats_pair
+from services.storm.models import RiskScoreResult, create_risk_document
+from services.storm.thresholds import RiskConfig, get_risk_config
+from utils.monitor_logger import get_monitor_logger
+
+logger = get_monitor_logger("storm.risk")
+
+COLLECTION = "storm_risk_history"
+
+DEFAULT_ANALYZERS = (
+    BroadcastAnalyzer(),
+    MulticastAnalyzer(),
+    UnknownUnicastAnalyzer(),
+    UtilizationAnalyzer(),
+    ErrorAnalyzer(),
+    DiscardAnalyzer(),
+    CrcAnalyzer(),
+)
+
+
+def _db():
+    from config.database import db  # noqa: PLC0415
+
+    return db
+
+
+class RiskScoreEngine:
+    """
+    Stateless risk calculator (SOLID).
+
+    - SRP: risk scoring only
+    - OCP: analyzers are injectable
+    - DIP: depends on RiskConfig + analyzer protocol
+    """
+
+    def __init__(
+        self,
+        config: Optional[RiskConfig] = None,
+        analyzers=None,
+    ) -> None:
+        self._config = config or get_risk_config()
+        self._analyzers = tuple(analyzers) if analyzers is not None else DEFAULT_ANALYZERS
+
+    @property
+    def config(self) -> RiskConfig:
+        return self._config
+
+    def calculate(
+        self,
+        *,
+        device_id: Any,
+        interface: str,
+        eligible: bool = True,
+        current_stats: Optional[dict] = None,
+        previous_stats: Optional[dict] = None,
+        hostname: Optional[str] = None,
+        ip_address: Optional[str] = None,
+        persist: bool = False,
+    ) -> RiskScoreResult:
+        """
+        Calculate risk for one interface.
+
+        When ``current_stats`` is omitted, the two newest Mongo samples
+        are loaded. When ``eligible`` is False, returns a zero-risk result
+        without running analyzers.
+        """
+        started = time.monotonic()
+        now = datetime.now(timezone.utc)
+        name = str(interface or "").strip()
+        device_key = str(device_id) if device_id is not None else None
+
+        if not self._config.enable_risk:
+            result = RiskScoreResult(
+                risk_score=0.0,
+                severity="LOW",
+                confidence=0.0,
+                contributors=[],
+                eligible=eligible,
+                timestamp=now,
+                device_id=device_key,
+                interface=name or None,
+                skipped_reason="Risk scoring disabled",
+            )
+            self._log(result, started)
+            return result
+
+        if not eligible:
+            result = RiskScoreResult(
+                risk_score=0.0,
+                severity="LOW",
+                confidence=100.0,
+                contributors=[],
+                eligible=False,
+                timestamp=now,
+                device_id=device_key,
+                interface=name or None,
+                skipped_reason="Interface not eligible",
+            )
+            if persist:
+                self._store(device_id, name, result, hostname, ip_address)
+            self._log(result, started)
+            return result
+
+        if not name:
+            result = RiskScoreResult(
+                risk_score=0.0,
+                severity="LOW",
+                confidence=0.0,
+                contributors=[],
+                eligible=True,
+                timestamp=now,
+                device_id=device_key,
+                interface=None,
+                skipped_reason="Missing interface name",
+            )
+            self._log(result, started)
+            return result
+
+        current = current_stats
+        previous = previous_stats
+        if current is None:
+            current, previous = load_stats_pair(device_id, name)
+
+        if current is None:
+            result = RiskScoreResult(
+                risk_score=0.0,
+                severity="LOW",
+                confidence=0.0,
+                contributors=[],
+                eligible=True,
+                timestamp=now,
+                device_id=device_key,
+                interface=name,
+                skipped_reason="Missing statistics history",
+            )
+            if persist:
+                self._store(device_id, name, result, hostname, ip_address)
+            self._log(result, started)
+            return result
+
+        analyzer_outputs = [
+            analyzer.analyze(current, previous, self._config)
+            for analyzer in self._analyzers
+        ]
+        result = aggregate_analyzer_results(
+            analyzer_outputs,
+            eligible=True,
+            device_id=device_key,
+            interface=name,
+            timestamp=now,
+        )
+
+        if persist:
+            self._store(
+                device_id,
+                name,
+                result,
+                hostname or current.get("hostname"),
+                ip_address or current.get("ipAddress"),
+            )
+
+        self._log(result, started)
+        return result
+
+    def _store(
+        self,
+        device_id,
+        interface: str,
+        result: RiskScoreResult,
+        hostname: Optional[str],
+        ip_address: Optional[str],
+    ) -> None:
+        try:
+            oid = device_id
+            if isinstance(oid, str) and ObjectId.is_valid(oid):
+                oid = ObjectId(oid)
+            document = create_risk_document(
+                device_id=oid,
+                interface=interface,
+                result=result,
+                hostname=hostname,
+                ip_address=ip_address,
+            )
+            _db()[COLLECTION].insert_one(document)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("[RISK] Failed to store risk history: %s", exc)
+
+    @staticmethod
+    def _log(result: RiskScoreResult, started: float) -> None:
+        elapsed_ms = round((time.monotonic() - started) * 1000, 1)
+        top = result.contributors[0]["metric"] if result.contributors else "none"
+        logger.info(
+            "Risk Calculated | %s | score=%s | severity=%s | top=%s | %sms",
+            result.interface or "unknown",
+            result.risk_score,
+            result.severity,
+            top,
+            elapsed_ms,
+        )
+
+
+_engine: Optional[RiskScoreEngine] = None
+
+
+def get_risk_engine(
+    config: Optional[RiskConfig] = None,
+    *,
+    force_new: bool = False,
+) -> RiskScoreEngine:
+    global _engine
+    if force_new or _engine is None or config is not None:
+        _engine = RiskScoreEngine(config=config)
+    return _engine
+
+
+def calculate_risk(
+    device_id,
+    interface: str,
+    *,
+    eligible: bool = True,
+    current_stats: Optional[dict] = None,
+    previous_stats: Optional[dict] = None,
+    hostname: Optional[str] = None,
+    ip_address: Optional[str] = None,
+    persist: bool = False,
+) -> RiskScoreResult:
+    """
+    Public entry-point for future Storm modules::
+
+        result = calculate_risk(device_id, interface, eligible=True)
+    """
+    return get_risk_engine().calculate(
+        device_id=device_id,
+        interface=interface,
+        eligible=eligible,
+        current_stats=current_stats,
+        previous_stats=previous_stats,
+        hostname=hostname,
+        ip_address=ip_address,
+        persist=persist,
+    )
+
+
+def ensure_risk_indexes() -> None:
+    try:
+        coll = _db()[COLLECTION]
+        coll.create_index(
+            [
+                ("deviceId", ASCENDING),
+                ("interface", ASCENDING),
+                ("timestamp", DESCENDING),
+            ],
+            name="idx_risk_device_iface_ts",
+        )
+        coll.create_index(
+            [("timestamp", DESCENDING)],
+            name="idx_risk_timestamp",
+        )
+        coll.create_index(
+            [("severity", ASCENDING), ("timestamp", DESCENDING)],
+            name="idx_risk_severity_ts",
+        )
+        logger.info("[RISK] MongoDB indexes ensured on %s", COLLECTION)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[RISK] Failed to ensure indexes: %s", exc)
+
+
+def _latest_eligibility_map() -> dict[tuple[str, str], bool]:
+    """Map (deviceId, interface) → eligible from latest eligibility_results."""
+    pipeline = [
+        {"$sort": {"timestamp": DESCENDING}},
+        {
+            "$group": {
+                "_id": {
+                    "deviceId": "$deviceId",
+                    "interface": "$interface",
+                },
+                "eligible": {"$first": "$eligible"},
+            }
+        },
+    ]
+    mapping: dict[tuple[str, str], bool] = {}
+    try:
+        for row in _db().eligibility_results.aggregate(pipeline):
+            key = row.get("_id") or {}
+            device_id = key.get("deviceId")
+            iface = key.get("interface")
+            if device_id is None or not iface:
+                continue
+            mapping[(str(device_id), str(iface))] = bool(row.get("eligible"))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[RISK] Failed to load eligibility map: %s", exc)
+    return mapping
+
+
+def calculate_all_risks() -> dict[str, Any]:
+    """
+    Score every interface that has a latest eligibility result.
+
+    Safe for APScheduler — never raises. Stops after risk storage;
+    does not invoke confirmation/mitigation.
+    """
+    config = get_risk_config()
+    if not config.enable_risk:
+        logger.info("[RISK] Skipped — enableRisk=false")
+        return {
+            "total": 0,
+            "scored": 0,
+            "skipped": 0,
+            "errors": 0,
+            "disabled": True,
+        }
+
+    logger.info("[RISK] Bulk risk calculation started")
+    started = time.monotonic()
+    eligibility = _latest_eligibility_map()
+
+    total = 0
+    scored = 0
+    skipped = 0
+    errors = 0
+    engine = get_risk_engine(force_new=True)
+
+    # Prefer interfaces inventory so we still score eligible ports even if
+    # eligibility map is empty after a fresh install (treat missing as False).
+    try:
+        cursor = _db().interfaces.find(
+            {},
+            {
+                "deviceId": 1,
+                "name": 1,
+                "hostname": 1,
+                "ipAddress": 1,
+            },
+        )
+        for iface in cursor:
+            total += 1
+            device_id = iface.get("deviceId")
+            name = iface.get("name")
+            if device_id is None or not name:
+                skipped += 1
+                continue
+            eligible = eligibility.get((str(device_id), str(name)), False)
+            try:
+                engine.calculate(
+                    device_id=device_id,
+                    interface=name,
+                    eligible=eligible,
+                    hostname=iface.get("hostname"),
+                    ip_address=iface.get("ipAddress"),
+                    persist=True,
+                )
+                if eligible:
+                    scored += 1
+                else:
+                    skipped += 1
+            except Exception as exc:  # noqa: BLE001
+                errors += 1
+                logger.error(
+                    "[RISK] Failed scoring %s: %s",
+                    name,
+                    exc,
+                )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("[RISK] Bulk calculation aborted: %s", exc)
+        return {
+            "total": total,
+            "scored": scored,
+            "skipped": skipped,
+            "errors": errors + 1,
+            "disabled": False,
+        }
+
+    elapsed = round(time.monotonic() - started, 2)
+    logger.info(
+        "[RISK] Bulk complete | total=%s scored=%s skipped=%s errors=%s "
+        "elapsed=%.2fs",
+        total,
+        scored,
+        skipped,
+        errors,
+        elapsed,
+    )
+    return {
+        "total": total,
+        "scored": scored,
+        "skipped": skipped,
+        "errors": errors,
+        "disabled": False,
+    }
+
+
+def get_latest_risk_results(
+    device_id: Optional[ObjectId] = None,
+    interface: Optional[str] = None,
+    *,
+    severity: Optional[str] = None,
+    search: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 50,
+) -> tuple[list[dict], int]:
+    """Latest risk document per (deviceId, interface)."""
+    match: dict[str, Any] = {}
+    if device_id is not None:
+        match["deviceId"] = device_id
+    if interface:
+        match["interface"] = interface
+
+    pipeline: list[dict[str, Any]] = []
+    if match:
+        pipeline.append({"$match": match})
+
+    pipeline.extend(
+        [
+            {"$sort": {"timestamp": DESCENDING}},
+            {
+                "$group": {
+                    "_id": {
+                        "deviceId": "$deviceId",
+                        "interface": "$interface",
+                    },
+                    "doc": {"$first": "$$ROOT"},
+                }
+            },
+            {"$replaceRoot": {"newRoot": "$doc"}},
+        ]
+    )
+
+    post: dict[str, Any] = {}
+    if severity:
+        post["severity"] = severity.upper()
+    if search:
+        regex = {"$regex": search, "$options": "i"}
+        post["$or"] = [
+            {"interface": regex},
+            {"hostname": regex},
+            {"ipAddress": regex},
+            {"severity": regex},
+        ]
+    if post:
+        pipeline.append({"$match": post})
+
+    pipeline.append({"$sort": {"riskScore": DESCENDING, "timestamp": DESCENDING}})
+
+    coll = _db()[COLLECTION]
+    count_pipeline = list(pipeline) + [{"$count": "total"}]
+    count_result = list(coll.aggregate(count_pipeline))
+    total = int(count_result[0]["total"]) if count_result else 0
+
+    pipeline.extend(
+        [
+            {"$skip": max(int(skip), 0)},
+            {"$limit": max(int(limit), 1)},
+        ]
+    )
+    return list(coll.aggregate(pipeline)), total
+
+
+def get_risk_history(
+    device_id: ObjectId,
+    interface: str,
+    *,
+    skip: int = 0,
+    limit: int = 50,
+) -> tuple[list[dict], int]:
+    coll = _db()[COLLECTION]
+    query = {"deviceId": device_id, "interface": interface}
+    total = coll.count_documents(query)
+    rows = list(
+        coll.find(query)
+        .sort("timestamp", DESCENDING)
+        .skip(max(int(skip), 0))
+        .limit(max(int(limit), 1))
+    )
+    return rows, total

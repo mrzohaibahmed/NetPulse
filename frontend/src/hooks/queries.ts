@@ -1,24 +1,35 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   acknowledgeAlert,
+  collectAllInterfaceStats,
+  collectDeviceInterfaceStats,
   createDevice,
   deleteDevice,
   dismissAlert,
+  discoverAllInterfaces,
+  discoverDeviceInterfaces,
+  evaluateAllEligibility,
   getAlerts,
   getDashboardStatistics,
   getDashboardSummary,
   getDeviceHistory,
+  getDeviceInterfaceStats,
+  getDeviceInterfaces,
   getDeviceStatus,
   getDeviceStatusChart,
   getDeviceTypeChart,
   getDevices,
+  getEligibilityResults,
   getHealth,
   getHistory,
+  getInterfaceHistory,
+  getInterfaces,
   getNetworkHint,
   getRecentHistory,
   getResponseTimeChart,
   getScanActivityChart,
   getSettings,
+  getStormConfig,
   getUptimeReport,
   getUsers,
   importDevicesCsv,
@@ -40,6 +51,10 @@ const DASHBOARD_INTERVAL = 10_000
 const DEVICES_INTERVAL = 15_000
 const HISTORY_INTERVAL = 20_000
 const HEALTH_INTERVAL = 15_000
+const INTERFACES_INTERVAL = 15_000
+const INTERFACE_STATS_INTERVAL = 20_000
+const INTERFACE_HISTORY_INTERVAL = 30_000
+const ELIGIBILITY_INTERVAL = 20_000
 
 export function useHealthQuery() {
   return useQuery({
@@ -189,6 +204,171 @@ export function useHistoryQuery(params: PaginationParams) {
     refetchInterval: HISTORY_INTERVAL,
     placeholderData: (prev) => prev,
   })
+}
+
+export function useInterfacesQuery(params: PaginationParams) {
+  return useQuery({
+    queryKey: queryKeys.interfaces(params),
+    queryFn: () => getInterfaces(params),
+    refetchInterval: INTERFACES_INTERVAL,
+    placeholderData: (prev) => prev,
+  })
+}
+
+export function useDeviceInterfacesQuery(deviceId: string, params: PaginationParams = {}, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.deviceInterfaces(deviceId, params),
+    queryFn: () => getDeviceInterfaces(deviceId, params),
+    enabled: Boolean(deviceId) && enabled,
+    refetchInterval: INTERFACES_INTERVAL,
+    placeholderData: (prev) => prev,
+  })
+}
+
+export function useDeviceInterfaceStatsQuery(deviceId: string, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.interfaceStats(deviceId),
+    queryFn: async () => (await getDeviceInterfaceStats(deviceId)).data,
+    enabled: Boolean(deviceId) && enabled,
+    refetchInterval: INTERFACE_STATS_INTERVAL,
+    placeholderData: (prev) => prev,
+  })
+}
+
+export function useInterfaceHistoryQuery(
+  deviceId: string,
+  interfaceName: string,
+  params: PaginationParams = {},
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: queryKeys.interfaceHistory(deviceId, interfaceName, params),
+    queryFn: () => getInterfaceHistory(deviceId, interfaceName, params),
+    enabled: Boolean(deviceId) && Boolean(interfaceName) && enabled,
+    refetchInterval: INTERFACE_HISTORY_INTERVAL,
+    placeholderData: (prev) => prev,
+  })
+}
+
+export function useInterfaceMutations() {
+  const qc = useQueryClient()
+  const invalidate = () =>
+    Promise.all([
+      qc.invalidateQueries({ queryKey: ['interfaces'] }),
+      qc.invalidateQueries({ queryKey: ['device-interfaces'] }),
+      qc.invalidateQueries({ queryKey: ['interface-stats'] }),
+      qc.invalidateQueries({ queryKey: ['interface-history'] }),
+    ])
+
+  const discoverAll = useMutation({
+    mutationFn: () => discoverAllInterfaces(),
+    onSuccess: async (res) => {
+      if ((res.discoveredDevices ?? 0) === 0 && (res.failed ?? 0) > 0) {
+        const detail = res.errors?.[0]?.error
+        toast.error(
+          detail
+            ? `Discovery failed: ${detail}`
+            : res.message || 'Interface discovery failed for all devices',
+        )
+      } else if ((res.failed ?? 0) > 0) {
+        toast.warning(
+          `${res.message || 'Discovery finished'} (${res.failed} failed)`,
+        )
+      } else {
+        toast.success(res.message || 'Interface discovery complete')
+      }
+      await invalidate()
+    },
+    onError: (err: Error) => toast.error(err.message),
+  })
+
+  const discoverDevice = useMutation({
+    mutationFn: (deviceId: string) => discoverDeviceInterfaces(deviceId),
+    onSuccess: async (res) => {
+      toast.success(res.message || 'Interface discovery complete')
+      await invalidate()
+    },
+    onError: (err: Error) => toast.error(err.message),
+  })
+
+  const collectAll = useMutation({
+    mutationFn: () => collectAllInterfaceStats(),
+    onSuccess: async (res) => {
+      if ((res.succeeded ?? 0) === 0 && (res.failed ?? 0) > 0) {
+        const detail = res.errors?.[0]?.error
+        toast.error(
+          detail
+            ? `Stats collection failed: ${detail}`
+            : res.message || 'Stats collection failed for all devices',
+        )
+      } else if ((res.failed ?? 0) > 0) {
+        toast.warning(
+          `${res.message || 'Stats collection finished'} (${res.failed} failed)`,
+        )
+      } else {
+        toast.success(res.message || 'Stats collection complete')
+      }
+      await invalidate()
+    },
+    onError: (err: Error) => toast.error(err.message),
+  })
+
+  const collectDevice = useMutation({
+    mutationFn: (deviceId: string) => collectDeviceInterfaceStats(deviceId),
+    onSuccess: async (res) => {
+      toast.success(res.message || 'Stats collection complete')
+      await invalidate()
+    },
+    onError: (err: Error) => toast.error(err.message),
+  })
+
+  return { discoverAll, discoverDevice, collectAll, collectDevice }
+}
+
+export function useEligibilityQuery(params: PaginationParams) {
+  return useQuery({
+    queryKey: queryKeys.eligibility(params),
+    queryFn: () => getEligibilityResults(params),
+    refetchInterval: ELIGIBILITY_INTERVAL,
+    placeholderData: (prev) => prev,
+  })
+}
+
+export function useStormConfigQuery(enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.stormConfig,
+    queryFn: async () => (await getStormConfig()).data,
+    enabled,
+  })
+}
+
+export function useEligibilityMutations() {
+  const qc = useQueryClient()
+  const invalidate = () =>
+    Promise.all([
+      qc.invalidateQueries({ queryKey: ['eligibility'] }),
+      qc.invalidateQueries({ queryKey: ['device-eligibility'] }),
+      qc.invalidateQueries({ queryKey: queryKeys.stormConfig }),
+    ])
+
+  const evaluateAll = useMutation({
+    mutationFn: () => evaluateAllEligibility(),
+    onSuccess: async (res) => {
+      if (res.skipped) {
+        toast.warning(res.message || 'Eligibility evaluation is disabled')
+      } else if ((res.errors ?? 0) > 0) {
+        toast.warning(
+          `${res.message || 'Eligibility finished'} (${res.errors} error(s))`,
+        )
+      } else {
+        toast.success(res.message || 'Eligibility evaluation complete')
+      }
+      await invalidate()
+    },
+    onError: (err: Error) => toast.error(err.message),
+  })
+
+  return { evaluateAll }
 }
 
 export function useSettingsQuery(enabled = true) {
