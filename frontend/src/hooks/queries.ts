@@ -9,6 +9,7 @@ import {
   discoverAllInterfaces,
   discoverDeviceInterfaces,
   evaluateAllEligibility,
+  calculateAllRisk,
   getAlerts,
   getDashboardStatistics,
   getDashboardSummary,
@@ -23,10 +24,12 @@ import {
   getHealth,
   getHistory,
   getInterfaceHistory,
+  getInterfaceRisk,
   getInterfaces,
   getNetworkHint,
   getRecentHistory,
   getResponseTimeChart,
+  getRiskResults,
   getScanActivityChart,
   getSettings,
   getStormConfig,
@@ -369,6 +372,57 @@ export function useEligibilityMutations() {
   })
 
   return { evaluateAll }
+}
+
+export function useRiskQuery(params: PaginationParams) {
+  return useQuery({
+    queryKey: queryKeys.risk(params),
+    queryFn: () => getRiskResults(params),
+    refetchInterval: ELIGIBILITY_INTERVAL,
+    placeholderData: (prev) => prev,
+  })
+}
+
+export function useInterfaceRiskQuery(
+  deviceId: string,
+  interfaceName: string,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: queryKeys.interfaceRisk(deviceId, interfaceName, { history: true }),
+    queryFn: () =>
+      getInterfaceRisk(deviceId, interfaceName, { history: true, limit: 40 }),
+    enabled: Boolean(deviceId) && Boolean(interfaceName) && enabled,
+    refetchInterval: ELIGIBILITY_INTERVAL,
+  })
+}
+
+export function useRiskMutations() {
+  const qc = useQueryClient()
+  const invalidate = () =>
+    Promise.all([
+      qc.invalidateQueries({ queryKey: ['risk'] }),
+      qc.invalidateQueries({ queryKey: ['interface-risk'] }),
+    ])
+
+  const calculateAll = useMutation({
+    mutationFn: () => calculateAllRisk(),
+    onSuccess: async (res) => {
+      if (res.disabled) {
+        toast.warning(res.message || 'Risk scoring is disabled')
+      } else if ((res.errors ?? 0) > 0) {
+        toast.warning(
+          `${res.message || 'Risk scoring finished'} (${res.errors} error(s))`,
+        )
+      } else {
+        toast.success(res.message || 'Risk scoring complete')
+      }
+      await invalidate()
+    },
+    onError: (err: Error) => toast.error(err.message),
+  })
+
+  return { calculateAll }
 }
 
 export function useSettingsQuery(enabled = true) {

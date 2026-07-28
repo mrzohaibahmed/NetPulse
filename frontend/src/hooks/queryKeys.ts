@@ -24,6 +24,9 @@ export const queryKeys = {
   eligibility: (params: object) => ['eligibility', params] as const,
   deviceEligibility: (id: string, params: object) =>
     ['device-eligibility', id, params] as const,
+  risk: (params: object) => ['risk', params] as const,
+  interfaceRisk: (id: string, name: string, params: object) =>
+    ['interface-risk', id, name, params] as const,
   stormConfig: ['storm-config'] as const,
   settings: ['settings'] as const,
   users: ['users'] as const,
