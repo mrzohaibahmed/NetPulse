@@ -70,6 +70,7 @@ def aggregate_analyzer_results(
             "score": round(float(r.score), 2),
             "supported": r.supported,
             "weight": r.weight,
+            **({"detail": dict(r.detail)} if r.detail else {}),
         }
         for r in all_results
     }

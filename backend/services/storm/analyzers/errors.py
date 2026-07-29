@@ -17,7 +17,9 @@ class ErrorAnalyzer:
         current: dict,
         previous: Optional[dict],
         config: RiskConfig,
+        interface_context=None,
     ) -> AnalyzerResult:
+        del interface_context
         rate, supported = combined_error_rate(current, previous)
         if not supported:
             return AnalyzerResult(

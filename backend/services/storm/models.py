@@ -224,15 +224,19 @@ class AnalyzerResult:
     score: float
     supported: bool = True
     weight: float = 0.0
+    detail: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "metric": self.metric,
             "value": self.value,
             "score": round(float(self.score), 2),
             "supported": self.supported,
             "weight": self.weight,
         }
+        if self.detail:
+            payload["detail"] = dict(self.detail)
+        return payload
 
     def to_contributor(self) -> dict[str, Any]:
         return {
@@ -262,6 +266,9 @@ class RiskScoreResult:
     interface: Optional[str] = None
     raw_metrics: dict[str, Any] = field(default_factory=dict)
     skipped_reason: Optional[str] = None
+    source_classification: Optional[str] = None
+    source_confidence: float = 0.0
+    source_rationale: Optional[str] = None
 
     def to_api_dict(self) -> dict[str, Any]:
         from datetime import timezone
@@ -280,6 +287,9 @@ class RiskScoreResult:
             "interface": self.interface,
             "rawMetrics": dict(self.raw_metrics),
             "skippedReason": self.skipped_reason,
+            "sourceClassification": self.source_classification,
+            "sourceConfidence": round(float(self.source_confidence), 2),
+            "sourceRationale": self.source_rationale,
         }
 
 
@@ -296,7 +306,7 @@ def create_risk_document(
     from datetime import timezone
 
     now = timestamp or result.timestamp or datetime.now(timezone.utc)
-    return {
+    doc = {
         "deviceId": device_id,
         "interface": interface,
         "hostname": hostname,
@@ -310,6 +320,12 @@ def create_risk_document(
         "skippedReason": result.skipped_reason,
         "timestamp": now,
     }
+    if result.source_classification is not None:
+        doc["sourceClassification"] = result.source_classification
+        doc["sourceConfidence"] = round(float(result.source_confidence), 2)
+        if result.source_rationale:
+            doc["sourceRationale"] = result.source_rationale
+    return doc
 
 
 # ---------------------------------------------------------------------------

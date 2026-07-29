@@ -17,8 +17,9 @@ class UtilizationAnalyzer:
         current: dict,
         previous: Optional[dict],
         config: RiskConfig,
+        interface_context=None,
     ) -> AnalyzerResult:
-        del previous  # utilization is absolute % on the current sample
+        del previous, interface_context  # utilization is absolute % on the current sample
         value, supported = read_utilization(current)
         if not supported or value is None:
             return AnalyzerResult(

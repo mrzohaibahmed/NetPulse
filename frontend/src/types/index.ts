@@ -329,9 +329,15 @@ export interface InterfaceStat {
   txPackets: number
   broadcastPackets: number
   multicastPackets: number
+  rxBroadcastPackets?: number | null
+  txBroadcastPackets?: number | null
+  rxMulticastPackets?: number | null
+  txMulticastPackets?: number | null
   inputErrors: number
   outputErrors: number
   discards: number
+  rxDiscards?: number | null
+  txDiscards?: number | null
   utilization?: number | null
   rxUtilization?: number | null
   txUtilization?: number | null
@@ -346,9 +352,15 @@ export interface InterfaceListRow extends NetworkInterface {
   txUtilization?: number | null
   broadcastPackets?: number | null
   multicastPackets?: number | null
+  rxBroadcastPackets?: number | null
+  txBroadcastPackets?: number | null
+  rxMulticastPackets?: number | null
+  txMulticastPackets?: number | null
   inputErrors?: number | null
   outputErrors?: number | null
   discards?: number | null
+  rxDiscards?: number | null
+  txDiscards?: number | null
   statsTimestamp?: string | null
   speedBps?: number | null
 }
@@ -434,6 +446,12 @@ export interface RiskContributor {
   weight: number
 }
 
+export type StormSourceClassification =
+  | 'LIKELY_SOURCE'
+  | 'LIKELY_FORWARDER'
+  | 'LIKELY_RECEIVER'
+  | 'UNKNOWN'
+
 export interface RiskResult {
   _id?: string | null
   deviceId: string
@@ -455,6 +473,9 @@ export interface RiskResult {
   errorRate?: number | null
   discardRate?: number | null
   crcRate?: number | null
+  sourceClassification?: StormSourceClassification | string | null
+  sourceConfidence?: number | null
+  sourceRationale?: string | null
 }
 
 export interface ConfirmationResult {
