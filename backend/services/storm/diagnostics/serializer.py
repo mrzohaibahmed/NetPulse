@@ -8,6 +8,7 @@ from utils.serializers import format_datetime
 
 
 def serialize_incident(doc: dict) -> dict[str, Any]:
+    trigger = doc.get("trigger") or {}
     return {
         "_id": str(doc["_id"]) if doc.get("_id") is not None else None,
         "incidentId": doc.get("incidentId"),
@@ -15,9 +16,18 @@ def serialize_incident(doc: dict) -> dict[str, Any]:
         "interface": doc.get("interface"),
         "hostname": doc.get("hostname"),
         "ipAddress": doc.get("ipAddress"),
+        "incidentType": doc.get("incidentType") or doc.get("type") or "STORM",
+        "type": doc.get("type") or doc.get("incidentType") or "STORM",
+        "requestedBy": doc.get("requestedBy"),
+        "requestedAt": format_datetime(doc.get("requestedAt")),
+        "reason": doc.get("reason"),
+        "action": doc.get("action"),
+        "requiresApproval": doc.get("requiresApproval"),
+        "approvedBy": doc.get("approvedBy"),
+        "executedImmediately": doc.get("executedImmediately"),
         "status": doc.get("status") or "OPEN",
         "severity": doc.get("severity") or "CRITICAL",
-        "trigger": doc.get("trigger") or {},
+        "trigger": trigger,
         "interfaceSnapshot": doc.get("interfaceSnapshot") or {},
         "switchportSnapshot": doc.get("switchportSnapshot") or {},
         "macTable": doc.get("macTable") or {},

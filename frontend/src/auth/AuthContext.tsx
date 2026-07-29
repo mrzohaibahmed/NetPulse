@@ -15,6 +15,7 @@ interface AuthContextValue {
   user: User | null
   loading: boolean
   isAdmin: boolean
+  isSuperAdmin: boolean
   login: (username: string, password: string) => Promise<void>
   logout: () => void
   applySession: (token: string, nextUser: User) => void
@@ -69,7 +70,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     () => ({
       user,
       loading,
-      isAdmin: user?.role === 'admin',
+      isAdmin: user?.role === 'admin' || user?.role === 'super-admin',
+      isSuperAdmin: user?.role === 'super-admin',
       login,
       logout,
       applySession,

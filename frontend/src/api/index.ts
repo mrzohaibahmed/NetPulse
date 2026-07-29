@@ -30,6 +30,7 @@ import type {
   RecoveryLog,
   UptimeRow,
   User,
+  UserRole,
 } from '../types'
 
 function toQuery(params: PaginationParams = {}): string {
@@ -103,7 +104,7 @@ export const getUsers = () =>
 
 export const updateUser = (
   id: string,
-  payload: { username?: string; password?: string },
+  payload: { username?: string; password?: string; role?: UserRole },
 ) =>
   apiRequest<{ success: boolean; message: string; data: User }>(`/api/users/${id}`, {
     method: 'PUT',
@@ -625,5 +626,63 @@ export const retryStormRecovery = (payload: { incidentId: string }) =>
       timeoutMs: 180000,
     },
   )
+
+// ---------------------------------------------------------------------------
+// Manual Port Control (enterprise manual actions)
+// ---------------------------------------------------------------------------
+
+export const manualShutdown = (payload: {
+  deviceId: string
+  interface: string
+  reason: string
+}) =>
+  apiRequest<{
+    success: boolean
+    status: string
+    incidentId: string
+    error?: string
+  }>('/api/manual/shutdown', {
+    method: 'POST',
+    body: payload,
+    timeoutMs: 180000,
+  })
+
+export const manualRecover = (payload: {
+  incidentId?: string
+  deviceId?: string
+  interface?: string
+  reason: string
+}) =>
+  apiRequest<{
+    success: boolean
+    status: string
+    incidentId: string
+    error?: string
+    retryCount?: number
+  }>('/api/manual/recover', {
+    method: 'POST',
+    body: payload,
+    timeoutMs: 180000,
+  })
+
+export const manualEmergencyShutdown = (payload: {
+  deviceId: string
+  interface: string
+  reason: string
+  confirmation: string
+}) =>
+  apiRequest<{
+    success: boolean
+    status: string
+    incidentId: string
+    error?: string
+    verificationPassed?: boolean
+    rollbackPerformed?: boolean
+    executionTimeMs?: number
+  }>('/api/manual/emergency-shutdown', {
+    method: 'POST',
+    body: payload,
+    timeoutMs: 180000,
+  })
 
 

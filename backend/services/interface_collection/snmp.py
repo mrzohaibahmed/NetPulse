@@ -403,10 +403,9 @@ class SNMPInterfaceCollector:
 
             in_errors = _as_int(tables.get("in_errors", {}).get(if_index))
             out_errors = _as_int(tables.get("out_errors", {}).get(if_index))
-            discards = (
-                _as_int(tables.get("in_discards", {}).get(if_index))
-                + _as_int(tables.get("out_discards", {}).get(if_index))
-            )
+            in_discards = _as_int(tables.get("in_discards", {}).get(if_index))
+            out_discards = _as_int(tables.get("out_discards", {}).get(if_index))
+            discards = in_discards + out_discards
 
             high_speed = tables.get("high_speed", {}).get(if_index)
             speed = tables.get("speed", {}).get(if_index)
@@ -425,6 +424,12 @@ class SNMPInterfaceCollector:
                 "tx_bytes": tx_bytes,
                 "rx_packets": in_ucast + in_mcast + in_bcast,
                 "tx_packets": out_ucast + out_mcast + out_bcast,
+                "rx_broadcast_packets": in_bcast,
+                "tx_broadcast_packets": out_bcast,
+                "rx_multicast_packets": in_mcast,
+                "tx_multicast_packets": out_mcast,
+                "rx_discards": in_discards,
+                "tx_discards": out_discards,
                 "broadcast_packets": in_bcast + out_bcast,
                 "multicast_packets": in_mcast + out_mcast,
                 "input_errors": in_errors,

@@ -3,7 +3,7 @@ import { KeyRound, Shield, User as UserIcon, Users } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAuth } from '@/auth/AuthContext'
 import { useAccountMutation, useUserMutation, useUsersQuery } from '@/hooks/queries'
-import type { User } from '@/types'
+import type { User, UserRole } from '@/types'
 import { PageHeader } from '@/components/shared/PageHeader'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
@@ -11,10 +11,19 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 
+const ASSIGNABLE_ROLES: UserRole[] = ['viewer', 'operator', 'admin', 'super-admin']
+
 export function AccountPage() {
-  const { user, isAdmin, applySession } = useAuth()
+  const { user, isAdmin, isSuperAdmin, applySession } = useAuth()
   const accountMutation = useAccountMutation()
   const userMutation = useUserMutation()
   const usersQuery = useUsersQuery(isAdmin)
@@ -28,6 +37,7 @@ export function AccountPage() {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editUsername, setEditUsername] = useState('')
   const [editPassword, setEditPassword] = useState('')
+  const [editRole, setEditRole] = useState<UserRole>('viewer')
   const [adminError, setAdminError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -74,6 +84,7 @@ export function AccountPage() {
     setEditingId(target._id)
     setEditUsername(target.username)
     setEditPassword('')
+    setEditRole(target.role)
     setAdminError(null)
   }
 
@@ -82,15 +93,16 @@ export function AccountPage() {
     if (!editingId) return
     setAdminError(null)
 
-    const payload: { username?: string; password?: string } = {}
+    const payload: { username?: string; password?: string; role?: UserRole } = {}
     const original = usersQuery.data?.find((u) => u._id === editingId)
     if (editUsername.trim() && editUsername.trim() !== original?.username) {
       payload.username = editUsername.trim()
     }
     if (editPassword.trim()) payload.password = editPassword.trim()
+    if (editRole && editRole !== original?.role) payload.role = editRole
 
-    if (!payload.username && !payload.password) {
-      setAdminError('Change username and/or password before saving')
+    if (!payload.username && !payload.password && !payload.role) {
+      setAdminError('Change username, password, and/or role before saving')
       return
     }
 
@@ -211,7 +223,9 @@ export function AccountPage() {
               <Users className="h-5 w-5 text-primary" />
               Manage users
             </CardTitle>
-            <CardDescription>Admins can reset usernames and passwords for any account.</CardDescription>
+            <CardDescription>
+              Admins can reset usernames and passwords. Super-admins can also assign roles.
+            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             {adminError ? (
@@ -268,6 +282,32 @@ export function AccountPage() {
                       onChange={(e) => setEditPassword(e.target.value)}
                       placeholder="Leave blank to keep current"
                     />
+                  </div>
+                  <div className="space-y-1.5 sm:col-span-2">
+                    <Label>Role</Label>
+                    <Select
+                      value={editRole}
+                      onValueChange={(value) => setEditRole(value as UserRole)}
+                      disabled={!isSuperAdmin && editRole === 'super-admin'}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select role" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {ASSIGNABLE_ROLES.filter(
+                          (role) => isSuperAdmin || role !== 'super-admin',
+                        ).map((role) => (
+                          <SelectItem key={role} value={role}>
+                            {role}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {!isSuperAdmin ? (
+                      <p className="text-xs text-muted-foreground">
+                        Only a super-admin can assign or edit the super-admin role.
+                      </p>
+                    ) : null}
                   </div>
                 </div>
                 <div className="flex justify-end gap-2">

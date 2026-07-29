@@ -6,7 +6,7 @@ export type DeviceStatus =
   | 'Unknown'
 
 export type ScanType = 'Manual' | 'Automatic'
-export type UserRole = 'admin' | 'viewer'
+export type UserRole = 'admin' | 'viewer' | 'operator' | 'super-admin'
 
 export interface User {
   _id: string
@@ -499,6 +499,7 @@ export interface SafetyResult {
 }
 
 export interface StormIncidentTrigger {
+  type?: string
   risk?: number | null
   confirmation?: boolean
   safety?: boolean
@@ -517,6 +518,15 @@ export interface StormIncident {
   interface: string
   hostname?: string | null
   ipAddress?: string | null
+  incidentType?: string
+  type?: string
+  requestedBy?: string | null
+  requestedAt?: string | null
+  reason?: string | null
+  action?: string | null
+  requiresApproval?: boolean
+  approvedBy?: string | null
+  executedImmediately?: boolean
   status: string
   severity: string
   trigger: StormIncidentTrigger
@@ -575,6 +585,13 @@ export interface MitigationLog {
   rollbackPerformed: boolean
   operator: string
   timestamp: string
+  emergency?: boolean
+  executionMode?: string | null
+  vendor?: string | null
+  executionTimeMs?: number | null
+  sourceIp?: string | null
+  sessionId?: string | null
+  reason?: string | null
 }
 
 export interface RecoveryLog {

@@ -104,6 +104,29 @@ function SeverityBadge({ severity }: { severity: string }) {
   )
 }
 
+function IncidentTypeBadge({ incidentType }: { incidentType?: string | null }) {
+  const value = (incidentType || 'STORM').toUpperCase()
+  if (value === 'EMERGENCY') {
+    return (
+      <Badge variant="danger" className="font-semibold uppercase tracking-wide">
+        EMERGENCY
+      </Badge>
+    )
+  }
+  if (value === 'MANUAL') {
+    return (
+      <Badge variant="warning" className="font-semibold uppercase tracking-wide">
+        MANUAL
+      </Badge>
+    )
+  }
+  return (
+    <Badge variant="secondary" className="font-semibold uppercase tracking-wide">
+      STORM
+    </Badge>
+  )
+}
+
 function formatRate(value: number | null | undefined, suffix = '/s'): string {
   if (value === null || value === undefined || Number.isNaN(Number(value))) return '—'
   const n = Number(value)
@@ -1543,6 +1566,7 @@ export function StormProtectionPage() {
                       <TableHead>Incident ID</TableHead>
                       <TableHead>Device</TableHead>
                       <TableHead>Interface</TableHead>
+                      <TableHead>Type</TableHead>
                       <TableHead>Severity</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead>Risk</TableHead>
@@ -1578,6 +1602,9 @@ export function StormProtectionPage() {
                             </div>
                           </TableCell>
                           <TableCell className="font-medium">{row.interface}</TableCell>
+                          <TableCell>
+                            <IncidentTypeBadge incidentType={row.incidentType || row.type} />
+                          </TableCell>
                           <TableCell>
                             <SeverityBadge severity={row.severity} />
                           </TableCell>
@@ -1917,6 +1944,7 @@ export function StormProtectionPage() {
                   <TableHeader>
                     <TableRow>
                       <TableHead>Incident ID</TableHead>
+                      <TableHead>Type</TableHead>
                       <TableHead>Interface</TableHead>
                       <TableHead>Device</TableHead>
                       <TableHead>Strategy</TableHead>
@@ -1937,6 +1965,17 @@ export function StormProtectionPage() {
                         >
                           <TableCell className="mono text-xs font-medium">
                             {row.incidentId}
+                          </TableCell>
+                          <TableCell>
+                            {row.emergency ? (
+                              <Badge variant="danger" className="font-semibold uppercase tracking-wide">
+                                EMERGENCY
+                              </Badge>
+                            ) : (
+                              <Badge variant="secondary" className="font-semibold uppercase tracking-wide">
+                                STORM
+                              </Badge>
+                            )}
                           </TableCell>
                           <TableCell className="font-medium">{row.interface}</TableCell>
                           <TableCell>
@@ -1993,6 +2032,25 @@ export function StormProtectionPage() {
                       <div className="text-sm space-y-1">
                         <p>Interface: <span className="font-semibold text-primary">{selectedMitigation.interface}</span></p>
                         <p>Operator: <span className="font-mono text-muted-foreground">{selectedMitigation.operator}</span></p>
+                        {selectedMitigation.emergency ? (
+                          <p>
+                            Type:{' '}
+                            <Badge variant="danger" className="font-semibold uppercase tracking-wide">
+                              EMERGENCY
+                            </Badge>
+                          </p>
+                        ) : null}
+                        {selectedMitigation.reason ? (
+                          <p>Reason: <span className="text-muted-foreground">{selectedMitigation.reason}</span></p>
+                        ) : null}
+                        {selectedMitigation.executionTimeMs != null ? (
+                          <p>
+                            Duration:{' '}
+                            <span className="font-mono text-muted-foreground">
+                              {selectedMitigation.executionTimeMs} ms
+                            </span>
+                          </p>
+                        ) : null}
                         <p>Status: <MitigationStatusBadge status={selectedMitigation.status} /></p>
                         <p>Rollback Triggered: <span className="font-semibold">{selectedMitigation.rollbackPerformed ? 'Yes' : 'No'}</span></p>
                       </div>

@@ -37,8 +37,19 @@ import { KpiCard } from '@/components/shared/KpiCard'
 import { LoadingState, TableSkeleton } from '@/components/shared/LoadingState'
 import { PageHeader } from '@/components/shared/PageHeader'
 import { Badge } from '@/components/ui/badge'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
 import {
   Select,
   SelectContent,
@@ -52,6 +63,10 @@ import {
   useDeviceInterfacesQuery,
   useInterfaceHistoryQuery,
   useInterfaceMutations,
+  useStormIncidentsQuery,
+  useMitigationDetailQuery,
+  useRecoveryDetailQuery,
+  useManualPortControlMutations,
 } from '@/hooks/queries'
 import {
   formatBytes,
@@ -101,9 +116,58 @@ export function InterfaceDetailPage() {
   const navigate = useNavigate()
   const { deviceId = '', interfaceName: rawName = '' } = useParams()
   const interfaceName = decodeURIComponent(rawName)
-  const { isAdmin } = useAuth()
+  const { user, isAdmin, isSuperAdmin } = useAuth()
   const mutations = useInterfaceMutations()
   const [historyLimit, setHistoryLimit] = useState('100')
+
+  const manualMutations = useManualPortControlMutations()
+  const stormIncidentsQuery = useStormIncidentsQuery({
+    limit: 50,
+    deviceId,
+    q: interfaceName,
+  })
+
+  const latestIncident = useMemo(() => {
+    const rows = stormIncidentsQuery.data?.data ?? []
+    return rows[0] ?? null
+  }, [stormIncidentsQuery.data])
+
+  const canSafeShutdown = user?.role === 'admin' || user?.role === 'operator' || isSuperAdmin
+  const canSafeRecover = isAdmin
+  const canEmergencyShutdown = isSuperAdmin
+
+  const latestRecoverableIncident = useMemo(() => {
+    const rows = stormIncidentsQuery.data?.data ?? []
+    return (
+      rows.find((row) => {
+        const statusOk = ['MITIGATED', 'RECOVERY_FAILED', 'MITIGATION_FAILED'].includes(
+          row.status || '',
+        )
+        if (!statusOk) return false
+        if (row.deviceId && deviceId && row.deviceId !== deviceId) return false
+        return interfaceNamesMatch(row.interface || '', interfaceName)
+      }) ?? null
+    )
+  }, [stormIncidentsQuery.data, deviceId, interfaceName])
+
+  const mitigationDetailQuery = useMitigationDetailQuery(
+    latestIncident?.incidentId || '',
+    Boolean(latestIncident?.incidentId),
+  )
+  const recoveryDetailQuery = useRecoveryDetailQuery(
+    latestIncident?.incidentId || '',
+    Boolean(latestIncident?.incidentId),
+  )
+
+  const [shutdownDialogOpen, setShutdownDialogOpen] = useState(false)
+  const [shutdownReason, setShutdownReason] = useState('')
+
+  const [recoverDialogOpen, setRecoverDialogOpen] = useState(false)
+  const [recoverReason, setRecoverReason] = useState('')
+
+  const [emergencyDialogOpen, setEmergencyDialogOpen] = useState(false)
+  const [emergencyReason, setEmergencyReason] = useState('')
+  const [emergencyConfirmText, setEmergencyConfirmText] = useState('')
 
   const inventoryQuery = useDeviceInterfacesQuery(
     deviceId,
@@ -541,6 +605,433 @@ export function InterfaceDetailPage() {
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
+        <Card className="glass lg:col-span-2">
+          <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-3 pb-3">
+            <div className="space-y-1">
+              <CardTitle className="text-base">Storm Diagnostics & Manual Control</CardTitle>
+              <p className="text-sm text-muted-foreground">
+                Safe Shutdown / Safe Recover (admin & super-admin) and emergency shutdown (Super Admin).
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {canSafeShutdown ? (
+                <Button
+                  type="button"
+                  variant="destructive"
+                  disabled={manualMutations.shutdown.isPending}
+                  onClick={() => {
+                    setShutdownReason('')
+                    setShutdownDialogOpen(true)
+                  }}
+                >
+                  {manualMutations.shutdown.isPending ? 'Shutting down…' : 'Shutdown Port'}
+                </Button>
+              ) : null}
+
+              {canSafeRecover ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={manualMutations.recover.isPending}
+                  onClick={() => {
+                    setRecoverReason('')
+                    setRecoverDialogOpen(true)
+                  }}
+                >
+                  {manualMutations.recover.isPending ? 'Recovering…' : 'Recover Port'}
+                </Button>
+              ) : null}
+
+              {canEmergencyShutdown ? (
+                <Button
+                  type="button"
+                  variant="destructive"
+                  disabled={manualMutations.emergencyShutdown.isPending}
+                  onClick={() => {
+                    setEmergencyReason('')
+                    setEmergencyConfirmText('')
+                    setEmergencyDialogOpen(true)
+                  }}
+                >
+                  {manualMutations.emergencyShutdown.isPending ? (
+                    <>
+                      <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                      Emergency shutting down…
+                    </>
+                  ) : (
+                    <>
+                      <AlertTriangle className="mr-2 h-4 w-4" />
+                      Emergency Shutdown
+                    </>
+                  )}
+                </Button>
+              ) : null}
+            </div>
+          </CardHeader>
+
+          <CardContent className="space-y-5">
+            {/* ── Shutdown confirmation ─────────────────────────── */}
+            {canSafeShutdown ? (
+              <AlertDialog open={shutdownDialogOpen} onOpenChange={setShutdownDialogOpen}>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Shutdown Port (Safe Manual)</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      You are about to safely shut down this port. The backend will run the Safety Engine
+                      and block the action if any precondition fails.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+
+                  <div className="space-y-3">
+                    <div className="grid gap-2 text-sm">
+                      <div>
+                        <span className="font-semibold">Device:</span> {hostname}
+                      </div>
+                      <div>
+                        <span className="font-semibold">Device IP:</span> {ipAddress}
+                      </div>
+                      <div>
+                        <span className="font-semibold">Interface:</span> {interfaceName}
+                      </div>
+                      <div>
+                        <span className="font-semibold">Description:</span> {iface?.description || '—'}
+                      </div>
+                      <div>
+                        <span className="font-semibold">Current status:</span>{' '}
+                        {iface?.operStatus || '—'} / {iface?.adminStatus || '—'}
+                      </div>
+                      <div>
+                        <span className="font-semibold">Classification:</span>{' '}
+                        {iface?.isAccess ? 'Access' : iface?.isTrunk ? 'Trunk' : '—'}
+                      </div>
+                      <div>
+                        <span className="font-semibold">Current risk:</span>{' '}
+                        {String((latestIncident?.risk as any)?.riskScore ?? '—')}
+                      </div>
+                      <div>
+                        <span className="font-semibold">Current eligibility:</span>{' '}
+                        {(latestIncident?.eligibility as any)?.eligible ? 'Eligible' : 'Not eligible'}
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        Mandatory reason
+                      </p>
+                      <Input
+                        value={shutdownReason}
+                        onChange={(e) => setShutdownReason(e.target.value)}
+                        placeholder="Maintenance, Testing, Security Isolation, Manual Troubleshooting, Other"
+                      />
+                    </div>
+                  </div>
+
+                  <AlertDialogFooter>
+                    <AlertDialogCancel disabled={manualMutations.shutdown.isPending}>Cancel</AlertDialogCancel>
+                    <AlertDialogAction
+                      disabled={!shutdownReason || manualMutations.shutdown.isPending}
+                      onClick={() => {
+                        manualMutations.shutdown.mutate(
+                          {
+                            deviceId,
+                            interface: interfaceName,
+                            reason: shutdownReason,
+                          },
+                          {
+                            onSuccess: async () => {
+                              setShutdownDialogOpen(false)
+                              void inventoryQuery.refetch()
+                              void statsQuery.refetch()
+                              void historyQuery.refetch()
+                            },
+                          },
+                        )
+                      }}
+                    >
+                      {manualMutations.shutdown.isPending ? 'Executing…' : 'Confirm Shutdown'}
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            ) : null}
+
+            {/* ── Recover confirmation ─────────────────────────── */}
+            {canSafeRecover ? (
+              <AlertDialog open={recoverDialogOpen} onOpenChange={setRecoverDialogOpen}>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Recover Port</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      Immediately re-enable this interface. Manual recovery bypasses automated
+                      recovery policy checks and executes no-shutdown now.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+
+                  <div className="space-y-3">
+                    <div className="grid gap-2 text-sm">
+                      <div>
+                        <span className="font-semibold">Device:</span> {hostname}
+                      </div>
+                      <div>
+                        <span className="font-semibold">Interface:</span> {interfaceName}
+                      </div>
+                      <div>
+                        <span className="font-semibold">Incident:</span>{' '}
+                        <span className="mono">
+                          {latestRecoverableIncident?.incidentId || 'Will create if needed'}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        Mandatory reason
+                      </p>
+                      <Input
+                        value={recoverReason}
+                        onChange={(e) => setRecoverReason(e.target.value)}
+                        placeholder="Reason for manual recovery"
+                      />
+                    </div>
+                  </div>
+
+                  <AlertDialogFooter>
+                    <AlertDialogCancel disabled={manualMutations.recover.isPending}>Cancel</AlertDialogCancel>
+                    <AlertDialogAction
+                      disabled={!recoverReason.trim() || manualMutations.recover.isPending}
+                      onClick={(event) => {
+                        event.preventDefault()
+                        manualMutations.recover.mutate(
+                          {
+                            deviceId,
+                            interface: interfaceName,
+                            reason: recoverReason.trim(),
+                          },
+                          {
+                            onSuccess: async (res) => {
+                              if (res.success) {
+                                setRecoverDialogOpen(false)
+                                setRecoverReason('')
+                                void inventoryQuery.refetch()
+                                void statsQuery.refetch()
+                                void historyQuery.refetch()
+                                void stormIncidentsQuery.refetch()
+                              }
+                            },
+                          },
+                        )
+                      }}
+                    >
+                      {manualMutations.recover.isPending ? 'Executing…' : 'Confirm Recovery'}
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            ) : null}
+
+            {/* ── Emergency confirmation ───────────────────────── */}
+            {canEmergencyShutdown ? (
+              <AlertDialog
+                open={emergencyDialogOpen}
+                onOpenChange={(open) => {
+                  if (!manualMutations.emergencyShutdown.isPending) {
+                    setEmergencyDialogOpen(open)
+                  }
+                }}
+              >
+                <AlertDialogContent className="max-w-lg">
+                  <AlertDialogHeader>
+                    <AlertDialogTitle className="text-destructive">
+                      Emergency Shutdown
+                    </AlertDialogTitle>
+                    <AlertDialogDescription asChild>
+                      <div className="space-y-3 text-sm text-foreground">
+                        <p className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-destructive">
+                          Emergency Shutdown immediately disables this interface. This bypasses
+                          automated storm validation. Use only during security incidents or emergency
+                          network isolation.
+                        </p>
+                        <div className="grid gap-2 rounded-md border border-border bg-muted/40 p-3">
+                          <div>
+                            <span className="font-semibold">Device Name:</span> {hostname}
+                          </div>
+                          <div>
+                            <span className="font-semibold">Management IP:</span> {ipAddress}
+                          </div>
+                          <div>
+                            <span className="font-semibold">Hostname:</span> {hostname}
+                          </div>
+                          <div>
+                            <span className="font-semibold">Vendor:</span> {iface?.vendor || '—'}
+                          </div>
+                          <div>
+                            <span className="font-semibold">Model:</span>{' '}
+                            {iface?.neighbor?.platform || '—'}
+                          </div>
+                          <div>
+                            <span className="font-semibold">Interface:</span> {interfaceName}
+                          </div>
+                          <div>
+                            <span className="font-semibold">Description:</span>{' '}
+                            {iface?.description || '—'}
+                          </div>
+                          <div>
+                            <span className="font-semibold">Current Status:</span>{' '}
+                            {iface?.operStatus || '—'} / {iface?.adminStatus || '—'}
+                          </div>
+                          <div>
+                            <span className="font-semibold">Classification:</span>{' '}
+                            {iface?.isAccess ? 'Access' : iface?.isTrunk ? 'Trunk' : '—'}
+                          </div>
+                          <div>
+                            <span className="font-semibold">Current VLAN:</span>{' '}
+                            {iface?.vlan ?? iface?.accessVlan ?? '—'}
+                          </div>
+                          <div>
+                            <span className="font-semibold">Current Speed:</span>{' '}
+                            {iface?.speed || (iface?.speedMbps ? `${iface.speedMbps} Mbps` : '—')}
+                          </div>
+                          <div>
+                            <span className="font-semibold">Neighbor:</span>{' '}
+                            {iface?.neighbor?.hostname
+                              ? `${iface.neighbor.hostname}${neighborRemotePort(iface.neighbor) ? ` (${neighborRemotePort(iface.neighbor)})` : ''}`
+                              : '—'}
+                          </div>
+                        </div>
+                      </div>
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+
+                  <div className="space-y-3">
+                    <div className="space-y-1">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        Type SHUTDOWN to confirm
+                      </p>
+                      <Input
+                        value={emergencyConfirmText}
+                        onChange={(e) => setEmergencyConfirmText(e.target.value)}
+                        placeholder="SHUTDOWN"
+                        autoComplete="off"
+                        disabled={manualMutations.emergencyShutdown.isPending}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        Mandatory reason (min. 10 characters)
+                      </p>
+                      <Input
+                        value={emergencyReason}
+                        onChange={(e) => setEmergencyReason(e.target.value)}
+                        placeholder="Describe the emergency justification"
+                        disabled={manualMutations.emergencyShutdown.isPending}
+                      />
+                    </div>
+                  </div>
+
+                  <AlertDialogFooter>
+                    <AlertDialogCancel disabled={manualMutations.emergencyShutdown.isPending}>
+                      Cancel
+                    </AlertDialogCancel>
+                    <AlertDialogAction
+                      className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                      disabled={
+                        emergencyConfirmText !== 'SHUTDOWN' ||
+                        emergencyReason.trim().length < 10 ||
+                        manualMutations.emergencyShutdown.isPending
+                      }
+                      onClick={() => {
+                        manualMutations.emergencyShutdown.mutate(
+                          {
+                            deviceId,
+                            interface: interfaceName,
+                            reason: emergencyReason.trim(),
+                            confirmation: 'SHUTDOWN',
+                          },
+                          {
+                            onSuccess: async () => {
+                              setEmergencyDialogOpen(false)
+                              setEmergencyReason('')
+                              setEmergencyConfirmText('')
+                              void inventoryQuery.refetch()
+                              void statsQuery.refetch()
+                              void historyQuery.refetch()
+                              void stormIncidentsQuery.refetch()
+                            },
+                          },
+                        )
+                      }}
+                    >
+                      {manualMutations.emergencyShutdown.isPending ? (
+                        <>
+                          <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                          Executing…
+                        </>
+                      ) : (
+                        'Execute Emergency Shutdown'
+                      )}
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            ) : null}
+
+            {/* ── Diagnostics + History ─────────────────────────── */}
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div className="space-y-2">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Diagnostics
+                </p>
+                {latestIncident ? (
+                  <div className="space-y-2">
+                    <pre className="max-h-48 overflow-auto rounded-md bg-muted p-2 text-xs">
+                      {JSON.stringify(
+                        {
+                          interfaceSnapshot: latestIncident.interfaceSnapshot,
+                          switchportSnapshot: latestIncident.switchportSnapshot,
+                          macTable: latestIncident.macTable,
+                          statistics: latestIncident.statistics,
+                          neighbor: latestIncident.neighbor,
+                          timeline: latestIncident.timeline,
+                        },
+                        null,
+                        2,
+                      )}
+                    </pre>
+                  </div>
+                ) : (
+                  <EmptyState
+                    title="No diagnostics available"
+                    description="A Storm incident must exist (automatic or manual) to show diagnostics."
+                  />
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  History
+                </p>
+                {latestIncident ? (
+                  <div className="space-y-3">
+                    <div className="text-sm">
+                      <span className="font-semibold">Mitigation:</span>{' '}
+                      {(mitigationDetailQuery.data?.data ?? [])[0]?.status || '—'}
+                    </div>
+                    <div className="text-sm">
+                      <span className="font-semibold">Recovery:</span>{' '}
+                      {(recoveryDetailQuery.data?.data ?? [])[0]?.recoveryStatus || '—'}
+                    </div>
+                  </div>
+                ) : (
+                  <EmptyState
+                    title="No history available"
+                    description="Run a manual shutdown or recover to generate mitigation/recovery history."
+                  />
+                )}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
         <Card className="glass">
           <CardHeader className="pb-2">
             <CardTitle className="text-base">Broadcast / multicast</CardTitle>

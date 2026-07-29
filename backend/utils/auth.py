@@ -15,6 +15,30 @@ JWT_SECRET = os.getenv("JWT_SECRET", "netpulse-dev-secret-change-me")
 JWT_EXPIRE_HOURS = int(os.getenv("JWT_EXPIRE_HOURS", "8"))
 JWT_ALGORITHM = "HS256"
 
+# Higher roles inherit lower privileges. super-admin satisfies admin/operator checks;
+# only routes that require ["super-admin"] stay exclusive.
+VALID_ROLES = ("viewer", "operator", "admin", "super-admin")
+ROLE_PRIVILEGES = {
+    "viewer": frozenset({"viewer"}),
+    "operator": frozenset({"viewer", "operator"}),
+    "admin": frozenset({"viewer", "operator", "admin"}),
+    "super-admin": frozenset({"viewer", "operator", "admin", "super-admin"}),
+}
+
+
+def normalize_role(role: str | None) -> str:
+    value = (role or "viewer").strip().lower()
+    return value if value in VALID_ROLES else "viewer"
+
+
+def role_satisfies(user_role: str | None, allowed_roles: list[str] | tuple[str, ...] | None) -> bool:
+    """Return True when the user's role meets any of the required roles (with inheritance)."""
+    if not allowed_roles:
+        return True
+    privileges = ROLE_PRIVILEGES.get(normalize_role(user_role), frozenset({"viewer"}))
+    required = {normalize_role(r) for r in allowed_roles}
+    return bool(privileges.intersection(required))
+
 
 def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
@@ -75,8 +99,8 @@ def require_auth(roles=None):
                     "message": "Invalid authentication token",
                 }), 401
 
-            role = payload.get("role", "viewer")
-            if roles and role not in roles:
+            role = normalize_role(payload.get("role", "viewer"))
+            if roles and not role_satisfies(role, roles):
                 return jsonify({
                     "success": False,
                     "message": "Insufficient permissions",

@@ -5,6 +5,7 @@ Coordinates lock acquisition, SSH execution, verification, rollback, and auditin
 
 from __future__ import annotations
 
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -41,6 +42,9 @@ def execute_mitigation(
     incident_id: str,
     strategy_name: str,
     operator: str = "SYSTEM",
+    *,
+    execution_mode: str | None = None,
+    audit_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
     Acquires locks, runs the strategy configuration commands, verifies them,
@@ -93,10 +97,15 @@ def execute_mitigation(
     rollback_performed = False
     rollback_success = False
 
+    audit_context = audit_context or {}
+    is_emergency = execution_mode == "EMERGENCY"
+    started = time.perf_counter()
+    vendor: str | None = audit_context.get("vendor")
+
     append_timeline_event(
         incident_id,
-        "Mitigation Started",
-        detail=f"strategy={strategy_name}, operator={operator}",
+        "Emergency Mitigation Started" if is_emergency else "Mitigation Started",
+        detail=f"strategy={strategy_name}, operator={operator}, mode={execution_mode or 'STANDARD'}",
     )
 
     try:
@@ -108,6 +117,14 @@ def execute_mitigation(
 
             # Enter config mode and apply settings
             executor.execute_commands(cmds, interface)
+
+            if is_emergency:
+                LockService.renew_lock(
+                    device_lock_id,
+                    interface_lock_id,
+                    owner=operator,
+                    execution_id=incident_id,
+                )
 
             # Verify configuration change
             verification_passed, verification_output = verify_mitigation(
@@ -169,6 +186,13 @@ def execute_mitigation(
             verification_result={"success": True, "output": verification_output},
             rollback_performed=False,
             operator=operator,
+            emergency=is_emergency,
+            execution_mode=execution_mode,
+            vendor=vendor,
+            execution_time_ms=int((time.perf_counter() - started) * 1000),
+            source_ip=audit_context.get("sourceIp"),
+            session_id=audit_context.get("sessionId"),
+            reason=audit_context.get("reason"),
         )
 
         return {
@@ -217,18 +241,26 @@ def execute_mitigation(
             commands_executed=commands_executed,
             verification_result={
                 "success": False,
-                "error": str(exc),
+                "error": "Mitigation execution failed",
                 "output": verification_output,
             },
             rollback_performed=True,
             operator=operator,
+            emergency=is_emergency,
+            execution_mode=execution_mode,
+            vendor=vendor,
+            execution_time_ms=int((time.perf_counter() - started) * 1000),
+            source_ip=audit_context.get("sourceIp"),
+            session_id=audit_context.get("sessionId"),
+            reason=audit_context.get("reason"),
         )
 
+        safe_error = "Mitigation verification failed" if verification_passed is False else "Mitigation execution failed"
         return {
             "success": False,
             "status": history_status,
             "incidentId": incident_id,
-            "error": str(exc),
+            "error": safe_error,
             "commandsExecuted": commands_executed,
         }
 

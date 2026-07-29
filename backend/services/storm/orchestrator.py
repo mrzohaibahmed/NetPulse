@@ -67,6 +67,7 @@ def prepare(
     persist: bool = True,
     diagnostics: Optional[dict] = None,
     safety: Optional[dict] = None,
+    incident_metadata: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """
     Prepare the environment for mitigation without executing it.
@@ -166,7 +167,11 @@ def prepare(
 
     # 3) Incident
     try:
-        incident = create_incident_from_diagnostics(diag, persist=persist)
+        incident = create_incident_from_diagnostics(
+            diag,
+            persist=persist,
+            incident_metadata=incident_metadata,
+        )
     except Exception as exc:  # noqa: BLE001
         logger.error("Incident creation failed | %s | %s", name, exc)
         return {

@@ -59,9 +59,17 @@ def record_mitigation_history(
     verification_result: dict[str, Any],
     rollback_performed: bool,
     operator: str,
+    *,
+    emergency: bool = False,
+    execution_mode: str | None = None,
+    vendor: str | None = None,
+    execution_time_ms: int | None = None,
+    source_ip: str | None = None,
+    session_id: str | None = None,
+    reason: str | None = None,
 ) -> dict[str, Any]:
     """Create an immutable mitigation execution history record."""
-    doc = {
+    doc: dict[str, Any] = {
         "incidentId": incident_id,
         "deviceId": _oid(device_id),
         "interface": interface,
@@ -73,6 +81,20 @@ def record_mitigation_history(
         "operator": operator,
         "timestamp": datetime.now(timezone.utc),
     }
+    if emergency:
+        doc["emergency"] = True
+    if execution_mode:
+        doc["executionMode"] = execution_mode
+    if vendor:
+        doc["vendor"] = vendor
+    if execution_time_ms is not None:
+        doc["executionTimeMs"] = execution_time_ms
+    if source_ip:
+        doc["sourceIp"] = source_ip
+    if session_id:
+        doc["sessionId"] = session_id
+    if reason:
+        doc["reason"] = reason
 
     try:
         _db()[COLLECTION].insert_one(doc)
@@ -90,17 +112,33 @@ def record_mitigation_history(
         )
 
     # Log in system audit table
+    audit_details: dict[str, Any] = {
+        "interface": interface,
+        "strategy": strategy,
+        "status": status,
+        "rollback": rollback_performed,
+        "operator": operator,
+    }
+    if emergency:
+        audit_details["emergency"] = True
+    if execution_mode:
+        audit_details["executionMode"] = execution_mode
+    if vendor:
+        audit_details["vendor"] = vendor
+    if execution_time_ms is not None:
+        audit_details["executionTimeMs"] = execution_time_ms
+    if source_ip:
+        audit_details["sourceIp"] = source_ip
+    if session_id:
+        audit_details["sessionId"] = session_id
+    if reason:
+        audit_details["reason"] = reason
+
     log_audit(
         action="storm_mitigation_execute",
         entity_type="incident",
         entity_id=incident_id,
-        details={
-            "interface": interface,
-            "strategy": strategy,
-            "status": status,
-            "rollback": rollback_performed,
-            "operator": operator,
-        },
+        details=audit_details,
     )
 
     return doc
@@ -145,4 +183,11 @@ def serialize_mitigation_log(doc: dict[str, Any]) -> dict[str, Any]:
         "rollbackPerformed": bool(doc.get("rollbackPerformed")),
         "operator": doc.get("operator") or "SYSTEM",
         "timestamp": format_datetime(doc.get("timestamp")),
+        "emergency": bool(doc.get("emergency")),
+        "executionMode": doc.get("executionMode"),
+        "vendor": doc.get("vendor"),
+        "executionTimeMs": doc.get("executionTimeMs"),
+        "sourceIp": doc.get("sourceIp"),
+        "sessionId": doc.get("sessionId"),
+        "reason": doc.get("reason"),
     }

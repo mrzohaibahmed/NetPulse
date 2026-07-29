@@ -1,15 +1,19 @@
 from datetime import datetime, timezone
+from typing import Any
 
 from bson import ObjectId
 from flask import Blueprint, g, jsonify, request
+from pymongo.errors import DuplicateKeyError
 
 from config.database import db
 from services.audit_service import log_audit
 from services.user_service import ensure_default_admin
 from utils.auth import (
     JWT_EXPIRE_HOURS,
+    VALID_ROLES,
     create_access_token,
     hash_password,
+    normalize_role,
     require_auth,
     verify_password,
 )
@@ -135,7 +139,8 @@ def update_own_account():
                 "message": "Provide a new username and/or new password",
             }), 400
 
-        update = {"updatedAt": datetime.now(timezone.utc)}
+        update: dict[str, Any] = {}
+        update["updatedAt"] = datetime.now(timezone.utc)
 
         if new_username:
             if len(new_username) < 3:
@@ -158,7 +163,13 @@ def update_own_account():
                 }), 400
             update["passwordHash"] = hash_password(new_password)
 
-        db.users.update_one({"_id": user["_id"]}, {"$set": update})
+        try:
+            db.users.update_one({"_id": user["_id"]}, {"$set": update})
+        except DuplicateKeyError:
+            return jsonify({
+                "success": False,
+                "message": "Username is already taken",
+            }), 409
         updated = db.users.find_one({"_id": user["_id"]})
 
         token = create_access_token(
@@ -216,7 +227,7 @@ def list_users():
 @auth_bp.route("/users/<user_id>", methods=["PUT"])
 @require_auth(roles=["admin"])
 def update_user(user_id):
-    """Admin can change another user's username and/or password."""
+    """Admin/super-admin can change another user's username, password, and/or role."""
     try:
         if not ObjectId.is_valid(user_id):
             return jsonify({"success": False, "message": "Invalid user ID"}), 400
@@ -228,14 +239,51 @@ def update_user(user_id):
         data = request.get_json() or {}
         new_username = (data.get("username") or "").strip()
         new_password = data.get("password") or data.get("newPassword") or ""
+        raw_role = data.get("role")
+        new_role = normalize_role(raw_role) if raw_role is not None else None
 
-        if not new_username and not new_password:
+        if not new_username and not new_password and new_role is None:
             return jsonify({
                 "success": False,
-                "message": "Provide a username and/or password to update",
+                "message": "Provide a username, password, and/or role to update",
             }), 400
 
-        update = {"updatedAt": datetime.now(timezone.utc)}
+        actor_role = normalize_role(g.user.get("role"))
+        target_role = normalize_role(target.get("role"))
+
+        if new_role is not None:
+            if raw_role and str(raw_role).strip().lower() not in VALID_ROLES:
+                return jsonify({
+                    "success": False,
+                    "message": f"Invalid role. Allowed: {', '.join(VALID_ROLES)}",
+                }), 400
+
+            # Only super-admin may assign or modify super-admin accounts.
+            if new_role == "super-admin" and actor_role != "super-admin":
+                return jsonify({
+                    "success": False,
+                    "message": "Only a super-admin can assign the super-admin role",
+                }), 403
+            if target_role == "super-admin" and actor_role != "super-admin":
+                return jsonify({
+                    "success": False,
+                    "message": "Only a super-admin can modify a super-admin account",
+                }), 403
+
+            # Prevent demoting the last remaining super-admin.
+            if target_role == "super-admin" and new_role != "super-admin":
+                remaining = db.users.count_documents({
+                    "role": "super-admin",
+                    "_id": {"$ne": target["_id"]},
+                })
+                if remaining < 1:
+                    return jsonify({
+                        "success": False,
+                        "message": "Cannot demote the last super-admin account",
+                    }), 409
+
+        update: dict[str, Any] = {}
+        update["updatedAt"] = datetime.now(timezone.utc)
 
         if new_username:
             if len(new_username) < 3:
@@ -260,7 +308,22 @@ def update_user(user_id):
                 }), 400
             update["passwordHash"] = hash_password(new_password)
 
-        db.users.update_one({"_id": target["_id"]}, {"$set": update})
+        if new_role is not None and new_role != target_role:
+            update["role"] = new_role
+
+        if len(update) == 1:
+            return jsonify({
+                "success": False,
+                "message": "No changes to apply",
+            }), 400
+
+        try:
+            db.users.update_one({"_id": target["_id"]}, {"$set": update})
+        except DuplicateKeyError:
+            return jsonify({
+                "success": False,
+                "message": "Username is already taken",
+            }), 409
         updated = db.users.find_one({"_id": target["_id"]})
 
         log_audit(
@@ -271,6 +334,8 @@ def update_user(user_id):
                 "targetUsername": updated.get("username"),
                 "usernameChanged": "username" in update,
                 "passwordChanged": "passwordHash" in update,
+                "roleChanged": "role" in update,
+                "role": updated.get("role"),
             },
         )
 

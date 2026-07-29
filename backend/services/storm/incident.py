@@ -108,6 +108,7 @@ def create_incident_from_diagnostics(
     *,
     force_new: bool = False,
     persist: bool = True,
+    incident_metadata: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """
     Create exactly one OPEN incident per active storm (device + interface).
@@ -119,10 +120,49 @@ def create_incident_from_diagnostics(
     if not device_id or not interface:
         raise ValueError("deviceId and interface are required")
 
+    incident_metadata = incident_metadata or {}
+    incident_type = incident_metadata.get("incidentType")
+    requested_by = incident_metadata.get("requestedBy")
+    requested_at = incident_metadata.get("requestedAt")
+    reason = incident_metadata.get("reason")
+    action = incident_metadata.get("action")
+    trigger_type = incident_metadata.get("triggerType")
+
     if persist and not force_new:
         try:
             existing = find_open_incident(device_id, interface)
             if existing:
+                # Best-effort: if this open incident was created previously
+                # (e.g., by automatic Storm pipeline) and we are now executing
+                # a manual action, attach manual metadata fields once.
+                updates: dict[str, Any] = {}
+                if incident_type and not existing.get("incidentType"):
+                    updates["incidentType"] = incident_type
+                if requested_by and not existing.get("requestedBy"):
+                    updates["requestedBy"] = requested_by
+                if requested_at and not existing.get("requestedAt"):
+                    updates["requestedAt"] = requested_at
+                if reason and not existing.get("reason"):
+                    updates["reason"] = reason
+                if action and not existing.get("action"):
+                    updates["action"] = action
+                if trigger_type:
+                    existing_trigger = existing.get("trigger") or {}
+                    if (
+                        not isinstance(existing_trigger, dict)
+                        or not existing_trigger.get("type")
+                    ):
+                        updates["trigger.type"] = trigger_type
+
+                if updates:
+                    _db()[COLLECTION].update_one(
+                        {"incidentId": existing["incidentId"]},
+                        {"$set": updates},
+                    )
+                    existing = _db()[COLLECTION].find_one(
+                        {"incidentId": existing["incidentId"]}
+                    )
+
                 logger.info(
                     "Incident already open | %s | %s",
                     existing.get("incidentId"),
@@ -168,6 +208,11 @@ def create_incident_from_diagnostics(
         "interface": interface,
         "hostname": diagnostics.get("hostname"),
         "ipAddress": diagnostics.get("ipAddress"),
+        "incidentType": incident_type or "STORM",
+        "requestedBy": requested_by,
+        "requestedAt": requested_at,
+        "reason": reason,
+        "action": action,
         "status": "OPEN",
         "severity": _severity_from_risk(risk),
         "trigger": {
@@ -177,6 +222,7 @@ def create_incident_from_diagnostics(
                 or str(confirmation.get("state", "")).upper() == "CONFIRMED"
             ),
             "safety": bool(safety.get("safe")),
+            **({"type": trigger_type} if trigger_type else {}),
         },
         "interfaceSnapshot": diagnostics.get("interfaceSnapshot") or {},
         "switchportSnapshot": diagnostics.get("switchportSnapshot") or {},
@@ -206,6 +252,104 @@ def create_incident_from_diagnostics(
         document["_id"] = None
         document["_persistError"] = str(exc)
 
+    return document
+
+
+def create_emergency_incident(
+    device_id: Any,
+    interface: str,
+    *,
+    requested_by: Optional[str] = None,
+    requested_at: Optional[datetime] = None,
+    reason: Optional[str] = None,
+    action: str = "SHUTDOWN",
+    incident_type: str = "EMERGENCY",
+    trigger_type: str = "MANUAL",
+    approved_by: Optional[str] = None,
+    interface_snapshot: Optional[dict[str, Any]] = None,
+    persist: bool = True,
+) -> dict[str, Any]:
+    """
+    Create a minimal storm incident for emergency mitigation.
+
+    Emergency shutdown intentionally skips Safety + Diagnostics; we still need
+    an incident document because mitigation/recovery engines use it for
+    status checks, timeline, and history persistence.
+    """
+    now = requested_at or datetime.now(timezone.utc)
+    try:
+        incident_id = next_incident_id(now) if persist else f"storm-test-{int(now.timestamp())}"
+    except Exception:  # noqa: BLE001
+        incident_id = f"storm-test-{int(now.timestamp())}"
+
+    device_doc = None
+    if persist:
+        try:
+            device_doc = _db().devices.find_one({"_id": _oid(device_id)})
+        except Exception:  # noqa: BLE001
+            device_doc = None
+
+    hostname = (device_doc or {}).get("hostname")
+    ip_address = (device_doc or {}).get("ipAddress")
+
+    timeline = [
+        _timeline_event(
+            "Emergency Incident Created",
+            now,
+            detail=reason or f"action={action}",
+        ),
+        _timeline_event("Incident Created", now),
+    ]
+
+    if interface_snapshot:
+        neighbor = interface_snapshot.get("neighbor")
+        snapshot = {
+            k: v
+            for k, v in interface_snapshot.items()
+            if k not in ("_id", "neighbor")
+        }
+    else:
+        neighbor = None
+        snapshot = {}
+
+    document: dict[str, Any] = {
+        "incidentId": incident_id,
+        "deviceId": _oid(device_id) if persist else device_id,
+        "interface": interface,
+        "hostname": hostname,
+        "ipAddress": ip_address,
+        "incidentType": incident_type,
+        "type": incident_type,
+        "requestedBy": requested_by,
+        "requestedAt": now,
+        "reason": reason,
+        "action": action,
+        "status": "OPEN",
+        "severity": "CRITICAL",
+        "requiresApproval": False,
+        "approvedBy": approved_by or requested_by,
+        "executedImmediately": True,
+        "trigger": {"type": trigger_type},
+        "interfaceSnapshot": snapshot if isinstance(snapshot, dict) else {},
+        "switchportSnapshot": {},
+        "macTable": {},
+        "statistics": {},
+        "neighbor": neighbor,
+        "deviceHealth": {},
+        "eligibility": None,
+        "risk": {},
+        "confirmation": {},
+        "safety": {},
+        "diagnosticsMeta": {},
+        "timeline": timeline,
+        "createdAt": now,
+        "updatedAt": now,
+    }
+
+    if not persist:
+        return document
+
+    _db()[COLLECTION].insert_one(document)
     return document
 
 
