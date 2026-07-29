@@ -8,7 +8,7 @@ import {
   Line,
   LineChart,
   ResponsiveContainer,
-  Tooltip,
+  Tooltip as RechartsTooltip,
   XAxis,
   YAxis,
 } from 'recharts'
@@ -59,10 +59,17 @@ import {
 } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
+import {
   useDeviceInterfaceStatsQuery,
   useDeviceInterfacesQuery,
   useInterfaceHistoryQuery,
   useInterfaceMutations,
+  useInterfaceRiskQuery,
   useStormIncidentsQuery,
   useMitigationDetailQuery,
   useRecoveryDetailQuery,
@@ -78,6 +85,7 @@ import {
   formatUtilization,
 } from '@/utils/format'
 import { interfaceNamesMatch } from '@/utils/interfaceNames'
+import type { StormSourceClassification } from '@/types'
 
 const HISTORY_LIMITS: Record<string, number> = {
   '50': 50,
@@ -110,6 +118,39 @@ function ChartTooltip({
       ))}
     </div>
   )
+}
+
+const SOURCE_CLASSIFICATION_LABELS: Record<string, string> = {
+  LIKELY_SOURCE: 'Likely Source',
+  LIKELY_FORWARDER: 'Likely Forwarder',
+  LIKELY_RECEIVER: 'Likely Receiver',
+  UNKNOWN: 'Unknown',
+}
+
+function formatDirectionalPackets(
+  rx?: number | null,
+  tx?: number | null,
+  combined?: number | null,
+) {
+  if (rx != null || tx != null) {
+    return `RX ${formatPackets(rx ?? 0)} · TX ${formatPackets(tx ?? 0)}`
+  }
+  return formatPackets(combined ?? 0)
+}
+
+function sourceBadgeVariant(
+  classification?: StormSourceClassification | string | null,
+): 'default' | 'secondary' | 'outline' | 'danger' {
+  switch (classification) {
+    case 'LIKELY_SOURCE':
+      return 'danger'
+    case 'LIKELY_FORWARDER':
+      return 'secondary'
+    case 'LIKELY_RECEIVER':
+      return 'outline'
+    default:
+      return 'default'
+  }
 }
 
 export function InterfaceDetailPage() {
@@ -181,6 +222,8 @@ export function InterfaceDetailPage() {
     { limit: HISTORY_LIMITS[historyLimit] ?? 100 },
     Boolean(deviceId && interfaceName),
   )
+  const riskQuery = useInterfaceRiskQuery(deviceId, interfaceName, Boolean(deviceId && interfaceName))
+  const latestRisk = riskQuery.data?.data ?? null
 
   const iface = useMemo(() => {
     const list = inventoryQuery.data?.data ?? []
@@ -210,9 +253,15 @@ export function InterfaceDetailPage() {
       txUtilization: sample.txUtilization ?? null,
       broadcastPackets: sample.broadcastPackets,
       multicastPackets: sample.multicastPackets,
+      rxBroadcastPackets: sample.rxBroadcastPackets ?? null,
+      txBroadcastPackets: sample.txBroadcastPackets ?? null,
+      rxMulticastPackets: sample.rxMulticastPackets ?? null,
+      txMulticastPackets: sample.txMulticastPackets ?? null,
       inputErrors: sample.inputErrors,
       outputErrors: sample.outputErrors,
       discards: sample.discards,
+      rxDiscards: sample.rxDiscards ?? null,
+      txDiscards: sample.txDiscards ?? null,
       rxBytes: sample.rxBytes,
       txBytes: sample.txBytes,
     }))
@@ -269,8 +318,11 @@ export function InterfaceDetailPage() {
 
   const totalErrors =
     (latestStat?.inputErrors ?? 0) +
-    (latestStat?.outputErrors ?? 0) +
-    (latestStat?.discards ?? 0)
+    (latestStat?.outputErrors ?? 0)
+
+  const totalDiscards =
+    latestStat?.discards ??
+    (latestStat?.rxDiscards ?? 0) + (latestStat?.txDiscards ?? 0)
 
   return (
     <div className="space-y-6">
@@ -342,7 +394,7 @@ export function InterfaceDetailPage() {
         ) : null}
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
         <KpiCard
           label="Utilization"
           value={formatUtilization(latestStat?.utilization)}
@@ -372,23 +424,100 @@ export function InterfaceDetailPage() {
               : undefined}
         />
         <KpiCard
-          label="Broadcast / Multicast"
-          value={`${formatPackets(latestStat?.broadcastPackets)} / ${formatPackets(latestStat?.multicastPackets)}`}
+          label="Broadcast"
+          value={formatDirectionalPackets(
+            latestStat?.rxBroadcastPackets,
+            latestStat?.txBroadcastPackets,
+            latestStat?.broadcastPackets,
+          )}
           icon={Radio}
           tone="default"
+          hint={
+            latestStat?.broadcastPackets != null
+              ? `Combined ${formatPackets(latestStat.broadcastPackets)}`
+              : undefined
+          }
         />
         <KpiCard
-          label="Errors + discards"
+          label="Multicast"
+          value={formatDirectionalPackets(
+            latestStat?.rxMulticastPackets,
+            latestStat?.txMulticastPackets,
+            latestStat?.multicastPackets,
+          )}
+          icon={Radio}
+          tone="default"
+          hint={
+            latestStat?.multicastPackets != null
+              ? `Combined ${formatPackets(latestStat.multicastPackets)}`
+              : undefined
+          }
+        />
+        <KpiCard
+          label="Discards"
+          value={formatDirectionalPackets(
+            latestStat?.rxDiscards,
+            latestStat?.txDiscards,
+            latestStat?.discards,
+          )}
+          icon={AlertTriangle}
+          tone={totalDiscards > 0 ? 'danger' : 'success'}
+        />
+        <KpiCard
+          label="Errors"
           value={formatPackets(totalErrors)}
           icon={AlertTriangle}
           tone={totalErrors > 0 ? 'danger' : 'success'}
           hint={
             latestStat
-              ? `In ${formatPackets(latestStat.inputErrors)} · Out ${formatPackets(latestStat.outputErrors)} · Drop ${formatPackets(latestStat.discards)}`
+              ? `In ${formatPackets(latestStat.inputErrors)} · Out ${formatPackets(latestStat.outputErrors)}`
               : undefined
           }
         />
       </div>
+
+      <Card className="glass">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">Storm Source Analysis</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-wrap items-center gap-4">
+          {riskQuery.isLoading && !latestRisk ? (
+            <LoadingState label="Loading risk analysis…" />
+          ) : !latestRisk ? (
+            <p className="text-sm text-muted-foreground">
+              No risk history yet. Storm scoring runs on the scheduler after stats collection.
+            </p>
+          ) : (
+            <>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Badge variant={sourceBadgeVariant(latestRisk.sourceClassification)}>
+                      {SOURCE_CLASSIFICATION_LABELS[latestRisk.sourceClassification || 'UNKNOWN'] ||
+                        'Unknown'}
+                    </Badge>
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-sm">
+                    <p className="text-xs">
+                      {latestRisk.sourceRationale ||
+                        'Classification uses RX/TX broadcast and multicast rates, port mode, neighbor type, and topology role.'}
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+              <div className="text-sm">
+                <span className="text-muted-foreground">Confidence:</span>{' '}
+                <span className="font-mono font-medium">
+                  {(latestRisk.sourceConfidence ?? 0).toFixed(0)}%
+                </span>
+              </div>
+              <div className="text-sm text-muted-foreground">
+                Risk score {latestRisk.riskScore.toFixed(1)} · {latestRisk.severity}
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
 
       <div className="grid gap-4 lg:grid-cols-3">
         <Card className="glass lg:col-span-1">
@@ -569,7 +698,7 @@ export function InterfaceDetailPage() {
                       width={42}
                       domain={[0, 'auto']}
                     />
-                    <Tooltip content={<ChartTooltip />} />
+                    <RechartsTooltip content={<ChartTooltip />} />
                     <Legend />
                     <Area
                       type="monotone"
@@ -1051,22 +1180,58 @@ export function InterfaceDetailPage() {
                       minTickGap={28}
                     />
                     <YAxis tick={{ fill: '#94a3b8', fontSize: 10 }} width={48} />
-                    <Tooltip content={<ChartTooltip />} />
+                    <RechartsTooltip content={<ChartTooltip />} />
                     <Legend />
                     <Line
                       type="monotone"
                       dataKey="broadcastPackets"
-                      name="Broadcast"
+                      name="Broadcast (combined)"
                       stroke="#8B5CF6"
                       strokeWidth={2}
                       dot={false}
                     />
                     <Line
                       type="monotone"
+                      dataKey="rxBroadcastPackets"
+                      name="RX Broadcast"
+                      stroke="#A78BFA"
+                      strokeWidth={1.5}
+                      strokeDasharray="4 4"
+                      dot={false}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="txBroadcastPackets"
+                      name="TX Broadcast"
+                      stroke="#7C3AED"
+                      strokeWidth={1.5}
+                      strokeDasharray="4 4"
+                      dot={false}
+                    />
+                    <Line
+                      type="monotone"
                       dataKey="multicastPackets"
-                      name="Multicast"
+                      name="Multicast (combined)"
                       stroke="#06B6D4"
                       strokeWidth={2}
+                      dot={false}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="rxMulticastPackets"
+                      name="RX Multicast"
+                      stroke="#22D3EE"
+                      strokeWidth={1.5}
+                      strokeDasharray="4 4"
+                      dot={false}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="txMulticastPackets"
+                      name="TX Multicast"
+                      stroke="#0891B2"
+                      strokeWidth={1.5}
+                      strokeDasharray="4 4"
                       dot={false}
                     />
                   </LineChart>
@@ -1095,7 +1260,7 @@ export function InterfaceDetailPage() {
                       minTickGap={28}
                     />
                     <YAxis tick={{ fill: '#94a3b8', fontSize: 10 }} width={48} />
-                    <Tooltip content={<ChartTooltip />} />
+                    <RechartsTooltip content={<ChartTooltip />} />
                     <Legend />
                     <Line
                       type="monotone"
@@ -1116,9 +1281,27 @@ export function InterfaceDetailPage() {
                     <Line
                       type="monotone"
                       dataKey="discards"
-                      name="Discards"
+                      name="Discards (combined)"
                       stroke="#94A3B8"
                       strokeWidth={2}
+                      dot={false}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="rxDiscards"
+                      name="RX Discards"
+                      stroke="#64748B"
+                      strokeWidth={1.5}
+                      strokeDasharray="4 4"
+                      dot={false}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="txDiscards"
+                      name="TX Discards"
+                      stroke="#CBD5E1"
+                      strokeWidth={1.5}
+                      strokeDasharray="4 4"
                       dot={false}
                     />
                   </LineChart>
@@ -1153,8 +1336,9 @@ export function InterfaceDetailPage() {
                     <TableHead>Util</TableHead>
                     <TableHead>RX bytes</TableHead>
                     <TableHead>TX bytes</TableHead>
-                    <TableHead className="hidden md:table-cell">Broadcast</TableHead>
-                    <TableHead className="hidden md:table-cell">Multicast</TableHead>
+                    <TableHead className="hidden lg:table-cell">Broadcast RX/TX</TableHead>
+                    <TableHead className="hidden lg:table-cell">Multicast RX/TX</TableHead>
+                    <TableHead className="hidden md:table-cell">Discards RX/TX</TableHead>
                     <TableHead>Errors</TableHead>
                     <TableHead className="hidden sm:table-cell">Method</TableHead>
                   </TableRow>
@@ -1174,16 +1358,29 @@ export function InterfaceDetailPage() {
                       <TableCell className="mono text-muted-foreground">
                         {formatBytes(sample.txBytes)}
                       </TableCell>
-                      <TableCell className="hidden mono text-muted-foreground md:table-cell">
-                        {formatPackets(sample.broadcastPackets)}
+                      <TableCell className="hidden mono text-muted-foreground lg:table-cell">
+                        {formatDirectionalPackets(
+                          sample.rxBroadcastPackets,
+                          sample.txBroadcastPackets,
+                          sample.broadcastPackets,
+                        )}
+                      </TableCell>
+                      <TableCell className="hidden mono text-muted-foreground lg:table-cell">
+                        {formatDirectionalPackets(
+                          sample.rxMulticastPackets,
+                          sample.txMulticastPackets,
+                          sample.multicastPackets,
+                        )}
                       </TableCell>
                       <TableCell className="hidden mono text-muted-foreground md:table-cell">
-                        {formatPackets(sample.multicastPackets)}
+                        {formatDirectionalPackets(
+                          sample.rxDiscards,
+                          sample.txDiscards,
+                          sample.discards,
+                        )}
                       </TableCell>
                       <TableCell className="mono">
-                        {formatPackets(
-                          sample.inputErrors + sample.outputErrors + sample.discards,
-                        )}
+                        {formatPackets(sample.inputErrors + sample.outputErrors)}
                       </TableCell>
                       <TableCell className="hidden uppercase text-muted-foreground sm:table-cell">
                         {sample.collectionMethod}

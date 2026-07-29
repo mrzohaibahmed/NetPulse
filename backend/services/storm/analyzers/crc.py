@@ -17,7 +17,9 @@ class CrcAnalyzer:
         current: dict,
         previous: Optional[dict],
         config: RiskConfig,
+        interface_context=None,
     ) -> AnalyzerResult:
+        del interface_context
         rate, supported = rate_per_second(current, previous, "crc_errors")
         if not supported:
             return AnalyzerResult(

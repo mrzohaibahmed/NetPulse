@@ -38,6 +38,7 @@ from services.storm.analyzers.unknown_unicast import UnknownUnicastAnalyzer
 from services.storm.analyzers.utilization import UtilizationAnalyzer
 from services.storm.history import load_stats_pair
 from services.storm.models import RiskScoreResult, create_risk_document
+from services.storm.source_classification import classify_storm_source
 from services.storm.thresholds import RiskConfig, get_risk_config
 from utils.monitor_logger import get_monitor_logger
 
@@ -154,6 +155,8 @@ class RiskScoreEngine:
             self._log(result, started)
             return result
 
+        interface_context = self._load_interface_context(device_id, name)
+
         current = current_stats
         previous = previous_stats
         if current is None:
@@ -177,7 +180,12 @@ class RiskScoreEngine:
             return result
 
         analyzer_outputs = [
-            analyzer.analyze(current, previous, self._config)
+            analyzer.analyze(
+                current,
+                previous,
+                self._config,
+                interface_context=interface_context,
+            )
             for analyzer in self._analyzers
         ]
         result = aggregate_analyzer_results(
@@ -187,6 +195,18 @@ class RiskScoreEngine:
             interface=name,
             timestamp=now,
         )
+
+        source = classify_storm_source(
+            current=current,
+            previous=previous,
+            interface_context=interface_context,
+            risk_score=result.risk_score,
+        )
+        result.source_classification = source.get("sourceClassification")
+        result.source_confidence = float(source.get("sourceConfidence") or 0.0)
+        result.source_rationale = source.get("sourceRationale")
+        if source.get("sourceMetrics"):
+            result.raw_metrics["sourceAnalysis"] = source["sourceMetrics"]
 
         if persist:
             self._store(
@@ -222,6 +242,30 @@ class RiskScoreEngine:
             _db()[COLLECTION].insert_one(document)
         except Exception as exc:  # noqa: BLE001
             logger.error("[RISK] Failed to store risk history: %s", exc)
+
+    @staticmethod
+    def _load_interface_context(device_id: Any, interface: str) -> Optional[dict[str, Any]]:
+        """Load port mode / topology fields for directional analyzers."""
+        try:
+            oid = device_id
+            if isinstance(oid, str) and ObjectId.is_valid(oid):
+                oid = ObjectId(oid)
+            row = _db().interfaces.find_one(
+                {"deviceId": oid, "name": interface},
+                {
+                    "portMode": 1,
+                    "mode": 1,
+                    "isAccess": 1,
+                    "isTrunk": 1,
+                    "isUplink": 1,
+                    "isInfrastructure": 1,
+                    "neighbor": 1,
+                },
+            )
+            return row
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("[RISK] Interface context unavailable for %s: %s", interface, exc)
+            return None
 
     @staticmethod
     def _log(result: RiskScoreResult, started: float) -> None:

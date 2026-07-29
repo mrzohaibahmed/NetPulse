@@ -51,9 +51,15 @@ def serialize_interface_stat(stat: dict) -> dict:
         "txPackets": stat.get("txPackets", 0),
         "broadcastPackets": stat.get("broadcastPackets", 0),
         "multicastPackets": stat.get("multicastPackets", 0),
+        "rxBroadcastPackets": stat.get("rxBroadcastPackets"),
+        "txBroadcastPackets": stat.get("txBroadcastPackets"),
+        "rxMulticastPackets": stat.get("rxMulticastPackets"),
+        "txMulticastPackets": stat.get("txMulticastPackets"),
         "inputErrors": stat.get("inputErrors", 0),
         "outputErrors": stat.get("outputErrors", 0),
         "discards": stat.get("discards", 0),
+        "rxDiscards": stat.get("rxDiscards"),
+        "txDiscards": stat.get("txDiscards"),
         "utilization": stat.get("utilization"),
         "rxUtilization": stat.get("rxUtilization"),
         "txUtilization": stat.get("txUtilization"),
@@ -272,6 +278,9 @@ def serialize_risk_result(result: dict) -> dict:
         "errorRate": _metric_value("errors"),
         "discardRate": _metric_value("discards"),
         "crcRate": _metric_value("crc"),
+        "sourceClassification": result.get("sourceClassification"),
+        "sourceConfidence": float(result.get("sourceConfidence") or 0),
+        "sourceRationale": result.get("sourceRationale"),
     }
 
 

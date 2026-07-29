@@ -17,7 +17,9 @@ class UnknownUnicastAnalyzer:
         current: dict,
         previous: Optional[dict],
         config: RiskConfig,
+        interface_context=None,
     ) -> AnalyzerResult:
+        del interface_context
         rate, supported = rate_per_second(
             current, previous, "unknown_unicast_packets"
         )

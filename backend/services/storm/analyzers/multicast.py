@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
-from services.storm.history import rate_per_second
+from services.storm.analyzers.directional import score_directional_metric
 from services.storm.models import AnalyzerResult
-from services.storm.thresholds import RiskConfig, score_from_thresholds
+from services.storm.thresholds import RiskConfig
 
 
 class MulticastAnalyzer:
@@ -17,9 +17,16 @@ class MulticastAnalyzer:
         current: dict,
         previous: Optional[dict],
         config: RiskConfig,
+        interface_context: Optional[dict[str, Any]] = None,
     ) -> AnalyzerResult:
-        rate, supported = rate_per_second(
-            current, previous, "multicast_packets"
+        value, score, supported, detail = score_directional_metric(
+            current,
+            previous,
+            rx_logical="rx_multicast_packets",
+            tx_logical="tx_multicast_packets",
+            combined_logical="multicast_packets",
+            thresholds=config.multicast,
+            interface_context=interface_context,
         )
         if not supported:
             return AnalyzerResult(
@@ -29,14 +36,11 @@ class MulticastAnalyzer:
                 supported=False,
                 weight=config.weights.multicast,
             )
-        value = 0.0 if rate is None else float(rate)
-        score = 0.0 if rate is None else score_from_thresholds(
-            value, config.multicast
-        )
         return AnalyzerResult(
             metric=self.metric,
-            value=None if rate is None else value,
+            value=value,
             score=score,
             supported=True,
             weight=config.weights.multicast,
+            detail=detail,
         )

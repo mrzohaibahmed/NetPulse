@@ -14,7 +14,11 @@ from typing import Any, Optional
 # Counter field aliases (snake_case API ↔ camelCase Mongo).
 COUNTER_FIELDS = {
     "broadcast_packets": ("broadcastPackets", "broadcast_packets"),
+    "rx_broadcast_packets": ("rxBroadcastPackets", "rx_broadcast_packets"),
+    "tx_broadcast_packets": ("txBroadcastPackets", "tx_broadcast_packets"),
     "multicast_packets": ("multicastPackets", "multicast_packets"),
+    "rx_multicast_packets": ("rxMulticastPackets", "rx_multicast_packets"),
+    "tx_multicast_packets": ("txMulticastPackets", "tx_multicast_packets"),
     "unknown_unicast_packets": (
         "unknownUnicastPackets",
         "unknown_unicast_packets",
@@ -24,6 +28,8 @@ COUNTER_FIELDS = {
     "input_errors": ("inputErrors", "input_errors"),
     "output_errors": ("outputErrors", "output_errors"),
     "discards": ("discards",),
+    "rx_discards": ("rxDiscards", "rx_discards"),
+    "tx_discards": ("txDiscards", "tx_discards"),
     "crc_errors": ("crcErrors", "crc_errors", "crc"),
 }
 

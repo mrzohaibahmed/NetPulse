@@ -150,6 +150,10 @@ def parse_cisco_counters(output: str) -> dict[str, dict[str, int]]:
             "tx_bytes": 0,
             "rx_packets": 0,
             "tx_packets": 0,
+            "rx_multicast_packets": 0,
+            "tx_multicast_packets": 0,
+            "rx_broadcast_packets": 0,
+            "tx_broadcast_packets": 0,
             "multicast_packets": 0,
             "broadcast_packets": 0,
         })
@@ -158,11 +162,15 @@ def parse_cisco_counters(output: str) -> dict[str, dict[str, int]]:
             # InOctets InUcastPkts InMcastPkts InBcastPkts
             entry["rx_bytes"] = nums[0]
             entry["rx_packets"] = nums[1] + nums[2] + nums[3]
+            entry["rx_multicast_packets"] = nums[2]
+            entry["rx_broadcast_packets"] = nums[3]
             entry["multicast_packets"] += nums[2]
             entry["broadcast_packets"] += nums[3]
         elif section == "out":
             entry["tx_bytes"] = nums[0]
             entry["tx_packets"] = nums[1] + nums[2] + nums[3]
+            entry["tx_multicast_packets"] = nums[2]
+            entry["tx_broadcast_packets"] = nums[3]
             entry["multicast_packets"] += nums[2]
             entry["broadcast_packets"] += nums[3]
         else:
@@ -212,6 +220,8 @@ def parse_cisco_counter_errors(output: str) -> dict[str, dict[str, int]]:
 
         input_errors = 0
         output_errors = 0
+        rx_discards = 0
+        tx_discards = 0
         discards = 0
 
         if header_cols:
@@ -231,16 +241,17 @@ def parse_cisco_counter_errors(output: str) -> dict[str, dict[str, int]]:
                 col_map.get("xmit-err", 0)
                 + col_map.get("outerrs", 0)
             )
-            discards = (
-                col_map.get("outdiscards", 0)
-                + col_map.get("indiscards", 0)
-                + col_map.get("discards", 0)
-            )
+            rx_discards = col_map.get("indiscards", 0)
+            tx_discards = col_map.get("outdiscards", 0)
+            discards = rx_discards + tx_discards
+            if discards == 0:
+                discards = col_map.get("discards", 0)
         elif len(values) >= 6:
             # Align FCS Xmit Rcv UnderSize OutDiscards
             input_errors = values[0] + values[1] + values[3] + values[4]
             output_errors = values[2]
-            discards = values[5]
+            tx_discards = values[5]
+            discards = tx_discards
         elif len(values) >= 2:
             input_errors = values[0]
             output_errors = values[1]
@@ -248,6 +259,8 @@ def parse_cisco_counter_errors(output: str) -> dict[str, dict[str, int]]:
         result[port] = {
             "input_errors": input_errors,
             "output_errors": output_errors,
+            "rx_discards": rx_discards if rx_discards or tx_discards else None,
+            "tx_discards": tx_discards if rx_discards or tx_discards else None,
             "discards": discards,
         }
 
@@ -302,10 +315,16 @@ def merge_cisco_counter_tables(
             "tx_bytes": c.get("tx_bytes", 0),
             "rx_packets": c.get("rx_packets", 0),
             "tx_packets": c.get("tx_packets", 0),
+            "rx_broadcast_packets": c.get("rx_broadcast_packets"),
+            "tx_broadcast_packets": c.get("tx_broadcast_packets"),
+            "rx_multicast_packets": c.get("rx_multicast_packets"),
+            "tx_multicast_packets": c.get("tx_multicast_packets"),
             "broadcast_packets": c.get("broadcast_packets", 0),
             "multicast_packets": c.get("multicast_packets", 0),
             "input_errors": e.get("input_errors", 0),
             "output_errors": e.get("output_errors", 0),
+            "rx_discards": e.get("rx_discards"),
+            "tx_discards": e.get("tx_discards"),
             "discards": e.get("discards", 0),
             "speed_bps": speeds.get(name),
         })
