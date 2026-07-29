@@ -95,10 +95,14 @@ def validate_recovery_policy(incident_id: str) -> dict[str, Any]:
 
     device_id = incident.get("deviceId")
     interface = incident.get("interface")
+    incident_type = str(
+        incident.get("incidentType") or incident.get("type") or "STORM"
+    ).upper()
+    operator_driven = incident_type in ("EMERGENCY", "MANUAL")
 
-    # Rule 7: Incident still OPEN / MITIGATED / MITIGATION_FAILED
+    # Rule 7: Incident still in a recoverable operational state
     incident_status = incident.get("status", "OPEN")
-    if incident_status in ("OPEN", "MITIGATED", "MITIGATION_FAILED"):
+    if incident_status in ("OPEN", "MITIGATED", "MITIGATION_FAILED", "RECOVERY_FAILED"):
         checks["incidentStillOpen"] = True
 
     # Fetch device
@@ -106,8 +110,11 @@ def validate_recovery_policy(incident_id: str) -> dict[str, Any]:
     if not device:
         return {"passed": False, "checks": checks, "reason": "Device not found"}
 
-    # Rule 1: Cooldown expired
-    checks["cooldownExpired"] = check_cooldown_expired(incident_id, cooldown_minutes)
+    # Rule 1: Cooldown expired (EMERGENCY recovery is immediate — skip cooldown)
+    if incident_type == "EMERGENCY":
+        checks["cooldownExpired"] = True
+    else:
+        checks["cooldownExpired"] = check_cooldown_expired(incident_id, cooldown_minutes)
 
     # Rule 2: Device reachable (online status)
     device_online = StringEqualsIgnoreCase(device.get("status"), "online") or (
@@ -126,40 +133,47 @@ def validate_recovery_policy(incident_id: str) -> dict[str, Any]:
 
     checks["sshReachable"] = ssh_ok
 
-    # Rule 4: Storm NOT confirmed
-    latest_confirm = db.storm_confirmation_history.find_one(
-        {"deviceId": _oid(device_id), "interface": interface},
-        sort=[("timestamp", -1)],
-    )
-    if not latest_confirm or not latest_confirm.get("confirmed"):
+    # Operator-driven EMERGENCY/MANUAL recoveries intentionally skip storm
+    # confirmation + full Safety Engine (those gates do not apply).
+    if operator_driven:
         checks["stormNotConfirmed"] = True
-
-    # Rule 5: Risk below configurable threshold
-    latest_risk = db.storm_risk_history.find_one(
-        {"deviceId": _oid(device_id), "interface": interface},
-        sort=[("timestamp", -1)],
-    )
-    if not latest_risk or float(latest_risk.get("riskScore", 0)) < risk_threshold:
         checks["riskBelowThreshold"] = True
-
-    # Rule 6: Safety Engine passes
-    safety_ok = False
-    try:
-        safety_res = evaluate_safety(
-            device_id=_oid(device_id),
-            interface=interface,
-            probe_ssh=False,
-            # Recovery policy already performed an explicit SSH reachability
-            # check above. Skip only the Safety SSH rule so the reused Safety
-            # evaluation still enforces every other mitigation precondition.
-            skip_check_codes={"RULE_3"},
-            persist=False,
+        checks["safetyPassed"] = True
+    else:
+        # Rule 4: Storm NOT confirmed
+        latest_confirm = db.storm_confirmation_history.find_one(
+            {"deviceId": _oid(device_id), "interface": interface},
+            sort=[("timestamp", -1)],
         )
-        safety_ok = safety_res.safe
-    except Exception as exc:  # noqa: BLE001
-        logger.error("Safety evaluation failed during policy check: %s", exc)
+        if not latest_confirm or not latest_confirm.get("confirmed"):
+            checks["stormNotConfirmed"] = True
 
-    checks["safetyPassed"] = safety_ok
+        # Rule 5: Risk below configurable threshold
+        latest_risk = db.storm_risk_history.find_one(
+            {"deviceId": _oid(device_id), "interface": interface},
+            sort=[("timestamp", -1)],
+        )
+        if not latest_risk or float(latest_risk.get("riskScore", 0)) < risk_threshold:
+            checks["riskBelowThreshold"] = True
+
+        # Rule 6: Safety Engine passes
+        safety_ok = False
+        try:
+            safety_res = evaluate_safety(
+                device_id=_oid(device_id),
+                interface=interface,
+                probe_ssh=False,
+                # Recovery policy already performed an explicit SSH reachability
+                # check above. Skip only the Safety SSH rule so the reused Safety
+                # evaluation still enforces every other mitigation precondition.
+                skip_check_codes={"RULE_3"},
+                persist=False,
+            )
+            safety_ok = safety_res.safe
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Safety evaluation failed during policy check: %s", exc)
+
+        checks["safetyPassed"] = safety_ok
 
     # Aggregate result
     passed = all(checks.values())

@@ -19,6 +19,12 @@ def create_interface_stat(
     tx_packets=0,
     broadcast_packets=0,
     multicast_packets=0,
+    rx_broadcast_packets=None,
+    tx_broadcast_packets=None,
+    rx_multicast_packets=None,
+    tx_multicast_packets=None,
+    rx_discards=None,
+    tx_discards=None,
     input_errors=0,
     output_errors=0,
     discards=0,
@@ -37,7 +43,7 @@ def create_interface_stat(
     """
     ts = timestamp or datetime.now(timezone.utc)
 
-    return {
+    doc = {
         "deviceId": device_id,
         "hostname": hostname or "",
         "ipAddress": ip_address or "",
@@ -59,3 +65,17 @@ def create_interface_stat(
         "collectionMethod": collection_method or "snmp",
         "timestamp": ts,
     }
+
+    directional = (
+        ("rxBroadcastPackets", rx_broadcast_packets),
+        ("txBroadcastPackets", tx_broadcast_packets),
+        ("rxMulticastPackets", rx_multicast_packets),
+        ("txMulticastPackets", tx_multicast_packets),
+        ("rxDiscards", rx_discards),
+        ("txDiscards", tx_discards),
+    )
+    for key, value in directional:
+        if value is not None:
+            doc[key] = int(value)
+
+    return doc

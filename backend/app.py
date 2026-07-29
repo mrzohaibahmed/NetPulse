@@ -17,6 +17,7 @@ from routes.report_routes import report_bp
 from routes.scan_routes import scan_bp
 from routes.settings_routes import settings_bp
 from routes.storm_routes import storm_bp
+from routes.manual_routes import manual_bp
 from scheduler import start_scheduler
 from services.interface_collection.collector import ensure_interface_indexes
 from services.interface_collection.stats_collector import ensure_interface_stats_indexes
@@ -29,6 +30,7 @@ from services.storm.safety import ensure_safety_indexes
 from services.storm.mitigation import ensure_mitigation_indexes
 from services.storm.recovery import ensure_recovery_indexes
 from services.user_service import ensure_default_admin
+from services.storm.lock_service import LockService
 
 # Serve built frontend (Vite) if present.
 BASE_DIR = Path(__file__).resolve().parent
@@ -51,6 +53,7 @@ app.register_blueprint(dashboard_bp, url_prefix="/api")
 app.register_blueprint(discovery_bp, url_prefix="/api")
 app.register_blueprint(interface_bp, url_prefix="/api")
 app.register_blueprint(storm_bp, url_prefix="/api")
+app.register_blueprint(manual_bp, url_prefix="/api")
 app.register_blueprint(alert_bp, url_prefix="/api")
 app.register_blueprint(settings_bp, url_prefix="/api")
 app.register_blueprint(report_bp, url_prefix="/api")
@@ -98,6 +101,24 @@ def health():
 
 def bootstrap():
     ensure_settings()
+
+    # Database-level uniqueness constraints (idempotent).
+    # MongoDB enforces these under concurrency; application checks are kept
+    # for user-friendly errors.
+    db.devices.create_index(
+        [("ipAddress", 1)],
+        unique=True,
+        name="uniq_devices_ipAddress",
+    )
+    db.users.create_index(
+        [("username", 1)],
+        unique=True,
+        name="uniq_users_username",
+    )
+
+    # Enterprise lock lease TTL indexes (idempotent).
+    LockService.ensure_lock_ttl_indexes()
+
     ensure_default_admin()
     ensure_interface_indexes()
     ensure_interface_stats_indexes()

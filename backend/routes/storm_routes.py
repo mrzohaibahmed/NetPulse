@@ -1018,9 +1018,14 @@ def get_interface_safety(device_id: str, interface: str):
 
 def _incident_filters():
     status = (request.args.get("status") or "").strip() or None
+    device_id_raw = (request.args.get("deviceId") or request.args.get("device_id") or "").strip()
+    device_id = None
+    if device_id_raw and ObjectId.is_valid(device_id_raw):
+        device_id = ObjectId(device_id_raw)
     return {
         "search": (request.args.get("q") or "").strip() or None,
         "status": status,
+        "device_id": device_id,
     }
 
 

@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 
 from bson import ObjectId
 from flask import Blueprint, jsonify, request
+from pymongo.errors import DuplicateKeyError
 
 from config.database import db
 from models.device import create_device, normalize_device_credentials
@@ -109,7 +110,13 @@ def add_device():
             credentials=credentials,
         )
 
-        result = db.devices.insert_one(device)
+        try:
+            result = db.devices.insert_one(device)
+        except DuplicateKeyError:
+            return jsonify({
+                "success": False,
+                "message": "Device with this IP already exists",
+            }), 409
         created_device = db.devices.find_one({"_id": result.inserted_id})
 
         log_audit(
@@ -215,8 +222,13 @@ def import_devices_csv():
                 critical=critical,
                 monitor=monitor,
             )
-            db.devices.insert_one(device)
-            created += 1
+            try:
+                db.devices.insert_one(device)
+                created += 1
+            except DuplicateKeyError:
+                errors.append({"row": index, "error": f"Duplicate IP: {ip_address}"})
+                skipped += 1
+                continue
 
         log_audit(
             action="devices_imported",
@@ -389,10 +401,16 @@ def update_device(device_id):
 
         update_data["updatedAt"] = datetime.now(timezone.utc)
 
-        db.devices.update_one(
-            {"_id": ObjectId(device_id)},
-            {"$set": update_data},
-        )
+        try:
+            db.devices.update_one(
+                {"_id": ObjectId(device_id)},
+                {"$set": update_data},
+            )
+        except DuplicateKeyError:
+            return jsonify({
+                "success": False,
+                "message": "Another device already uses this IP address",
+            }), 409
 
         updated_device = db.devices.find_one({"_id": ObjectId(device_id)})
 

@@ -197,7 +197,20 @@ export function LoginPage() {
           {/* Hints */}
           <div className="mt-5 rounded-lg border border-border/60 bg-secondary/30 px-4 py-3">
             <p className="mb-2 text-xs font-medium text-muted-foreground">Demo credentials</p>
-            <div className="flex gap-4">
+            <div className="flex flex-col gap-2 sm:flex-row sm:gap-4">
+              <button
+                type="button"
+                className="group flex flex-1 items-center gap-2 rounded-md bg-secondary/50 px-3 py-2 text-left transition-colors hover:bg-secondary"
+                onClick={() => { setUsername('superadmin'); setPassword('superadmin123') }}
+              >
+                <div className="flex h-7 w-7 items-center justify-center rounded-md bg-danger/15 text-danger">
+                  <Shield className="h-3.5 w-3.5" />
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-foreground">Super Admin</p>
+                  <p className="text-[10px] text-muted-foreground">Emergency ops</p>
+                </div>
+              </button>
               <button
                 type="button"
                 className="group flex flex-1 items-center gap-2 rounded-md bg-secondary/50 px-3 py-2 text-left transition-colors hover:bg-secondary"
