@@ -13,6 +13,7 @@ import {
   AlertTriangle,
   ChevronRight,
 } from 'lucide-react'
+import { useAuth } from '@/auth/AuthContext'
 import {
   Area,
   AreaChart,
@@ -262,6 +263,7 @@ function DeviceTypePanel({ label, devices }: { label: string; devices: DeviceSta
 }
 
 export function DashboardPage() {
+  const { isOperator } = useAuth()
   const dash = useDashboardQuery()
   const { acknowledge, dismiss } = useAlertMutations()
   const health = computeNetworkHealth(dash.summary)
@@ -531,6 +533,7 @@ export function DashboardPage() {
                   <AlertRow
                     key={alert._id}
                     alert={alert}
+                    canAct={isOperator}
                     onAck={() => acknowledge.mutate(alert._id)}
                     onDismiss={() => dismiss.mutate(alert._id)}
                     busy={acknowledge.isPending || dismiss.isPending}
@@ -627,11 +630,13 @@ export function DashboardPage() {
 
 function AlertRow({
   alert,
+  canAct,
   onAck,
   onDismiss,
   busy,
 }: {
   alert: AlertItem
+  canAct: boolean
   onAck: () => void
   onDismiss: () => void
   busy: boolean
@@ -648,16 +653,18 @@ function AlertRow({
           {alert.ipAddress} · {formatDateTime(alert.createdAt)}
         </p>
       </div>
-      <div className="flex shrink-0 gap-2">
-        <Button type="button" size="sm" variant="secondary" disabled={busy} onClick={onAck}>
-          <Check className="h-3.5 w-3.5" />
-          Ack
-        </Button>
-        <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={onDismiss}>
-          <X className="h-3.5 w-3.5" />
-          Dismiss
-        </Button>
-      </div>
+      {canAct ? (
+        <div className="flex shrink-0 gap-2">
+          <Button type="button" size="sm" variant="secondary" disabled={busy} onClick={onAck}>
+            <Check className="h-3.5 w-3.5" />
+            Ack
+          </Button>
+          <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={onDismiss}>
+            <X className="h-3.5 w-3.5" />
+            Dismiss
+          </Button>
+        </div>
+      ) : null}
     </div>
   )
 }

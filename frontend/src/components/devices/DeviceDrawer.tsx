@@ -21,6 +21,7 @@ import {
   Wifi,
 } from 'lucide-react'
 import { useDeviceHistoryQuery, useDeviceMutations, useNmapScanMutation } from '@/hooks/queries'
+import { useAuth } from '@/auth/AuthContext'
 import { formatDateTime, formatMs, formatPercent, formatRelative } from '@/utils/format'
 import { StatusBadge } from '@/components/shared/StatusBadge'
 import { EmptyState } from '@/components/shared/EmptyState'
@@ -51,6 +52,7 @@ interface DeviceDrawerProps {
 type TabId = 'overview' | 'network'
 
 export function DeviceDrawer({ deviceId, open, onOpenChange }: DeviceDrawerProps) {
+  const { isOperator } = useAuth()
   const [activeTab, setActiveTab] = useState<TabId>('overview')
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
@@ -131,6 +133,7 @@ export function DeviceDrawer({ deviceId, open, onOpenChange }: DeviceDrawerProps
                       {scan.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Radar className="h-4 w-4" />}
                       Ping now
                     </Button>
+                    {isOperator ? (
                     <Button
                       type="button"
                       size="sm"
@@ -153,6 +156,7 @@ export function DeviceDrawer({ deviceId, open, onOpenChange }: DeviceDrawerProps
                       )}
                       {nmapScan.isPending ? 'Scanning…' : networkInfo ? 'Re-scan' : 'Nmap scan'}
                     </Button>
+                    ) : null}
                   </div>
                 </div>
 

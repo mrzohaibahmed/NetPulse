@@ -13,7 +13,7 @@ Public API
     from services.storm.safety import evaluate
     result = evaluate(device_id, interface)
 
-Future Mitigation Engine must call ``evaluate()`` and trust the result.
+The Mitigation Engine and recovery policy call ``evaluate()`` and trust the result.
 """
 
 from __future__ import annotations
@@ -321,7 +321,7 @@ def evaluate(
     persist: bool = False,
 ) -> SafetyResult:
     """
-    Public entry-point for future Mitigation Engine::
+    Public entry-point for the Mitigation Engine and recovery policy::
 
         result = safety.evaluate(device_id, interface)
     """

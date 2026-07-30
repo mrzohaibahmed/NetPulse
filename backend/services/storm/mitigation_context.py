@@ -1,7 +1,7 @@
 """
 Mitigation context builder.
 
-Assembles the immutable context the future Mitigation Engine will consume.
+Assembles the immutable context the Mitigation Engine consumes after prepare.
 Contains no SSH configuration logic.
 """
 
@@ -54,7 +54,7 @@ def build_mitigation_context(
         or diagnostics.get("diagnosticsMeta")
         or {},
         "mitigationAllowed": bool(safety.get("safe")),
-        "actionsPending": [],  # Future Mitigation Engine fills this
+        "actionsPending": [],
         "notes": (
             "READY_FOR_MITIGATION — no configuration commands have been executed."
         ),

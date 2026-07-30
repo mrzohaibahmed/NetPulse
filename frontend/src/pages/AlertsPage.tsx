@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Check, Search, X } from 'lucide-react'
 import { motion } from 'framer-motion'
+import { useAuth } from '@/auth/AuthContext'
 import { useAlertMutations, useAlertsQuery } from '@/hooks/queries'
 import { formatDateTime } from '@/utils/format'
 import type { AlertItem } from '@/types'
@@ -22,6 +23,7 @@ import {
 } from '@/components/ui/select'
 
 export function AlertsPage() {
+  const { isOperator } = useAuth()
   const [status, setStatus] = useState('active')
   const [query, setQuery] = useState('')
   const alertsQuery = useAlertsQuery(status, 100)
@@ -91,6 +93,7 @@ export function AlertsPage() {
               key={alert._id}
               alert={alert}
               index={index}
+              canAct={isOperator}
               onAck={() => acknowledge.mutate(alert._id)}
               onDismiss={() => dismiss.mutate(alert._id)}
               busy={acknowledge.isPending || dismiss.isPending}
@@ -105,12 +108,14 @@ export function AlertsPage() {
 function AlertTimelineItem({
   alert,
   index,
+  canAct,
   onAck,
   onDismiss,
   busy,
 }: {
   alert: AlertItem
   index: number
+  canAct: boolean
   onAck: () => void
   onDismiss: () => void
   busy: boolean
@@ -160,7 +165,7 @@ function AlertTimelineItem({
               {alert.ipAddress} · {alert.scanType} · {formatDateTime(alert.createdAt)}
             </p>
           </div>
-          {!alert.dismissed ? (
+          {canAct && !alert.dismissed ? (
             <div className="flex shrink-0 gap-2">
               {!alert.acknowledged ? (
                 <Button type="button" size="sm" variant="secondary" disabled={busy} onClick={onAck}>

@@ -213,7 +213,7 @@ export function LoginPage() {
                 </div>
                 <div>
                   <p className="text-xs font-semibold text-foreground">Super Admin</p>
-                  <p className="text-[10px] text-muted-foreground">Emergency ops</p>
+                  <p className="text-[10px] text-muted-foreground">Highest privilege</p>
                 </div>
               </button>
               <button

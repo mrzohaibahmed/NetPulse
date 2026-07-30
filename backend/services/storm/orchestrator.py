@@ -4,8 +4,9 @@ Mitigation Orchestrator
 Coordinates diagnostics capture and incident creation before mitigation.
 
 THIS MODULE NEVER EXECUTES CONFIGURATION COMMANDS.
-It is the only module allowed to *prepare* mitigation; actual shutdown /
-no shutdown belongs to a future Mitigation Engine milestone.
+It only *prepares* mitigation (diagnostics + incident). Actual shutdown /
+recovery is performed by the Mitigation Engine (`services.storm.mitigation`)
+when `mitigationMode` is automatic, or when an admin triggers it manually.
 
 Public API
 ----------
