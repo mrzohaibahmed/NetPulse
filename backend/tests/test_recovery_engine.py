@@ -170,6 +170,68 @@ class RecoveryEngineTests(unittest.TestCase):
             self.assertFalse(res["passed"])
             self.assertFalse(res["checks"]["stormNotConfirmed"])
 
+    @patch("services.storm.recovery.policy.get_incident")
+    @patch("services.storm.recovery.policy._db")
+    def test_policy_offline_stale_response_time_not_reachable(
+        self, mock_db_fn, mock_get_incident
+    ):
+        """Offline status with a leftover non-null responseTime must not pass Rule 2."""
+        mock_get_incident.return_value = self.incident_doc
+
+        offline_device = dict(self.device_doc)
+        offline_device["status"] = "Not Reachable"
+        offline_device["responseTime"] = 12.5
+        offline_device["lastSeen"] = datetime.now(timezone.utc) - timedelta(hours=2)
+
+        fake_db = MagicMock()
+        fake_db.devices.find_one.return_value = offline_device
+        fake_db.storm_mitigation_history.find_one.return_value = {
+            "timestamp": datetime.now(timezone.utc) - timedelta(minutes=10),
+            "status": "SUCCESS",
+        }
+        fake_db.storm_confirmation_history.find_one.return_value = {"confirmed": False}
+        fake_db.storm_risk_history.find_one.return_value = {"riskScore": 10.0}
+        mock_db_fn.return_value = fake_db
+
+        with patch("services.storm.recovery.policy.evaluate_safety") as mock_safety, \
+             patch("services.storm.recovery.policy.SSHMitigationExecutor") as mock_ssh_exec:
+            mock_ssh_exec.return_value.__enter__.return_value.collector = MagicMock()
+            mock_safety.return_value.safe = True
+
+            res = validate_recovery_policy(self.incident_id)
+            self.assertFalse(res["checks"]["deviceReachable"])
+            self.assertFalse(res["passed"])
+
+    @patch("services.storm.recovery.policy.get_incident")
+    @patch("services.storm.recovery.policy._db")
+    def test_policy_online_status_is_reachable_regardless_of_response_time(
+        self, mock_db_fn, mock_get_incident
+    ):
+        """Online status is authoritative for Rule 2 even when responseTime is null."""
+        mock_get_incident.return_value = self.incident_doc
+
+        online_device = dict(self.device_doc)
+        online_device["status"] = "Online"
+        online_device["responseTime"] = None
+
+        fake_db = MagicMock()
+        fake_db.devices.find_one.return_value = online_device
+        fake_db.storm_mitigation_history.find_one.return_value = {
+            "timestamp": datetime.now(timezone.utc) - timedelta(minutes=10),
+            "status": "SUCCESS",
+        }
+        fake_db.storm_confirmation_history.find_one.return_value = {"confirmed": False}
+        fake_db.storm_risk_history.find_one.return_value = {"riskScore": 10.0}
+        mock_db_fn.return_value = fake_db
+
+        with patch("services.storm.recovery.policy.evaluate_safety") as mock_safety, \
+             patch("services.storm.recovery.policy.SSHMitigationExecutor") as mock_ssh_exec:
+            mock_ssh_exec.return_value.__enter__.return_value.collector = MagicMock()
+            mock_safety.return_value.safe = True
+
+            res = validate_recovery_policy(self.incident_id)
+            self.assertTrue(res["checks"]["deviceReachable"])
+
     @patch("services.storm.recovery.engine.collect_post_recovery_stats")
     @patch("services.storm.recovery.engine.LockService.release_recovery_locks")
     @patch("services.storm.recovery.engine.LockService.acquire_recovery_locks")
@@ -262,6 +324,64 @@ class RecoveryEngineTests(unittest.TestCase):
                     "updatedAt": unittest.mock.ANY,
                 }
             },
+        )
+
+        # Soft failure must leave incident as MITIGATED (port still shut down)
+        for call in fake_db.storm_incidents.update_one.call_args_list:
+            set_fields = call[0][1].get("$set", {})
+            self.assertNotEqual(
+                set_fields.get("status"),
+                "MITIGATION_FAILED",
+                "recovery soft-failure must not mislabel status as MITIGATION_FAILED",
+            )
+            if "status" in set_fields:
+                self.assertNotEqual(set_fields["status"], "RECOVERY_FAILED")
+
+    @patch("services.storm.recovery.engine.LockService.release_recovery_locks")
+    @patch("services.storm.recovery.engine.LockService.acquire_recovery_locks")
+    @patch("services.storm.recovery.engine.get_incident")
+    @patch("services.storm.recovery.engine._db")
+    @patch("services.storm.recovery.engine.validate_recovery_policy")
+    @patch("services.storm.recovery.engine.SSHMitigationExecutor")
+    def test_recovery_soft_failure_keeps_mitigated_status(
+        self,
+        mock_ssh,
+        mock_val,
+        mock_db_fn,
+        mock_get_incident,
+        mock_acquire_locks,
+        mock_release_locks,
+    ):
+        """Failed recovery with retries remaining must keep status MITIGATED."""
+        mock_get_incident.return_value = self.incident_doc  # status MITIGATED
+        mock_val.return_value = {"passed": True}
+
+        fake_db = MagicMock()
+        fake_db.devices.find_one.return_value = self.device_doc
+        mock_db_fn.return_value = fake_db
+        mock_acquire_locks.return_value = ("recovery:device", "recovery:interface")
+
+        mock_collector = MagicMock()
+        mock_ssh.return_value.__enter__.return_value = mock_collector
+        mock_collector.creds.vendor = "cisco_ios"
+        mock_collector.collector.run_command.return_value = (
+            "GigabitEthernet1/0/10 is administratively down\n admin status is down"
+        )
+
+        res = execute_recovery(self.incident_id, force=False)
+        self.assertFalse(res["success"])
+        self.assertEqual(res["status"], "FAILURE")
+        self.assertEqual(res["retryCount"], 1)
+
+        status_updates = [
+            call[0][1].get("$set", {}).get("status")
+            for call in fake_db.storm_incidents.update_one.call_args_list
+            if "status" in call[0][1].get("$set", {})
+        ]
+        self.assertEqual(
+            status_updates,
+            [],
+            "soft-failure must not rewrite incident status; leave MITIGATED",
         )
 
     @patch("services.storm.recovery.engine.LockService.release_recovery_locks")
@@ -366,6 +486,112 @@ class RecoveryEngineTests(unittest.TestCase):
             },
             retry_count=0,
         )
+
+    @patch("services.storm.recovery.scheduler.execute_recovery")
+    @patch("services.storm.recovery.scheduler.validate_recovery_policy")
+    @patch("services.storm.recovery.scheduler.get_settings")
+    @patch("services.storm.recovery.scheduler.db")
+    def test_sweep_excludes_mitigation_failed(
+        self, mock_db, mock_settings, mock_validate, mock_execute
+    ):
+        """True MITIGATION_FAILED incidents must not be selected by auto-recovery."""
+        mock_settings.return_value = {
+            "autoRecovery": True,
+            "reMitigationThreshold": 75.0,
+            "maximumRecoveryAttempts": 3,
+        }
+        failed = dict(self.incident_doc)
+        failed["status"] = "MITIGATION_FAILED"
+        failed["recoveryRetryCount"] = 0
+
+        def find_side_effect(query):
+            status = query.get("status")
+            if status == "MONITORING":
+                return []
+            if status == "MITIGATED":
+                return []
+            # Legacy/buggy $in query would incorrectly return the failed incident
+            if isinstance(status, dict) and "MITIGATION_FAILED" in status.get("$in", []):
+                return [failed]
+            return []
+
+        mock_db.storm_incidents.find.side_effect = find_side_effect
+
+        run_recovery_cycle()
+
+        find_queries = [c.args[0] for c in mock_db.storm_incidents.find.call_args_list]
+        self.assertIn({"status": "MITIGATED"}, find_queries)
+        self.assertNotIn(
+            {"status": {"$in": ["MITIGATED", "MITIGATION_FAILED"]}},
+            find_queries,
+        )
+        mock_validate.assert_not_called()
+        mock_execute.assert_not_called()
+
+    @patch("services.storm.recovery.scheduler.execute_recovery")
+    @patch("services.storm.recovery.scheduler.validate_recovery_policy")
+    @patch("services.storm.recovery.scheduler.get_settings")
+    @patch("services.storm.recovery.scheduler.db")
+    def test_sweep_selects_mitigated_including_soft_fail_retry(
+        self, mock_db, mock_settings, mock_validate, mock_execute
+    ):
+        """MITIGATED after a soft-failed recovery retry must still be swept next cycle."""
+        mock_settings.return_value = {
+            "autoRecovery": True,
+            "reMitigationThreshold": 75.0,
+            "maximumRecoveryAttempts": 3,
+        }
+        # Part 1 outcome: soft-fail left status MITIGATED and bumped retry count
+        soft_failed = dict(self.incident_doc)
+        soft_failed["status"] = "MITIGATED"
+        soft_failed["recoveryRetryCount"] = 1
+
+        def find_side_effect(query):
+            if query.get("status") == "MONITORING":
+                return []
+            if query.get("status") == "MITIGATED":
+                return [soft_failed]
+            return []
+
+        mock_db.storm_incidents.find.side_effect = find_side_effect
+        mock_validate.return_value = {"passed": True}
+        mock_execute.return_value = {"success": True, "status": "MONITORING"}
+
+        run_recovery_cycle()
+
+        mock_validate.assert_called_once_with(self.incident_id)
+        mock_execute.assert_called_once_with(
+            self.incident_id, force=False, operator="SYSTEM"
+        )
+
+    @patch("services.storm.recovery.policy.get_incident")
+    @patch("services.storm.recovery.policy._db")
+    def test_policy_rule7_rejects_mitigation_failed(
+        self, mock_db_fn, mock_get_incident
+    ):
+        """Rule 7 must fail for true MITIGATION_FAILED (nothing to recover)."""
+        failed_incident = dict(self.incident_doc)
+        failed_incident["status"] = "MITIGATION_FAILED"
+        mock_get_incident.return_value = failed_incident
+
+        fake_db = MagicMock()
+        fake_db.devices.find_one.return_value = self.device_doc
+        fake_db.storm_mitigation_history.find_one.return_value = {
+            "timestamp": datetime.now(timezone.utc) - timedelta(minutes=10),
+            "status": "SUCCESS",
+        }
+        fake_db.storm_confirmation_history.find_one.return_value = {"confirmed": False}
+        fake_db.storm_risk_history.find_one.return_value = {"riskScore": 10.0}
+        mock_db_fn.return_value = fake_db
+
+        with patch("services.storm.recovery.policy.evaluate_safety") as mock_safety, \
+             patch("services.storm.recovery.policy.SSHMitigationExecutor") as mock_ssh_exec:
+            mock_ssh_exec.return_value.__enter__.return_value.collector = MagicMock()
+            mock_safety.return_value.safe = True
+
+            res = validate_recovery_policy(self.incident_id)
+            self.assertFalse(res["checks"]["incidentStillOpen"])
+            self.assertFalse(res["passed"])
 
     @patch("services.storm.recovery.policy.evaluate_safety")
     @patch("services.storm.recovery.policy.SSHMitigationExecutor")

@@ -39,9 +39,13 @@ def _run_interface_stats_then_eligibility() -> None:
         → Safety Engine
         → Diagnostics Capture
         → Incident + Orchestrator Prepare
+        → Automatic Mitigation (when mitigationMode == "automatic")
 
     Failures never abort stats or the scheduler.
-    Mitigation (shutdown) is intentionally NOT executed.
+
+    After prepare, if settings.mitigationMode == "automatic", READY_FOR_MITIGATION
+    incidents are shutdown via execute_mitigation. Otherwise the chain stops after
+    prepare and waits for an admin to trigger mitigation manually.
     """
     from services.interface_collection.stats_collector import (  # noqa: PLC0415
         collect_all_interface_stats,
@@ -95,7 +99,7 @@ def _run_interface_stats_then_eligibility() -> None:
     try:
         from services.storm.orchestrator import prepare_all_safe  # noqa: PLC0415
 
-        # Diagnostics + incident prep only — never executes mitigation.
+        # Diagnostics + incident prep — prepare itself never shuts ports down.
         prepare_all_safe(probe_ssh=True)
 
         # Automatic Mitigation Engine execution check

@@ -10,6 +10,7 @@ from typing import Any
 
 from bson import ObjectId
 
+from services.ping_service import STATUS_ONLINE
 from services.settings_service import get_settings
 from services.storm.incident import get_incident
 from services.storm.mitigation.ssh_executor import SSHMitigationExecutor
@@ -100,9 +101,11 @@ def validate_recovery_policy(incident_id: str) -> dict[str, Any]:
     ).upper()
     operator_driven = incident_type in ("EMERGENCY", "MANUAL")
 
-    # Rule 7: Incident still in a recoverable operational state
+    # Rule 7: Incident still in a recoverable operational state.
+    # MITIGATION_FAILED is excluded — the port was never shut down, so there is
+    # nothing to recover (admin re-mitigation is the correct path).
     incident_status = incident.get("status", "OPEN")
-    if incident_status in ("OPEN", "MITIGATED", "MITIGATION_FAILED", "RECOVERY_FAILED"):
+    if incident_status in ("OPEN", "MITIGATED", "RECOVERY_FAILED"):
         checks["incidentStillOpen"] = True
 
     # Fetch device
@@ -116,11 +119,12 @@ def validate_recovery_policy(incident_id: str) -> dict[str, Any]:
     else:
         checks["cooldownExpired"] = check_cooldown_expired(incident_id, cooldown_minutes)
 
-    # Rule 2: Device reachable (online status)
-    device_online = StringEqualsIgnoreCase(device.get("status"), "online") or (
-        device.get("responseTime") is not None
+    # Rule 2: Device reachable — status is authoritative (same as monitor/nmap/iface).
+    # Do not use responseTime: a non-null value can be leftover and says nothing
+    # about current reachability once status is offline.
+    checks["deviceReachable"] = StringEqualsIgnoreCase(
+        device.get("status"), STATUS_ONLINE
     )
-    checks["deviceReachable"] = bool(device_online)
 
     # Rule 3: SSH reachable
     ssh_ok = False

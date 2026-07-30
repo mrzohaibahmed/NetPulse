@@ -110,7 +110,7 @@ def run_recovery_cycle() -> None:
 
     try:
         mitigated_incidents = list(
-            db.storm_incidents.find({"status": {"$in": ["MITIGATED", "MITIGATION_FAILED"]}})
+            db.storm_incidents.find({"status": "MITIGATED"})
         )
         for inc in mitigated_incidents:
             incident_id = inc.get("incidentId")
