@@ -96,6 +96,19 @@ def validate_recovery_policy(incident_id: str) -> dict[str, Any]:
 
     device_id = incident.get("deviceId")
     interface = incident.get("interface")
+    if not device_id or not interface:
+        return {
+            "passed": False,
+            "checks": checks,
+            "reason": "Incident is missing deviceId or interface",
+        }
+    interface = str(interface).strip()
+    if not interface:
+        return {
+            "passed": False,
+            "checks": checks,
+            "reason": "Incident is missing deviceId or interface",
+        }
     incident_type = str(
         incident.get("incidentType") or incident.get("type") or "STORM"
     ).upper()
