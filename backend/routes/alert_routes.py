@@ -75,7 +75,7 @@ def list_alerts():
 
 
 @alert_bp.route("/alerts/<alert_id>/acknowledge", methods=["POST"])
-@require_auth()
+@require_auth(roles=["operator"])
 def acknowledge_alert(alert_id):
     try:
         if not ObjectId.is_valid(alert_id):
@@ -110,7 +110,7 @@ def acknowledge_alert(alert_id):
 
 
 @alert_bp.route("/alerts/<alert_id>/dismiss", methods=["POST"])
-@require_auth()
+@require_auth(roles=["operator"])
 def dismiss_alert(alert_id):
     try:
         if not ObjectId.is_valid(alert_id):

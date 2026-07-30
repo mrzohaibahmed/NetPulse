@@ -8,6 +8,7 @@ A full-stack LAN monitoring system that continuously pings devices, profiles the
 
 - [What this project does](#what-this-project-does)
 - [How it works](#how-it-works)
+- [Storm protection & interfaces](#storm-protection--interfaces)
 - [System architecture](#system-architecture)
 - [Tech stack](#tech-stack)
 - [Project structure](#project-structure)
@@ -34,16 +35,20 @@ Operators use the React UI to:
 |------|---------|
 | **Dashboard** | Live KPIs, status charts, response-time trends, recent activity |
 | **Devices** | CRUD inventory, CSV import, manual ping / Nmap, per-device ping overrides |
+| **Interfaces** | Switch interface inventory, discovery, and stats |
+| **Storm Protection** | Eligibility, risk, confirmation, safety, incidents, mitigation/recovery |
 | **Discovery** | Suggest local `/24` range and sweep IPs; auto-register new online hosts |
 | **History** | Filterable ping history and per-device uptime |
 | **Alerts** | Acknowledge or dismiss critical outage alerts |
 | **Reports** | Uptime reports; export devices/history as CSV or Excel |
-| **Settings** | Global ping interval/timeout/retries and SMTP (no server restart needed) |
+| **Settings** | Global ping interval/timeout/retries, SMTP, storm mitigation mode |
 | **Account** | Change username/password; admins manage users |
 
 Roles:
 
-- **admin** — full write access (devices, discovery, settings, users)
+- **super-admin** — full admin rights plus exclusive user/role management for other super-admins
+- **admin** — full write access (devices, discovery, settings, users, storm mitigation controls)
+- **operator** — viewer access plus on-demand Nmap scans and alert acknowledge/dismiss
 - **viewer** — read-only dashboard, devices, history, reports, alerts
 
 ---
@@ -91,7 +96,7 @@ Roles:
 2. Only devices currently marked `Online` are scanned (avoids hanging on dead hosts).
 3. A thread pool (`MAX_SCAN_THREADS`, default 5) runs Nmap with `NMAP_ARGUMENTS` (default `-A -T4`).
 4. Parsed results are written to the device’s `networkInfo` (OS, ports, services, MAC, vendor) and shown in the device details drawer.
-5. Admins/users can also trigger a single-device or “scan all online” Nmap run from the API/UI.
+5. Operator+ roles can also trigger a single-device or “scan all online” Nmap run from the API/UI (viewers cannot).
 
 Requires the **Nmap binary** on `PATH` (or set `NMAP_PATH`). Aggressive flags often need Administrator privileges on Windows.
 
@@ -111,7 +116,7 @@ Requires the **Nmap binary** on `PATH` (or set `NMAP_PATH`). Aggressive flags of
 1. After each ping update, the monitor compares previous vs new status.
 2. Transition of a **critical** device into `Offline (Critical)` creates an `alerts` document (once per outage transition, not on every failed ping).
 3. If SMTP is enabled, a background thread sends email using Settings / `.env` values.
-4. Operators acknowledge or dismiss alerts in the UI.
+4. Operators (and admins) acknowledge or dismiss alerts in the UI; viewers can view alerts only.
 
 ### 5. Authentication and roles
 
@@ -119,7 +124,8 @@ Requires the **Nmap binary** on `PATH` (or set `NMAP_PATH`). Aggressive flags of
 
 - Login returns a JWT (`JWT_SECRET`, `JWT_EXPIRE_HOURS`).
 - Passwords are stored with bcrypt.
-- Route handlers enforce `admin` vs `viewer` as needed.
+- Roles inherit privileges: `super-admin` ⊃ `admin` ⊃ `operator` ⊃ `viewer`.
+- Route handlers enforce the minimum required role (e.g. Nmap scan and alert ack/dismiss require `operator` or higher).
 - First boot with an empty `users` collection seeds default admin and viewer accounts.
 
 ### 6. Frontend data loading
@@ -129,6 +135,25 @@ Requires the **Nmap binary** on `PATH` (or set `NMAP_PATH`). Aggressive flags of
 - TanStack Query polls the API (dashboard ~10s, devices ~15s, history ~20s).
 - In development, Vite proxies `/api` and `/health` to `http://127.0.0.1:5000`.
 - In production, `npm run build` produces `frontend/dist`; Flask serves that SPA at `/` when the folder exists.
+
+---
+
+## Storm protection & interfaces
+
+NetPulse also discovers switch interfaces, collects stats, and runs a storm-protection
+pipeline: eligibility → risk → confirmation → safety → diagnostics/prepare → mitigation.
+
+**Mitigation is fully automatic by design.** There is no separate emergency or manual
+port-shutdown path. Behavior is controlled by `mitigationMode` in settings:
+
+- **`automatic`** — after prepare, the scheduler shuts down `READY_FOR_MITIGATION`
+  interfaces via the Mitigation Engine.
+- **`manual`** (default) — the pipeline stops after prepare; an admin triggers
+  shutdown/recovery from the Storm Protection UI.
+
+Recovery (re-enable) follows the same automatic/admin model via recovery settings
+(`autoRecovery`, cooldown, stabilization). Historical incident logs may still show
+older incident types from before this design; new incidents are storm-pipeline only.
 
 ---
 

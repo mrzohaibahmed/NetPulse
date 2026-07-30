@@ -18,6 +18,12 @@ class RoleHierarchyTests(unittest.TestCase):
     def test_operator_satisfies_operator(self):
         self.assertTrue(role_satisfies("operator", ["admin", "operator"]))
 
+    def test_viewer_rejected_for_operator(self):
+        self.assertFalse(role_satisfies("viewer", ["operator"]))
+
+    def test_admin_satisfies_operator(self):
+        self.assertTrue(role_satisfies("admin", ["operator"]))
+
     def test_normalize_unknown_role(self):
         self.assertEqual(normalize_role("nope"), "viewer")
         self.assertEqual(normalize_role("SUPER-ADMIN"), "super-admin")

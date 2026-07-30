@@ -420,7 +420,7 @@ class SafetyResult:
     """
     Pre-mitigation safety decision.
 
-    Future Mitigation Engine consumes this via ``safety.evaluate(...)``.
+    The Mitigation Engine and recovery policy consume this via ``safety.evaluate(...)``.
     """
 
     safe: bool
