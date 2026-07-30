@@ -27,6 +27,7 @@ def serialize_user(user):
         "_id": str(user["_id"]),
         "username": user.get("username"),
         "role": user.get("role", "viewer"),
+        "mustChangePassword": bool(user.get("mustChangePassword")),
         "createdAt": format_datetime(user.get("createdAt")),
         "updatedAt": format_datetime(user.get("updatedAt")),
     }
@@ -73,11 +74,16 @@ def login():
             user_id=str(user["_id"]),
             username=user["username"],
             role=user.get("role", "viewer"),
+            must_change_password=bool(user.get("mustChangePassword")),
         )
 
         return jsonify({
             "success": True,
-            "message": "Login successful",
+            "message": (
+                "Password change required"
+                if user.get("mustChangePassword")
+                else "Login successful"
+            ),
             "token": token,
             "expiresInHours": JWT_EXPIRE_HOURS,
             "user": serialize_user(user),
@@ -92,7 +98,7 @@ def login():
 
 
 @auth_bp.route("/auth/me", methods=["GET"])
-@require_auth()
+@require_auth(allow_password_change=True)
 def me():
     user = _find_current_user()
     if not user:
@@ -108,7 +114,7 @@ def me():
 
 
 @auth_bp.route("/auth/account", methods=["PUT"])
-@require_auth()
+@require_auth(allow_password_change=True)
 def update_own_account():
     """Change own username and/or password (FR7 access management)."""
     try:
@@ -120,6 +126,7 @@ def update_own_account():
         current_password = data.get("currentPassword") or ""
         new_username = (data.get("username") or "").strip()
         new_password = data.get("newPassword") or ""
+        must_change = bool(user.get("mustChangePassword"))
 
         if not current_password:
             return jsonify({
@@ -131,6 +138,13 @@ def update_own_account():
             return jsonify({
                 "success": False,
                 "message": "Current password is incorrect",
+            }), 400
+
+        if must_change and not new_password:
+            return jsonify({
+                "success": False,
+                "code": "password_change_required",
+                "message": "Password change required. Provide a new password.",
             }), 400
 
         if not new_username and not new_password:
@@ -161,7 +175,13 @@ def update_own_account():
                     "success": False,
                     "message": "New password must be at least 6 characters",
                 }), 400
+            if verify_password(new_password, user.get("passwordHash", "")):
+                return jsonify({
+                    "success": False,
+                    "message": "New password must be different from the current password",
+                }), 400
             update["passwordHash"] = hash_password(new_password)
+            update["mustChangePassword"] = False
 
         try:
             db.users.update_one({"_id": user["_id"]}, {"$set": update})
@@ -176,6 +196,7 @@ def update_own_account():
             user_id=str(updated["_id"]),
             username=updated["username"],
             role=updated.get("role", "viewer"),
+            must_change_password=bool(updated.get("mustChangePassword")),
         )
 
         log_audit(
@@ -307,6 +328,7 @@ def update_user(user_id):
                     "message": "Password must be at least 6 characters",
                 }), 400
             update["passwordHash"] = hash_password(new_password)
+            update["mustChangePassword"] = True
 
         if new_role is not None and new_role != target_role:
             update["role"] = new_role

@@ -5,6 +5,7 @@ from email.mime.text import MIMEText
 
 from services.settings_service import get_settings
 from utils.monitor_logger import get_monitor_logger
+from utils.secret_crypto import decrypt_secret
 
 logger = get_monitor_logger("email")
 
@@ -22,7 +23,9 @@ def _smtp_ready(smtp):
 
 def send_email(subject, body_text, body_html=None):
     settings = get_settings()
-    smtp = settings.get("smtp") or {}
+    smtp = dict(settings.get("smtp") or {})
+    if smtp.get("password"):
+        smtp["password"] = decrypt_secret(smtp["password"])
 
     if not _smtp_ready(smtp):
         logger.warning("Email alert skipped: SMTP settings are not configured")

@@ -6,10 +6,15 @@ from utils.auth import hash_password
 
 
 def ensure_default_admin():
-    """Create default admin and viewer if no users exist (FR7.1–FR7.2)."""
+    """Create default admin and viewer if no users exist (FR7.1–FR7.2).
+
+    Seeded accounts are created with mustChangePassword=True so the well-known
+    bootstrap passwords cannot be used as permanent credentials.
+    """
     if db.users.count_documents({}) == 0:
         username = (os.getenv("DEFAULT_ADMIN_USER") or "admin").strip()
         password = (os.getenv("DEFAULT_ADMIN_PASSWORD") or "admin123").strip()
+        viewer_password = (os.getenv("DEFAULT_VIEWER_PASSWORD") or "viewer123").strip()
         now = datetime.now(timezone.utc)
 
         db.users.insert_many([
@@ -17,18 +22,23 @@ def ensure_default_admin():
                 "username": username,
                 "passwordHash": hash_password(password),
                 "role": "admin",
+                "mustChangePassword": True,
                 "createdAt": now,
                 "updatedAt": now,
             },
             {
                 "username": "viewer",
-                "passwordHash": hash_password("viewer123"),
+                "passwordHash": hash_password(viewer_password),
                 "role": "viewer",
+                "mustChangePassword": True,
                 "createdAt": now,
                 "updatedAt": now,
             },
         ])
-        print(f"Default users created: {username} (admin), viewer (viewer)")
+        print(
+            f"Default users created: {username} (admin), viewer (viewer) "
+            f"— password change required on first login"
+        )
 
     ensure_super_admin()
 
@@ -59,7 +69,11 @@ def ensure_super_admin():
         "username": username,
         "passwordHash": hash_password(password),
         "role": "super-admin",
+        "mustChangePassword": True,
         "createdAt": now,
         "updatedAt": now,
     })
-    print(f"Default super-admin created: {username}")
+    print(
+        f"Default super-admin created: {username} "
+        f"— password change required on first login"
+    )

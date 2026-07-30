@@ -47,9 +47,6 @@ import {
   getRecoveryHistoryDetail,
   executeStormRecovery,
   retryStormRecovery,
-  manualShutdown,
-  manualRecover,
-  manualEmergencyShutdown,
   getUptimeReport,
   getUsers,
   importDevicesCsv,
@@ -660,74 +657,6 @@ export function useRecoveryMutations() {
 
   return { execute, retry }
 }
-
-export function useManualPortControlMutations() {
-  const qc = useQueryClient()
-
-  const invalidate = () =>
-    Promise.all([
-      qc.invalidateQueries({ queryKey: ['interfaces'] }),
-      qc.invalidateQueries({ queryKey: ['storm-incidents'] }),
-      qc.invalidateQueries({ queryKey: ['mitigation-history'] }),
-      qc.invalidateQueries({ queryKey: ['recovery-history'] }),
-      qc.invalidateQueries({ queryKey: queryKeys.dashboard.all }),
-    ])
-
-  const shutdown = useMutation({
-    mutationFn: (payload: { deviceId: string; interface: string; reason: string }) =>
-      manualShutdown(payload),
-    onSuccess: async (res) => {
-      if (res.success) {
-        toast.success('Port shutdown completed successfully')
-      } else {
-        toast.error(`Shutdown failed: ${res.error || 'Check history'}`)
-      }
-      await invalidate()
-    },
-    onError: (err: Error) => toast.error(err.message),
-  })
-
-  const recover = useMutation({
-    mutationFn: (payload: {
-      incidentId?: string
-      deviceId?: string
-      interface?: string
-      reason: string
-    }) => manualRecover(payload),
-    onSuccess: async (res) => {
-      if (res.success) {
-        toast.success('Port recovery completed successfully')
-      } else {
-        toast.error(
-          `Recovery failed: ${res.error || (res as { message?: string }).message || 'Check history'}`,
-        )
-      }
-      await invalidate()
-    },
-    onError: (err: Error) => toast.error(err.message || 'Port recovery failed'),
-  })
-
-  const emergencyShutdown = useMutation({
-    mutationFn: (payload: {
-      deviceId: string
-      interface: string
-      reason: string
-      confirmation: string
-    }) => manualEmergencyShutdown(payload),
-    onSuccess: async (res) => {
-      if (res.success) {
-        toast.success('Emergency shutdown completed successfully')
-      } else {
-        toast.error(`Emergency shutdown failed: ${res.error || 'Check history'}`)
-      }
-      await invalidate()
-    },
-    onError: (err: Error) => toast.error(err.message),
-  })
-
-  return { shutdown, recover, emergencyShutdown }
-}
-
 
 export function useSettingsQuery(enabled = true) {
   return useQuery({

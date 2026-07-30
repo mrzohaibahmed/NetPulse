@@ -12,7 +12,9 @@ export interface User {
   _id: string
   username: string
   role: UserRole
+  mustChangePassword?: boolean
   createdAt?: string
+  updatedAt?: string
 }
 
 export interface NetworkPort {
@@ -174,6 +176,8 @@ export interface AppSettings {
   stabilizationSeconds?: number
   maximumRecoveryAttempts?: number
   reMitigationThreshold?: number
+  dataRetentionDays?: number
+  incidentRetentionDays?: number
   updatedAt: string | null
 }
 

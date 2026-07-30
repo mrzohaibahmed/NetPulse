@@ -9,17 +9,21 @@ import { Label } from '@/components/ui/label'
 
 const FADE_UP = { hidden: { opacity: 0, y: 12 }, show: { opacity: 1, y: 0 } }
 
+/** Demo credential fill buttons — Vite DEV or explicit VITE_DEMO_MODE=true only. */
+const SHOW_DEMO_CREDENTIALS =
+  import.meta.env.DEV || import.meta.env.VITE_DEMO_MODE === 'true'
+
 export function LoginPage() {
   const { user, loading, login } = useAuth()
 
-  const [username, setUsername] = useState('admin')
+  const [username, setUsername] = useState(SHOW_DEMO_CREDENTIALS ? 'admin' : '')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
   if (!loading && user) {
-    return <Navigate to="/" replace />
+    return <Navigate to={user.mustChangePassword ? '/account' : '/'} replace />
   }
 
   const onSubmit = async (event: FormEvent) => {
@@ -194,7 +198,8 @@ export function LoginPage() {
             </form>
           </div>
 
-          {/* Hints */}
+          {/* Demo credential fills — excluded from production builds unless VITE_DEMO_MODE=true */}
+          {SHOW_DEMO_CREDENTIALS ? (
           <div className="mt-5 rounded-lg border border-border/60 bg-secondary/30 px-4 py-3">
             <p className="mb-2 text-xs font-medium text-muted-foreground">Demo credentials</p>
             <div className="flex flex-col gap-2 sm:flex-row sm:gap-4">
@@ -239,6 +244,7 @@ export function LoginPage() {
               </button>
             </div>
           </div>
+          ) : null}
         </motion.div>
       </div>
     </div>
