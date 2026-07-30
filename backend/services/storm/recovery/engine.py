@@ -188,15 +188,9 @@ def execute_recovery(
                 detail=f"Maximum recovery attempts exceeded ({retry_count}/{max_attempts}). Escalating incident.",
             )
         else:
-            db.storm_incidents.update_one(
-                {"incidentId": incident_id},
-                {
-                    "$set": {
-                        "status": "MITIGATION_FAILED",
-                        "updatedAt": datetime.now(timezone.utc),
-                    }
-                },
-            )
+            # Port is still shut down — leave status as MITIGATED so auto-recovery
+            # can retry. Do not mislabel as MITIGATION_FAILED (that means the
+            # shutdown itself never succeeded).
             append_timeline_event(
                 incident_id,
                 "Recovery Failed",
