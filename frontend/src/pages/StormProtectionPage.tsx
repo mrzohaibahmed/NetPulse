@@ -1875,7 +1875,7 @@ export function StormProtectionPage() {
               <p className="text-xs text-muted-foreground">
                 Current active mode:{' '}
                 <span className="font-semibold text-primary uppercase">
-                  {settingsQuery.data?.mitigationMode || 'automatic'}
+                  {settingsQuery.data?.mitigationMode || 'manual'}
                 </span>
               </p>
             </div>

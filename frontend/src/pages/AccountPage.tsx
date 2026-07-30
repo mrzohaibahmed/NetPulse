@@ -59,6 +59,10 @@ export function AccountPage() {
 
     const nextUsername = username.trim()
     const usernameChanged = nextUsername !== (user?.username ?? '')
+    if (user?.mustChangePassword && !newPassword) {
+      setError('You must set a new password before continuing')
+      return
+    }
     if (!usernameChanged && !newPassword) {
       setError('Enter a new username and/or new password')
       return
@@ -120,6 +124,15 @@ export function AccountPage() {
   return (
     <div className="space-y-6">
       <PageHeader title="Account" description="Manage your profile, security, and preferences" />
+
+      {user?.mustChangePassword ? (
+        <div
+          className="rounded-lg border border-danger/40 bg-danger/10 px-4 py-3 text-sm text-danger"
+          role="alert"
+        >
+          Password change required. Set a new password before using the rest of the application.
+        </div>
+      ) : null}
 
       <section className="grid gap-4 lg:grid-cols-3">
         <Card className="glass lg:col-span-1">
@@ -184,12 +197,15 @@ export function AccountPage() {
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <Label htmlFor="newPassword">New password (optional)</Label>
+                  <Label htmlFor="newPassword">
+                    {user?.mustChangePassword ? 'New password (required)' : 'New password (optional)'}
+                  </Label>
                   <Input
                     id="newPassword"
                     type="password"
-                    minLength={6}
                     autoComplete="new-password"
+                    required={Boolean(user?.mustChangePassword)}
+                    minLength={6}
                     value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)}
                   />

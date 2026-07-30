@@ -1,5 +1,7 @@
 from datetime import datetime, timezone
 
+from utils.secret_crypto import encrypt_secret
+
 
 def create_device(
     hostname,
@@ -59,10 +61,10 @@ def normalize_device_credentials(raw, existing=None) -> dict | None:
         credentials["sshUsername"] = str(raw["sshUsername"]).strip()
 
     if "sshPassword" in raw and raw["sshPassword"] not in (None, ""):
-        credentials["sshPassword"] = str(raw["sshPassword"])
+        credentials["sshPassword"] = encrypt_secret(str(raw["sshPassword"]))
 
     if "sshSecret" in raw and raw["sshSecret"] not in (None, ""):
-        credentials["sshSecret"] = str(raw["sshSecret"])
+        credentials["sshSecret"] = encrypt_secret(str(raw["sshSecret"]))
 
     if "sshVendor" in raw and raw["sshVendor"] is not None:
         credentials["sshVendor"] = str(raw["sshVendor"]).strip()

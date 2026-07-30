@@ -17,7 +17,6 @@ from routes.report_routes import report_bp
 from routes.scan_routes import scan_bp
 from routes.settings_routes import settings_bp
 from routes.storm_routes import storm_bp
-from routes.manual_routes import manual_bp
 from scheduler import start_scheduler
 from services.interface_collection.collector import ensure_interface_indexes
 from services.interface_collection.stats_collector import ensure_interface_stats_indexes
@@ -31,6 +30,8 @@ from services.storm.mitigation import ensure_mitigation_indexes
 from services.storm.recovery import ensure_recovery_indexes
 from services.user_service import ensure_default_admin
 from services.storm.lock_service import LockService
+from utils.secret_crypto import ensure_secrets_encryption_configured
+from services.retention_service import ensure_retention_ttl_indexes
 
 # Serve built frontend (Vite) if present.
 BASE_DIR = Path(__file__).resolve().parent
@@ -53,7 +54,6 @@ app.register_blueprint(dashboard_bp, url_prefix="/api")
 app.register_blueprint(discovery_bp, url_prefix="/api")
 app.register_blueprint(interface_bp, url_prefix="/api")
 app.register_blueprint(storm_bp, url_prefix="/api")
-app.register_blueprint(manual_bp, url_prefix="/api")
 app.register_blueprint(alert_bp, url_prefix="/api")
 app.register_blueprint(settings_bp, url_prefix="/api")
 app.register_blueprint(report_bp, url_prefix="/api")
@@ -100,6 +100,7 @@ def health():
 
 
 def bootstrap():
+    ensure_secrets_encryption_configured()
     ensure_settings()
 
     # Database-level uniqueness constraints (idempotent).
@@ -129,19 +130,30 @@ def bootstrap():
     ensure_incident_indexes()
     ensure_mitigation_indexes()
     ensure_recovery_indexes()
+    ensure_retention_ttl_indexes()
 
 
 bootstrap()
 
 # Start monitoring unless we're the Flask debug reloader parent process.
-DEBUG = os.getenv("FLASK_DEBUG", "true").lower() in ("1", "true", "yes")
+# Default OFF — production must not run the interactive debugger.
+DEBUG = os.getenv("FLASK_DEBUG", "false").lower() in ("1", "true", "yes")
 if not DEBUG or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
     start_scheduler()
 
 
 if __name__ == "__main__":
+    # Debug mode must never bind all interfaces (Werkzeug debugger exposure).
+    # Non-debug keeps LAN-reachable 0.0.0.0 for normal deployments.
+    run_host = "127.0.0.1" if DEBUG else "0.0.0.0"
+    if DEBUG:
+        print(
+            "WARNING: FLASK_DEBUG is enabled — binding to 127.0.0.1 only. "
+            "Do not expose the Werkzeug debugger on a network interface.",
+            flush=True,
+        )
     app.run(
-        host="0.0.0.0",
+        host=run_host,
         port=5000,
         debug=DEBUG,
     )

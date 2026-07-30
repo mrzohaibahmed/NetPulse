@@ -1,9 +1,10 @@
-import { Navigate, Outlet } from 'react-router-dom'
+import { Navigate, Outlet, useLocation } from 'react-router-dom'
 import { useAuth } from '@/auth/AuthContext'
 import { LoadingState } from '@/components/shared/LoadingState'
 
 export function ProtectedRoute() {
   const { user, loading } = useAuth()
+  const location = useLocation()
 
   if (loading) {
     return (
@@ -15,6 +16,10 @@ export function ProtectedRoute() {
 
   if (!user) {
     return <Navigate to="/login" replace state={{ from: window.location.pathname }} />
+  }
+
+  if (user.mustChangePassword && location.pathname !== '/account') {
+    return <Navigate to="/account" replace />
   }
 
   return <Outlet />

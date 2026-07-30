@@ -31,6 +31,8 @@ const schema = z.object({
   stabilizationSeconds: z.number().min(5),
   maximumRecoveryAttempts: z.number().min(1),
   reMitigationThreshold: z.number().min(1).max(100),
+  dataRetentionDays: z.number().min(7).max(3650),
+  incidentRetentionDays: z.number().min(30).max(3650),
 })
 
 type FormValues = z.infer<typeof schema>
@@ -58,6 +60,8 @@ export function SettingsPage() {
       stabilizationSeconds: 60,
       maximumRecoveryAttempts: 3,
       reMitigationThreshold: 75,
+      dataRetentionDays: 90,
+      incidentRetentionDays: 365,
     },
   })
 
@@ -80,6 +84,8 @@ export function SettingsPage() {
       stabilizationSeconds: data.stabilizationSeconds ?? 60,
       maximumRecoveryAttempts: data.maximumRecoveryAttempts ?? 3,
       reMitigationThreshold: data.reMitigationThreshold ?? 75,
+      dataRetentionDays: data.dataRetentionDays ?? 90,
+      incidentRetentionDays: data.incidentRetentionDays ?? 365,
     })
   }, [settingsQuery.data, form])
 
@@ -119,6 +125,8 @@ export function SettingsPage() {
       stabilizationSeconds: values.stabilizationSeconds,
       maximumRecoveryAttempts: values.maximumRecoveryAttempts,
       reMitigationThreshold: values.reMitigationThreshold,
+      dataRetentionDays: values.dataRetentionDays,
+      incidentRetentionDays: values.incidentRetentionDays,
     })
     form.setValue('smtpPassword', '')
   })
@@ -282,6 +290,33 @@ export function SettingsPage() {
                 max={100}
                 {...form.register('reMitigationThreshold', { valueAsNumber: true })}
               />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="dataRetentionDays">Data retention (days)</Label>
+              <Input
+                id="dataRetentionDays"
+                type="number"
+                min={7}
+                max={3650}
+                {...form.register('dataRetentionDays', { valueAsNumber: true })}
+              />
+              <p className="text-xs text-muted-foreground">
+                Ping/stats and storm evaluation history older than this are removed via TTL.
+              </p>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="incidentRetentionDays">Incident action retention (days)</Label>
+              <Input
+                id="incidentRetentionDays"
+                type="number"
+                min={30}
+                max={3650}
+                {...form.register('incidentRetentionDays', { valueAsNumber: true })}
+              />
+              <p className="text-xs text-muted-foreground">
+                Mitigation/recovery attempt logs and closed (RESOLVED) storm incidents.
+                Daily purge uses this window so incidents stay consistent with action history.
+              </p>
             </div>
           </CardContent>
         </Card>

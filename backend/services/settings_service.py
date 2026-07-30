@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from config.database import db
+from utils.secret_crypto import encrypt_secret
 
 SETTINGS_ID = "global"
 
@@ -22,12 +23,14 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "toAddress": (os.getenv("ALERT_EMAIL_TO") or "").strip(),
         "useTls": os.getenv("SMTP_USE_TLS", "true").lower() in ("1", "true", "yes"),
     },
-    "mitigationMode": os.getenv("STORM_MITIGATION_MODE", "automatic"),
+    "mitigationMode": os.getenv("STORM_MITIGATION_MODE", "manual"),
     "autoRecovery": os.getenv("STORM_AUTO_RECOVERY", "true").lower() in ("1", "true", "yes"),
     "cooldownMinutes": int(os.getenv("STORM_RECOVERY_COOLDOWN_MINUTES", "5")),
     "stabilizationSeconds": int(os.getenv("STORM_RECOVERY_STABILIZATION_SECONDS", "60")),
     "maximumRecoveryAttempts": int(os.getenv("STORM_RECOVERY_MAX_ATTEMPTS", "3")),
     "reMitigationThreshold": int(os.getenv("STORM_RE_MITIGATION_THRESHOLD", "75")),
+    "dataRetentionDays": int(os.getenv("DATA_RETENTION_DAYS", "90")),
+    "incidentRetentionDays": int(os.getenv("INCIDENT_RETENTION_DAYS", "365")),
     "updatedAt": None,
 }
 
@@ -38,6 +41,8 @@ def ensure_settings():
         return existing
 
     doc = deepcopy(DEFAULT_SETTINGS)
+    if doc["smtp"].get("password"):
+        doc["smtp"]["password"] = encrypt_secret(doc["smtp"]["password"])
     doc["updatedAt"] = datetime.now(timezone.utc)
     db.settings.insert_one(doc)
     return doc
@@ -65,12 +70,14 @@ def get_public_settings():
             "toAddress": smtp.get("toAddress", ""),
             "useTls": smtp.get("useTls", True),
         },
-        "mitigationMode": settings.get("mitigationMode", "automatic"),
+        "mitigationMode": settings.get("mitigationMode", "manual"),
         "autoRecovery": bool(settings.get("autoRecovery", True)),
         "cooldownMinutes": int(settings.get("cooldownMinutes", 5)),
         "stabilizationSeconds": int(settings.get("stabilizationSeconds", 60)),
         "maximumRecoveryAttempts": int(settings.get("maximumRecoveryAttempts", 3)),
         "reMitigationThreshold": int(settings.get("reMitigationThreshold", 75)),
+        "dataRetentionDays": int(settings.get("dataRetentionDays", 90)),
+        "incidentRetentionDays": int(settings.get("incidentRetentionDays", 365)),
         "updatedAt": settings.get("updatedAt"),
     }
 
@@ -105,7 +112,7 @@ def update_settings(payload: dict):
             if key in incoming:
                 smtp[key] = incoming[key]
         if "password" in incoming and incoming["password"]:
-            smtp["password"] = incoming["password"]
+            smtp["password"] = encrypt_secret(str(incoming["password"]))
         if "port" in smtp:
             smtp["port"] = int(smtp["port"])
         update["smtp"] = smtp
@@ -143,8 +150,36 @@ def update_settings(payload: dict):
             raise ValueError("reMitigationThreshold must be between 1 and 100")
         update["reMitigationThreshold"] = val
 
+    if "dataRetentionDays" in payload and payload["dataRetentionDays"] is not None:
+        from services.retention_service import clamp_retention_days  # noqa: PLC0415
+
+        update["dataRetentionDays"] = clamp_retention_days(payload["dataRetentionDays"])
+
+    if "incidentRetentionDays" in payload and payload["incidentRetentionDays"] is not None:
+        from services.retention_service import clamp_incident_retention_days  # noqa: PLC0415
+
+        update["incidentRetentionDays"] = clamp_incident_retention_days(
+            payload["incidentRetentionDays"]
+        )
+
     db.settings.update_one({"_id": SETTINGS_ID}, {"$set": update})
-    return get_settings()
+    updated_doc = get_settings()
+
+    if "dataRetentionDays" in update or "incidentRetentionDays" in update:
+        try:
+            from services.retention_service import ensure_retention_ttl_indexes  # noqa: PLC0415
+
+            ensure_retention_ttl_indexes(
+                retention_days=int(updated_doc.get("dataRetentionDays", 90)),
+                incident_retention_days=int(
+                    updated_doc.get("incidentRetentionDays", 365)
+                ),
+            )
+        except Exception:
+            # Settings write succeeded; index refresh is best-effort and logged inside.
+            pass
+
+    return updated_doc
 
 
 def get_ping_config(device=None):

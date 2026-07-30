@@ -445,26 +445,33 @@ def delete_device(device_id):
                 "message": "Invalid device ID",
             }), 400
 
-        device = db.devices.find_one({"_id": ObjectId(device_id)})
-        result = db.devices.delete_one({"_id": ObjectId(device_id)})
-
-        if result.deleted_count == 0:
+        oid = ObjectId(device_id)
+        device = db.devices.find_one({"_id": oid})
+        if not device:
             return jsonify({
                 "success": False,
                 "message": "Device not found",
             }), 404
 
-        db.pingHistory.delete_many({"deviceId": ObjectId(device_id)})
-        db.interfaces.delete_many({"deviceId": ObjectId(device_id)})
-        db["interface_stats"].delete_many({"deviceId": ObjectId(device_id)})
+        from services.device_cleanup import cascade_delete_device  # noqa: PLC0415
+
+        cascade = cascade_delete_device(oid)
+        if cascade.get("deviceDeleted", 0) < 1:
+            return jsonify({
+                "success": False,
+                "message": "Device not found",
+            }), 404
 
         log_audit(
             action="device_deleted",
             entity_type="device",
             entity_id=device_id,
             details={
-                "hostname": (device or {}).get("hostname"),
-                "ipAddress": (device or {}).get("ipAddress"),
+                "hostname": device.get("hostname"),
+                "ipAddress": device.get("ipAddress"),
+                "cascadeMode": cascade.get("mode"),
+                "relatedDeleted": cascade.get("relatedDeleted"),
+                "cascadeErrors": cascade.get("errors") or [],
             },
         )
 

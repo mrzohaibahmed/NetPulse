@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from utils.monitor_logger import get_monitor_logger
+from utils.secret_crypto import decrypt_secret
 
 logger = get_monitor_logger("interface")
 
@@ -151,8 +152,15 @@ def resolve_ssh_credentials(device: dict) -> SSHCredentials:
     username = (
         (creds.get("sshUsername") or os.getenv("SSH_DEFAULT_USERNAME") or "")
     ).strip()
-    password = creds.get("sshPassword") or os.getenv("SSH_DEFAULT_PASSWORD") or ""
-    secret = creds.get("sshSecret") or os.getenv("SSH_DEFAULT_SECRET") or ""
+    password = decrypt_secret(
+        creds.get("sshPassword")
+    ) if creds.get("sshPassword") else ""
+    if not password:
+        password = os.getenv("SSH_DEFAULT_PASSWORD") or ""
+    secret_raw = creds.get("sshSecret")
+    secret = decrypt_secret(secret_raw) if secret_raw else ""
+    if not secret:
+        secret = os.getenv("SSH_DEFAULT_SECRET") or ""
 
     try:
         port = int(creds.get("sshPort") or os.getenv("SSH_DEFAULT_PORT") or 22)

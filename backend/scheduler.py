@@ -1,6 +1,7 @@
 import atexit
 
 from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
 
 from config.database import (
     INTERFACE_SCAN_INTERVAL,
@@ -24,6 +25,7 @@ NMAP_JOB_ID = "nmap_scan_job"
 INTERFACE_JOB_ID = "interface_discovery_job"
 INTERFACE_STATS_JOB_ID = "interface_stats_job"
 RECOVERY_JOB_ID = "storm_recovery_job"
+RETENTION_JOB_ID = "data_retention_job"
 
 
 def _run_interface_stats_then_eligibility() -> None:
@@ -268,6 +270,36 @@ def _run_recovery_cycle() -> None:
         logger.error("Periodic recovery cycle execution failed: %s", exc)
 
 
+def _run_retention_cycle() -> None:
+    """Daily: refresh TTL indexes from settings + purge closed storm incidents."""
+    try:
+        from services.retention_service import (  # noqa: PLC0415
+            ensure_retention_ttl_indexes,
+            purge_closed_storm_incidents,
+        )
+
+        ensure_retention_ttl_indexes()
+        purge_closed_storm_incidents()
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Data retention cycle failed: %s", exc)
+
+
+def _start_retention_job() -> None:
+    """Register low-frequency retention job (daily; not on the stats/storm interval)."""
+    try:
+        scheduler.add_job(
+            func=_run_retention_cycle,
+            trigger=CronTrigger(hour=3, minute=15),
+            id=RETENTION_JOB_ID,
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        logger.info("Data retention job registered | cron=03:15 daily")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Data retention job could not be registered: %s", exc)
+
+
 # ---------------------------------------------------------------------------
 # Public functions (unchanged signatures for existing callers)
 # ---------------------------------------------------------------------------
@@ -304,6 +336,9 @@ def start_scheduler():
 
     # Job 5: Storm Recovery periodic auto-recovery checks (30s interval).
     _start_recovery_job()
+
+    # Job 6: Data retention (TTL refresh + closed-incident purge) — daily.
+    _start_retention_job()
 
 
 def reschedule_monitor_job(interval_seconds: int):
