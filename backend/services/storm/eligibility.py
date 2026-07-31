@@ -76,6 +76,8 @@ def _build_rules() -> tuple[_Rule, ...]:
             code="RULE_1",
             check_key="monitoring",
             reason="Monitoring Disabled",
+            # Preference only (AUTO vs DISABLED_BY_USER). Admin/oper down
+            # remain RULE_2 / RULE_3 so temporary shutdowns never latch.
             predicate=lambda iface, _cfg: iface.monitoring_enabled,
         ),
         _Rule(

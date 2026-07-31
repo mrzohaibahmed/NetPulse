@@ -95,12 +95,22 @@ def serialize_credentials(credentials: dict | None) -> dict | None:
 
 def serialize_interface(interface: dict) -> dict:
     """Serialise a document from the ``interfaces`` collection."""
+    from services.interface_collection.monitoring_state import (  # noqa: PLC0415
+        compute_monitoring_view,
+    )
+
     port_mode = (
         interface.get("portMode")
         or interface.get("mode")
         or "unknown"
     )
     neighbor = _serialize_neighbor(interface.get("neighbor"))
+    monitoring = compute_monitoring_view(
+        monitoring_mode=interface.get("monitoringMode"),
+        monitoring_enabled=interface.get("monitoringEnabled"),
+        admin_status=interface.get("adminStatus"),
+        oper_status=interface.get("operStatus"),
+    )
 
     return {
         "_id": str(interface["_id"]),
@@ -119,7 +129,12 @@ def serialize_interface(interface: dict) -> dict:
         "isInfrastructure": bool(interface.get("isInfrastructure", False)),
         "isManagement": bool(interface.get("isManagement", False)),
         "isProtected": bool(interface.get("isProtected", False)),
-        "monitoringEnabled": bool(interface.get("monitoringEnabled", True)),
+        # Preference mirror (AUTO ⇒ true). Additive effective fields below.
+        "monitoringEnabled": monitoring["monitoringEnabled"],
+        "monitoringMode": monitoring["monitoringMode"],
+        "administratorDisabled": monitoring["administratorDisabled"],
+        "effectiveMonitoring": monitoring["effectiveMonitoring"],
+        "monitoringReason": monitoring["monitoringReason"],
         "accessVlan": interface.get("accessVlan"),
         "voiceVlan": interface.get("voiceVlan"),
         "nativeVlan": interface.get("nativeVlan"),
@@ -226,6 +241,16 @@ def serialize_eligibility_result(result: dict, interface: dict | None = None) ->
     }
 
     if interface is not None:
+        from services.interface_collection.monitoring_state import (  # noqa: PLC0415
+            compute_monitoring_view,
+        )
+
+        monitoring = compute_monitoring_view(
+            monitoring_mode=interface.get("monitoringMode"),
+            monitoring_enabled=interface.get("monitoringEnabled"),
+            admin_status=interface.get("adminStatus"),
+            oper_status=interface.get("operStatus"),
+        )
         payload.update({
             "adminStatus": interface.get("adminStatus") or "unknown",
             "operStatus": interface.get("operStatus") or "unknown",
@@ -236,7 +261,11 @@ def serialize_eligibility_result(result: dict, interface: dict | None = None) ->
             "isInfrastructure": bool(interface.get("isInfrastructure", False)),
             "isManagement": bool(interface.get("isManagement", False)),
             "isProtected": bool(interface.get("isProtected", False)),
-            "monitoringEnabled": bool(interface.get("monitoringEnabled", True)),
+            "monitoringEnabled": monitoring["monitoringEnabled"],
+            "monitoringMode": monitoring["monitoringMode"],
+            "administratorDisabled": monitoring["administratorDisabled"],
+            "effectiveMonitoring": monitoring["effectiveMonitoring"],
+            "monitoringReason": monitoring["monitoringReason"],
         })
 
     return payload

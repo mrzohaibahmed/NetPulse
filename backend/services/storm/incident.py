@@ -255,6 +255,79 @@ def create_incident_from_diagnostics(
     return document
 
 
+def create_manual_incident(
+    *,
+    device_id,
+    interface: str,
+    hostname: str | None = None,
+    ip_address: str | None = None,
+    requested_by: str | None = None,
+    action: str = "MANUAL_SHUTDOWN",
+    reason: str | None = None,
+    persist: bool = True,
+    force_new: bool = True,
+) -> dict[str, Any]:
+    """
+    Create an OPEN incident for explicit operator-driven manual controls.
+
+    This bypasses diagnostics/risk/confirmation/safety payload generation and
+    records only the minimum incident metadata needed by mitigation/recovery
+    engines plus timeline/audit context.
+    """
+    name = str(interface or "").strip()
+    if not device_id or not name:
+        raise ValueError("deviceId and interface are required")
+
+    now = datetime.now(timezone.utc)
+    incident_id = next_incident_id(now) if persist else f"storm-test-{int(now.timestamp())}"
+
+    document: dict[str, Any] = {
+        "incidentId": incident_id,
+        "deviceId": _oid(device_id) if persist else device_id,
+        "interface": name,
+        "hostname": hostname,
+        "ipAddress": ip_address,
+        "incidentType": "MANUAL",
+        "requestedBy": requested_by,
+        "requestedAt": now,
+        "reason": reason,
+        "action": action,
+        "status": "OPEN",
+        "severity": "MEDIUM",
+        "trigger": {"type": "MANUAL"},
+        "interfaceSnapshot": {},
+        "switchportSnapshot": {},
+        "macTable": {},
+        "statistics": {},
+        "neighbor": None,
+        "deviceHealth": {},
+        "eligibility": None,
+        "risk": {},
+        "confirmation": {},
+        "safety": {},
+        "diagnosticsMeta": {"source": "manual-control"},
+        "timeline": [
+            _timeline_event("Manual Action Requested", now, detail=f"{action} by {requested_by or 'SYSTEM'}"),
+            _timeline_event("Incident Created", now, detail="manual control path"),
+        ],
+        "createdAt": now,
+        "updatedAt": now,
+    }
+
+    if not persist:
+        logger.info("Manual Incident Created (in-memory) | %s | %s", incident_id, name)
+        return document
+
+    if not force_new:
+        existing = find_open_incident(device_id, name)
+        if existing:
+            return existing
+
+    _db()[COLLECTION].insert_one(document)
+    logger.info("Manual Incident Created | %s | %s", incident_id, name)
+    return document
+
+
 def append_timeline_event(
     incident_id: str,
     event: str,

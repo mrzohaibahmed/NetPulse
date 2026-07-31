@@ -8,18 +8,17 @@ Routes
 GET  /api/interfaces
 GET  /api/interfaces/<device_id>
 GET  /api/interfaces/<device_id>/stats
+POST /api/interfaces/<device_id>/<interface>/monitoring
+POST /api/interfaces/<device_id>/<interface>/manual-shutdown
+POST /api/interfaces/<device_id>/<interface>/manual-recover
 GET  /api/interfaces/<device_id>/<interface>/history
-POST /api/interfaces/discover/<device_id>
-POST /api/interfaces/discover-all
-POST /api/interfaces/<device_id>/stats/collect
-POST /api/interfaces/stats/collect-all
 """
 
 from datetime import datetime, timezone
 from urllib.parse import unquote
 
 from bson import ObjectId
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, g, jsonify, request
 
 from config.database import db
 from services.interface_collection.collector import (
@@ -27,12 +26,22 @@ from services.interface_collection.collector import (
     discover_device_interfaces,
     get_interfaces,
 )
+from services.interface_collection.monitoring_state import (
+    MONITORING_MODE_AUTO,
+    MONITORING_MODE_DISABLED_BY_USER,
+    normalize_monitoring_mode,
+    set_interface_monitoring_mode,
+)
 from services.interface_collection.stats_collector import (
     collect_all_interface_stats,
     collect_device_interface_stats,
     get_interface_stats_history,
     get_latest_device_stats,
 )
+from services.audit_service import log_audit
+from services.storm.incident import create_manual_incident, get_incident
+from services.storm.mitigation import execute_mitigation
+from services.storm.recovery import execute_recovery
 from utils.auth import require_auth
 from utils.pagination import clamp_page, pagination_payload, parse_pagination
 from utils.serializers import serialize_interface, serialize_interface_stat
@@ -62,6 +71,40 @@ def _parse_iso_date(value, end_of_day=False):
         return datetime.fromisoformat(text.replace("Z", "+00:00"))
     except ValueError as error:
         raise ValueError(f"Invalid date: {value}") from error
+
+
+def _bool_flag(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in ("1", "true", "yes")
+    return False
+
+
+def _manual_action_response(
+    *,
+    success: bool,
+    action: str,
+    device_id: str,
+    interface: str,
+    incident_id: str | None,
+    incident_status: str | None,
+    message: str,
+    extra: dict | None = None,
+):
+    payload = {
+        "success": success,
+        "action": action,
+        "deviceId": device_id,
+        "interface": interface,
+        "incidentId": incident_id,
+        "incidentStatus": incident_status,
+        "status": incident_status,
+        "message": message,
+    }
+    if extra:
+        payload.update(extra)
+    return payload
 
 
 @interface_bp.route("/interfaces", methods=["GET"])
@@ -313,6 +356,309 @@ def collect_device_stats(device_id: str):
         return jsonify({
             "success": False,
             "message": "Failed to collect interface statistics",
+            "error": str(error),
+        }), 500
+
+
+@interface_bp.route(
+    "/interfaces/<device_id>/<path:interface_name>/monitoring",
+    methods=["POST"],
+)
+@require_auth(roles=["operator"])
+def set_interface_monitoring(device_id: str, interface_name: str):
+    """
+    Set administrator monitoring intent for one interface.
+
+    Body (either form accepted)::
+
+        { "monitoringMode": "AUTO" | "DISABLED_BY_USER" }
+        { "enabled": true | false }
+    """
+    try:
+        body = request.get_json(silent=True) or {}
+        if not ObjectId.is_valid(device_id):
+            return jsonify({
+                "success": False,
+                "message": "Invalid device ID",
+            }), 400
+
+        name = unquote(interface_name).strip()
+        if not name:
+            return jsonify({
+                "success": False,
+                "message": "Interface name is required",
+            }), 400
+
+        mode = normalize_monitoring_mode(body.get("monitoringMode"))
+        if mode is None and "enabled" in body:
+            mode = (
+                MONITORING_MODE_AUTO
+                if _bool_flag(body.get("enabled"))
+                else MONITORING_MODE_DISABLED_BY_USER
+            )
+        if mode is None:
+            return jsonify({
+                "success": False,
+                "message": (
+                    "monitoringMode must be AUTO or DISABLED_BY_USER "
+                    "(or pass enabled=true/false)"
+                ),
+            }), 400
+
+        updated = set_interface_monitoring_mode(device_id, name, mode)
+        if not updated:
+            return jsonify({
+                "success": False,
+                "message": "Interface not found",
+            }), 404
+
+        username = (getattr(g, "user", {}) or {}).get("username") or "SYSTEM"
+        log_audit(
+            action="interface_monitoring_update",
+            entity_type="interface",
+            entity_id=f"{device_id}:{name}",
+            details={
+                "deviceId": device_id,
+                "interface": name,
+                "monitoringMode": mode,
+                "monitoringEnabled": updated.get("monitoringEnabled"),
+                "requestedBy": username,
+            },
+        )
+
+        return jsonify({
+            "success": True,
+            "message": "Interface monitoring preference updated",
+            "data": serialize_interface(updated),
+        }), 200
+
+    except ValueError as error:
+        return jsonify({
+            "success": False,
+            "message": str(error),
+        }), 400
+    except Exception as error:
+        return jsonify({
+            "success": False,
+            "message": "Failed to update interface monitoring",
+            "error": str(error),
+        }), 500
+
+
+@interface_bp.route(
+    "/interfaces/<device_id>/<path:interface_name>/manual-shutdown",
+    methods=["POST"],
+)
+@require_auth(roles=["operator"])
+def manual_shutdown_interface(device_id: str, interface_name: str):
+    """Create a MANUAL incident and execute shutdown without storm pipeline gates."""
+    try:
+        body = request.get_json(silent=True) or {}
+        if not _bool_flag(body.get("confirm")):
+            return jsonify({
+                "success": False,
+                "message": "confirm=true is required for manual shutdown",
+            }), 400
+
+        if not ObjectId.is_valid(device_id):
+            return jsonify({
+                "success": False,
+                "message": "Invalid device ID",
+            }), 400
+
+        oid = ObjectId(device_id)
+        device = db.devices.find_one({"_id": oid})
+        if not device:
+            return jsonify({
+                "success": False,
+                "message": "Device not found",
+            }), 404
+
+        name = unquote(interface_name).strip()
+        if not name:
+            return jsonify({
+                "success": False,
+                "message": "Interface name is required",
+            }), 400
+
+        username = (getattr(g, "user", {}) or {}).get("username") or "SYSTEM"
+        role = (getattr(g, "user", {}) or {}).get("role") or "viewer"
+        reason = (body.get("reason") or "").strip() or None
+
+        incident = create_manual_incident(
+            device_id=oid,
+            interface=name,
+            hostname=device.get("hostname"),
+            ip_address=device.get("ipAddress"),
+            requested_by=username,
+            action="MANUAL_SHUTDOWN",
+            reason=reason,
+            persist=True,
+            force_new=True,
+        )
+
+        res = execute_mitigation(
+            str(incident["incidentId"]),
+            "SHUTDOWN",
+            operator=username,
+            audit_context={"reason": reason},
+        )
+
+        log_audit(
+            action="manual_shutdown",
+            entity_type="incident",
+            entity_id=incident.get("incidentId"),
+            details={
+                "deviceId": device_id,
+                "interface": name,
+                "role": role,
+                "incidentId": incident.get("incidentId"),
+                "reason": reason,
+            },
+        )
+
+        status_code = 200 if res.get("success") else 400
+        return jsonify(_manual_action_response(
+            success=bool(res.get("success")),
+            action="manual_shutdown",
+            device_id=device_id,
+            interface=name,
+            incident_id=incident.get("incidentId"),
+            incident_status=res.get("status"),
+            message=(
+                "Manual shutdown executed successfully"
+                if res.get("success")
+                else (res.get("error") or "Manual shutdown failed")
+            ),
+            extra={
+                "incidentType": incident.get("incidentType"),
+                "commandsExecuted": res.get("commandsExecuted") or [],
+            },
+        )), status_code
+
+    except Exception as error:
+        return jsonify({
+            "success": False,
+            "message": "Failed to execute manual shutdown",
+            "error": str(error),
+        }), 500
+
+
+@interface_bp.route(
+    "/interfaces/<device_id>/<path:interface_name>/manual-recover",
+    methods=["POST"],
+)
+@require_auth(roles=["operator"])
+def manual_recover_interface(device_id: str, interface_name: str):
+    """Execute recovery for a currently mitigated incident on one interface."""
+    try:
+        body = request.get_json(silent=True) or {}
+        if not _bool_flag(body.get("confirm")):
+            return jsonify({
+                "success": False,
+                "message": "confirm=true is required for manual recovery",
+            }), 400
+
+        if not ObjectId.is_valid(device_id):
+            return jsonify({
+                "success": False,
+                "message": "Invalid device ID",
+            }), 400
+
+        oid = ObjectId(device_id)
+        device = db.devices.find_one({"_id": oid})
+        if not device:
+            return jsonify({
+                "success": False,
+                "message": "Device not found",
+            }), 404
+
+        name = unquote(interface_name).strip()
+        if not name:
+            return jsonify({
+                "success": False,
+                "message": "Interface name is required",
+            }), 400
+
+        incident_id = (body.get("incidentId") or body.get("incident_id") or "").strip()
+        incident = None
+        if incident_id:
+            incident = get_incident(incident_id)
+            if not incident:
+                return jsonify({
+                    "success": False,
+                    "message": "Incident not found",
+                }), 404
+        else:
+            incident = db.storm_incidents.find_one(
+                {"deviceId": oid, "interface": name},
+                sort=[("createdAt", -1)],
+            )
+            if not incident:
+                return jsonify({
+                    "success": False,
+                    "message": "No incident found for this interface",
+                }), 404
+
+        if incident.get("deviceId") != oid or str(incident.get("interface") or "").strip() != name:
+            return jsonify({
+                "success": False,
+                "message": "Incident does not match the requested device/interface",
+            }), 400
+
+        if incident.get("status") != "MITIGATED":
+            return jsonify(_manual_action_response(
+                success=False,
+                action="manual_recover",
+                device_id=device_id,
+                interface=name,
+                incident_id=incident.get("incidentId"),
+                incident_status=incident.get("status"),
+                message="Manual recovery is only allowed for incidents in MITIGATED status",
+                extra={"allowedIncidentStatuses": ["MITIGATED"]},
+            )), 400
+
+        username = (getattr(g, "user", {}) or {}).get("username") or "SYSTEM"
+        role = (getattr(g, "user", {}) or {}).get("role") or "viewer"
+
+        res = execute_recovery(
+            str(incident["incidentId"]),
+            force=False,
+            operator=username,
+        )
+
+        log_audit(
+            action="manual_recover",
+            entity_type="incident",
+            entity_id=incident.get("incidentId"),
+            details={
+                "deviceId": device_id,
+                "interface": name,
+                "role": role,
+                "incidentId": incident.get("incidentId"),
+            },
+        )
+
+        status_code = 200 if res.get("success") else 400
+        return jsonify(_manual_action_response(
+            success=bool(res.get("success")),
+            action="manual_recover",
+            device_id=device_id,
+            interface=name,
+            incident_id=incident.get("incidentId"),
+            incident_status=res.get("status"),
+            message=(
+                "Manual recovery executed successfully"
+                if res.get("success")
+                else (res.get("error") or "Manual recovery failed")
+            ),
+            extra={"retryCount": res.get("retryCount")},
+        )), status_code
+
+    except Exception as error:
+        return jsonify({
+            "success": False,
+            "message": "Failed to execute manual recovery",
             "error": str(error),
         }), 500
 

@@ -50,6 +50,9 @@ import {
   getUptimeReport,
   getUsers,
   importDevicesCsv,
+  manualRecoverInterface,
+  manualShutdownInterface,
+  setInterfaceMonitoring,
   scanDevice,
   scanDeviceNmap,
   updateDevice,
@@ -275,6 +278,9 @@ export function useInterfaceMutations() {
       qc.invalidateQueries({ queryKey: ['device-interfaces'] }),
       qc.invalidateQueries({ queryKey: ['interface-stats'] }),
       qc.invalidateQueries({ queryKey: ['interface-history'] }),
+      qc.invalidateQueries({ queryKey: ['storm-incidents'] }),
+      qc.invalidateQueries({ queryKey: ['mitigation-history'] }),
+      qc.invalidateQueries({ queryKey: ['recovery-history'] }),
     ])
 
   const discoverAll = useMutation({
@@ -339,7 +345,56 @@ export function useInterfaceMutations() {
     onError: (err: Error) => toast.error(err.message),
   })
 
-  return { discoverAll, discoverDevice, collectAll, collectDevice }
+  const manualShutdown = useMutation({
+    mutationFn: (payload: {
+      deviceId: string
+      interfaceName: string
+      confirm: boolean
+      reason?: string
+    }) => manualShutdownInterface(payload),
+    onSuccess: async (res) => {
+      toast.success(res.message || 'Manual shutdown complete')
+      await invalidate()
+    },
+    onError: (err: Error) => toast.error(err.message),
+  })
+
+  const manualRecover = useMutation({
+    mutationFn: (payload: {
+      deviceId: string
+      interfaceName: string
+      confirm: boolean
+      incidentId?: string
+    }) => manualRecoverInterface(payload),
+    onSuccess: async (res) => {
+      toast.success(res.message || 'Manual recovery complete')
+      await invalidate()
+    },
+    onError: (err: Error) => toast.error(err.message),
+  })
+
+  const setMonitoring = useMutation({
+    mutationFn: (payload: {
+      deviceId: string
+      interfaceName: string
+      enabled: boolean
+    }) => setInterfaceMonitoring(payload),
+    onSuccess: async (res) => {
+      toast.success(res.message || 'Monitoring preference updated')
+      await invalidate()
+    },
+    onError: (err: Error) => toast.error(err.message),
+  })
+
+  return {
+    discoverAll,
+    discoverDevice,
+    collectAll,
+    collectDevice,
+    manualShutdown,
+    manualRecover,
+    setMonitoring,
+  }
 }
 
 export function useEligibilityQuery(params: PaginationParams) {

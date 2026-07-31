@@ -32,6 +32,9 @@ from services.user_service import ensure_default_admin
 from services.storm.lock_service import LockService
 from utils.secret_crypto import ensure_secrets_encryption_configured
 from services.retention_service import ensure_retention_ttl_indexes
+from services.interface_collection.monitoring_state import (
+    migrate_interface_monitoring_state,
+)
 
 # Serve built frontend (Vite) if present.
 BASE_DIR = Path(__file__).resolve().parent
@@ -131,6 +134,8 @@ def bootstrap():
     ensure_mitigation_indexes()
     ensure_recovery_indexes()
     ensure_retention_ttl_indexes()
+    # Repair sticky monitoringEnabled=false latch (idempotent).
+    migrate_interface_monitoring_state(apply=True)
 
 
 bootstrap()

@@ -27,6 +27,7 @@ def create_interface(
     is_management=False,
     is_protected=False,
     monitoring_enabled=True,
+    monitoring_mode=None,
     access_vlan=None,
     voice_vlan=None,
     native_vlan=None,
@@ -44,8 +45,27 @@ def create_interface(
     """
     Build a normalised interface document for MongoDB (camelCase API schema).
     """
+    from services.interface_collection.monitoring_state import (  # noqa: PLC0415
+        MONITORING_MODE_AUTO,
+        MONITORING_MODE_DISABLED_BY_USER,
+        normalize_monitoring_mode,
+        preference_enabled_for_mode,
+    )
+
     now = datetime.now(timezone.utc)
     resolved_mode = (port_mode or mode or "unknown").lower()
+
+    # Prefer explicit monitoring_mode; otherwise derive from preference mirror.
+    resolved_monitoring_mode = normalize_monitoring_mode(monitoring_mode)
+    if resolved_monitoring_mode is None:
+        if monitoring_enabled is False:
+            # Callers that pass monitoring_enabled=False without a mode mean
+            # administrator opt-out (API / tests). Inventory rediscovery uses
+            # monitoringMode explicitly and never relies on this path for latch.
+            resolved_monitoring_mode = MONITORING_MODE_DISABLED_BY_USER
+        else:
+            resolved_monitoring_mode = MONITORING_MODE_AUTO
+    preference = preference_enabled_for_mode(resolved_monitoring_mode)
 
     return {
         "deviceId": device_id,
@@ -64,7 +84,8 @@ def create_interface(
         "isInfrastructure": bool(is_infrastructure),
         "isManagement": bool(is_management),
         "isProtected": bool(is_protected),
-        "monitoringEnabled": bool(monitoring_enabled),
+        "monitoringMode": resolved_monitoring_mode,
+        "monitoringEnabled": preference,
         "accessVlan": access_vlan,
         "voiceVlan": voice_vlan,
         "nativeVlan": native_vlan,
