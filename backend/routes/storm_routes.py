@@ -44,7 +44,7 @@ from typing import Any
 from urllib.parse import unquote
 
 from bson import ObjectId
-from flask import Blueprint, jsonify, request, g
+from flask import Blueprint, current_app, jsonify, request, g
 
 from config.database import db
 from services.storm.confirmation import (
@@ -1046,6 +1046,7 @@ def list_storm_incidents():
             **pagination_payload(total, page, limit, total_pages),
         }), 200
     except Exception as error:  # noqa: BLE001
+        current_app.logger.exception("Failed to list storm incidents")
         return jsonify({
             "success": False,
             "message": "Failed to list storm incidents",

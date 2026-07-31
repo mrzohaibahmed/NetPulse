@@ -276,11 +276,15 @@ def persist_interfaces(
         )
 
         # Preserve original createdAt on updates
-        update_fields = {k: v for k, v in document.items() if k != "createdAt"}
+        update_fields = {
+            k: v
+            for k, v in document.items()
+            if k != "createdAt"
+        }
         update_fields["lastUpdated"] = now
         update_fields["updatedAt"] = now
 
-        # Upsert by exact name; also collapse alias duplicates below
+        # Upsert by exact name; also collapse alias duplicates below.
         result = db.interfaces.update_one(
             {"deviceId": device_id, "name": name},
             {

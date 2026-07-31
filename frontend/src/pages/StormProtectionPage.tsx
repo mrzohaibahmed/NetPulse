@@ -309,6 +309,13 @@ function RecoveryStatusBadge({ status }: { status: string }) {
       </Badge>
     )
   }
+  if (value === 'BLOCKED') {
+    return (
+      <Badge variant="warning" className="font-semibold uppercase tracking-wide">
+        Blocked
+      </Badge>
+    )
+  }
   if (value === 'REMITIGATED') {
     return (
       <Badge variant="danger" className="font-semibold uppercase tracking-wide">
@@ -320,6 +327,63 @@ function RecoveryStatusBadge({ status }: { status: string }) {
     <Badge variant="danger" className="font-semibold uppercase tracking-wide">
       {status}
     </Badge>
+  )
+}
+
+/** Human labels for Recovery Safety Engine check keys (R1–R8). */
+const RECOVERY_CHECK_LABELS: Record<string, string> = {
+  stormCleared: 'Storm Cleared',
+  riskBelowThreshold: 'Risk Below Threshold',
+  cooldownExpired: 'Cooldown Complete',
+  deviceReachable: 'Device Reachable',
+  sshReachable: 'SSH Reachable',
+  interfaceAdminDown: 'Interface Admin Down',
+  noNewerActiveIncident: 'No Newer Active Incident',
+  recoveryLockAvailable: 'Recovery Lock Available',
+}
+
+function RecoveryChecksList({
+  checks,
+  failedRule,
+}: {
+  checks?: Record<string, boolean | null> | null
+  failedRule?: string | null
+}) {
+  const entries = Object.entries(checks || {})
+  if (entries.length === 0) {
+    return (
+      <p className="text-xs text-muted-foreground italic">No recovery safety checks recorded.</p>
+    )
+  }
+  return (
+    <div className="space-y-1.5">
+      {failedRule ? (
+        <p className="text-xs text-muted-foreground">
+          Failed rule: <span className="font-semibold text-destructive">{failedRule}</span>
+        </p>
+      ) : null}
+      {entries.map(([key, value]) => {
+        const label = RECOVERY_CHECK_LABELS[key] || key
+        const pending = value === null || value === undefined
+        const ok = value === true
+        return (
+          <div
+            key={key}
+            className="flex items-center justify-between rounded-md border border-border/50 px-2.5 py-1 text-sm"
+          >
+            <span className="text-muted-foreground">
+              {pending ? '–' : ok ? '✔' : '✖'} {label}
+            </span>
+            <Badge
+              variant={pending ? 'secondary' : ok ? 'success' : 'danger'}
+              className="capitalize"
+            >
+              {pending ? 'skipped' : ok ? 'pass' : 'fail'}
+            </Badge>
+          </div>
+        )
+      })}
+    </div>
   )
 }
 
@@ -1247,7 +1311,7 @@ export function StormProtectionPage() {
       {/* ── Safety ─────────────────────────────────────────────────── */}
       <section className="space-y-4">
         <div>
-          <h2 className="text-lg font-semibold tracking-tight">Safety</h2>
+          <h2 className="text-lg font-semibold tracking-tight">Mitigation Safety</h2>
           <p className="text-sm text-muted-foreground">
             Final pre-mitigation gate for confirmed storms. Validates device,
             SSH, automation, locks, cooldown, and health — never executes mitigation.
@@ -2104,6 +2168,7 @@ export function StormProtectionPage() {
           <h2 className="text-lg font-semibold tracking-tight">Enterprise Recovery Engine</h2>
           <p className="text-sm text-muted-foreground">
             Automatic recovery and traffic stabilization checking for mitigated interfaces.
+            Recovery uses a dedicated Recovery Safety Engine (not Mitigation Safety).
           </p>
         </div>
 
@@ -2182,7 +2247,7 @@ export function StormProtectionPage() {
           <EmptyState
             icon={Activity}
             title="No recovery logs found"
-            description="Ports in MITIGATED status will automatically trigger recovery attempts when their cooldown and safety policies pass."
+            description="Ports in MITIGATED status trigger recovery when Recovery Safety (R1–R8) passes — cooldown, storm cleared, risk low, device/SSH reachable, interface still admin-down."
           />
         ) : (
           <div className="grid gap-4 xl:grid-cols-[minmax(0,1.55fr)_minmax(320px,1fr)]">
@@ -2257,8 +2322,42 @@ export function StormProtectionPage() {
                         <p>Interface: <span className="font-semibold text-primary">{selectedRecovery.interface}</span></p>
                         <p>Attempts Run: <span className="font-semibold">{selectedRecovery.retryCount}</span></p>
                         <p>Status: <RecoveryStatusBadge status={selectedRecovery.recoveryStatus} /></p>
+                        {(selectedRecovery.engine ||
+                          selectedRecovery.verificationResult?.engine) && (
+                          <p>
+                            Engine:{' '}
+                            <span className="font-semibold">
+                              {selectedRecovery.engine ||
+                                selectedRecovery.verificationResult?.engine}
+                            </span>
+                          </p>
+                        )}
                       </div>
                     </div>
+
+                    {(selectedRecovery.checks &&
+                      Object.keys(selectedRecovery.checks).length > 0) ||
+                    (selectedRecovery.verificationResult?.checks &&
+                      Object.keys(selectedRecovery.verificationResult.checks).length >
+                        0) ? (
+                      <div className="space-y-1.5">
+                        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                          Recovery Safety Checks
+                        </p>
+                        <RecoveryChecksList
+                          checks={
+                            selectedRecovery.checks &&
+                            Object.keys(selectedRecovery.checks).length > 0
+                              ? selectedRecovery.checks
+                              : selectedRecovery.verificationResult?.checks
+                          }
+                          failedRule={
+                            selectedRecovery.failedRule ||
+                            selectedRecovery.verificationResult?.failedRule
+                          }
+                        />
+                      </div>
+                    ) : null}
 
                     <div className="space-y-1">
                       <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">

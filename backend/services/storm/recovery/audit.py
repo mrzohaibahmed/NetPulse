@@ -125,13 +125,18 @@ def get_recovery_history(
 
 def serialize_recovery_log(doc: dict[str, Any]) -> dict[str, Any]:
     """HTTP response serialization for recovery history."""
+    verification = doc.get("verificationResult") or {}
     return {
         "_id": str(doc["_id"]) if doc.get("_id") is not None else None,
         "incidentId": doc.get("incidentId"),
         "deviceId": str(doc["deviceId"]) if doc.get("deviceId") is not None else None,
         "interface": doc.get("interface"),
         "recoveryStatus": doc.get("recoveryStatus"),
-        "verificationResult": doc.get("verificationResult") or {},
+        "verificationResult": verification,
         "retryCount": int(doc.get("retryCount", 0)),
         "timestamp": format_datetime(doc.get("timestamp")),
+        # Recovery Safety Engine fields (when status is BLOCKED)
+        "failedRule": verification.get("failedRule"),
+        "checks": verification.get("checks") or {},
+        "engine": verification.get("engine"),
     }
