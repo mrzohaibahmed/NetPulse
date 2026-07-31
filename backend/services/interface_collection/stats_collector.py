@@ -48,6 +48,10 @@ from services.interface_collection.snmp import (
 )
 from services.interface_collection.ssh_collector import SSHCollectorError
 from services.interface_collection.ssh_stats import collect_ssh_interface_stats
+from services.interface_collection.utilization import (
+    compute_utilization,
+    resolve_speed_bps,
+)
 from utils.monitor_logger import get_monitor_logger
 
 logger = get_monitor_logger("interface.stats")
@@ -116,6 +120,7 @@ def collect_device_interface_stats(device: dict) -> dict:
             }
 
         previous = _load_previous_stats(device_id)
+        inventory_speeds = _load_inventory_speeds(device_id)
         now = datetime.now(timezone.utc)
         documents = []
 
@@ -127,10 +132,17 @@ def collect_device_interface_stats(device: dict) -> dict:
             canon = canonicalize_interface_name(name)
 
             previous_doc = previous.get(canon) or previous.get(name) or previous.get(raw_name)
+            speed_bps = resolve_speed_bps(
+                raw.get("speed_bps"),
+                inventory_speeds.get(canon),
+                inventory_speeds.get(name),
+                (previous_doc or {}).get("speedBps"),
+            )
             util = _compute_utilization(
                 current=raw,
                 previous=previous_doc,
                 now=now,
+                speed_bps=speed_bps,
             )
 
             documents.append(
@@ -157,7 +169,7 @@ def collect_device_interface_stats(device: dict) -> dict:
                     utilization=util.get("utilization"),
                     rx_utilization=util.get("rx_utilization"),
                     tx_utilization=util.get("tx_utilization"),
-                    speed_bps=raw.get("speed_bps"),
+                    speed_bps=speed_bps,
                     if_index=raw.get("if_index"),
                     collection_method=method or "snmp",
                     timestamp=now,
@@ -436,10 +448,40 @@ def _load_previous_stats(device_id: ObjectId) -> dict[str, dict]:
     return previous
 
 
+def _load_inventory_speeds(device_id: ObjectId) -> dict[str, int]:
+    """
+    Map interface name → speed_bps from the interfaces inventory.
+
+    Used when SNMP/SSH stats cannot determine negotiated speed (e.g. Speed=auto
+    on ``show interfaces status``).
+    """
+    speeds: dict[str, int] = {}
+    try:
+        cursor = db.interfaces.find(
+            {"deviceId": device_id},
+            {"name": 1, "speedMbps": 1, "speed": 1},
+        )
+        for doc in cursor:
+            name = doc.get("name")
+            if not name:
+                continue
+            bps = resolve_speed_bps(doc.get("speedMbps"), doc.get("speed"))
+            if not bps:
+                continue
+            speeds[canonicalize_interface_name(name)] = bps
+            speeds[name] = bps
+            speeds[normalize_storage_interface_name(name)] = bps
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("[IFACE-STATS] Inventory speed lookup failed: %s", exc)
+    return speeds
+
+
 def _compute_utilization(
     current: dict,
     previous: dict | None,
     now: datetime,
+    *,
+    speed_bps: int | None = None,
 ) -> dict[str, float | None]:
     """
     Compute RX/TX/overall utilization percentages from counter deltas.
@@ -454,55 +496,39 @@ def _compute_utilization(
     if not previous:
         return empty
 
-    speed_bps = current.get("speed_bps") or previous.get("speedBps")
-    if not speed_bps or speed_bps <= 0:
-        return empty
-
-    prev_ts = previous.get("timestamp")
-    if not prev_ts:
-        return empty
-    if getattr(prev_ts, "tzinfo", None) is None:
-        prev_ts = prev_ts.replace(tzinfo=timezone.utc)
-
-    interval = (now - prev_ts).total_seconds()
-    if interval <= 0:
-        return empty
-
-    rx_delta = _counter_delta(
-        current.get("rx_bytes", 0),
-        previous.get("rxBytes", 0),
+    resolved_speed = resolve_speed_bps(
+        speed_bps,
+        current.get("speed_bps"),
+        previous.get("speedBps"),
     )
-    tx_delta = _counter_delta(
-        current.get("tx_bytes", 0),
-        previous.get("txBytes", 0),
+    if not resolved_speed:
+        return empty
+
+    result = compute_utilization(
+        current_rx_bytes=current.get("rx_bytes", 0),
+        current_tx_bytes=current.get("tx_bytes", 0),
+        previous_rx_bytes=previous.get("rxBytes", 0),
+        previous_tx_bytes=previous.get("txBytes", 0),
+        speed_bps=resolved_speed,
+        current_timestamp=now,
+        previous_timestamp=previous.get("timestamp"),
     )
-
-    rx_bps = (rx_delta * 8) / interval
-    tx_bps = (tx_delta * 8) / interval
-
-    rx_util = round(min(max((rx_bps / speed_bps) * 100.0, 0.0), 100.0), 4)
-    tx_util = round(min(max((tx_bps / speed_bps) * 100.0, 0.0), 100.0), 4)
-    overall = round(max(rx_util, tx_util), 4)
+    if result.get("utilization") is None:
+        return empty
 
     return {
-        "utilization": overall,
-        "rx_utilization": rx_util,
-        "tx_utilization": tx_util,
+        "utilization": result["utilization"],
+        "rx_utilization": result["rx_utilization"],
+        "tx_utilization": result["tx_utilization"],
     }
 
 
 def _counter_delta(current: int, previous: int) -> int:
-    """Handle 32/64-bit counter wrap."""
-    try:
-        cur = int(current or 0)
-        prev = int(previous or 0)
-    except (TypeError, ValueError):
-        return 0
-    if cur >= prev:
-        return cur - prev
-    # Wrap — assume 32-bit unless previous looks like HC (very large)
-    modulus = 2**64 if prev > 2**32 else 2**32
-    return (cur + modulus) - prev
+    """Handle 32/64-bit counter wrap (legacy helper kept for callers/tests)."""
+    from services.interface_collection.utilization import counter_delta  # noqa: PLC0415
+
+    delta, _event = counter_delta(current, previous)
+    return delta
 
 
 def _insert_stats_batch(documents: list[dict]) -> int:

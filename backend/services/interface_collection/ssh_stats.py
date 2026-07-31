@@ -268,34 +268,76 @@ def parse_cisco_counter_errors(output: str) -> dict[str, dict[str, int]]:
 
 
 def parse_cisco_speed_map(output: str) -> dict[str, int]:
-    """Extract port → speed_bps from ``show interfaces status`` Speed column."""
+    """
+    Extract port → speed_bps from ``show interfaces status``.
+
+    Parses the Speed column explicitly — never treats the VLAN id as bandwidth.
+    When Speed is ``auto`` / ``a-auto`` / ``-``, the port is omitted so callers
+    can fall back to inventory / SNMP negotiated speed.
+    """
     speeds: dict[str, int] = {}
     if not output:
         return speeds
+
+    # Cisco IOS/XE tabular status (Name may contain spaces / be empty).
+    status_re = re.compile(
+        r"^(?P<port>\S+)\s+"
+        r"(?P<name>.*?)\s+"
+        r"(?P<status>connected|notconnect|disabled|err-disabled|"
+        r"monitoring|inactive|up|down)\s+"
+        r"(?P<vlan>\S+)\s+"
+        r"(?P<duplex>\S+)\s+"
+        r"(?P<speed>\S+)\s+"
+        r"(?P<type>\S.*)?$",
+        re.IGNORECASE,
+    )
 
     for line in output.replace("\r", "").splitlines():
         stripped = line.strip()
         if not stripped or stripped.lower().startswith("port"):
             continue
+
+        match = status_re.match(stripped)
+        if match:
+            port = match.group("port")
+            speed_token = match.group("speed")
+            bps = _speed_token_to_bps(speed_token)
+            if bps:
+                speeds[port] = bps
+            continue
+
+        # Fallback for odd layouts: take the token immediately before Type
+        # (token containing '/' or 'Base'), never bare VLAN integers alone.
         parts = stripped.split()
         if len(parts) < 5:
             continue
         port = parts[0]
-        # Speed is typically second-to-last before Type, or after duplex
-        # Reuse a light heuristic: look for a-1000 / 1000 / 10G tokens
-        speed_token = ""
-        for token in parts:
-            tl = token.lower()
-            if re.match(r"^a?-?\d+g?$", tl) or tl in ("auto", "a-auto"):
-                # Prefer numeric speed-looking tokens that aren't vlan ids early
-                if "g" in tl or tl.lstrip("a-").isdigit():
-                    speed_token = token
-        if not speed_token:
-            continue
-        bps = _speed_token_to_bps(speed_token)
+        speed_token = _guess_speed_token(parts)
+        bps = _speed_token_to_bps(speed_token) if speed_token else None
         if bps:
             speeds[port] = bps
     return speeds
+
+
+def _guess_speed_token(parts: list[str]) -> str | None:
+    """Best-effort Speed column when the primary regex does not match."""
+    # Prefer tokens that look like negotiated speeds (a-1000, 1000, 10G…).
+    candidates: list[str] = []
+    for token in parts[1:]:
+        tl = token.lower()
+        if tl in ("auto", "a-auto", "-"):
+            candidates.append(token)
+            continue
+        if re.match(r"^a?-?\d+(?:\.\d+)?g?$", tl):
+            # Skip likely VLAN-only bare small integers when a better token exists
+            bare = tl.lstrip("a-")
+            if bare.isdigit() and int(bare) <= 4094 and "g" not in tl and not tl.startswith("a"):
+                continue
+            candidates.append(token)
+    if not candidates:
+        return None
+    # Prefer the last negotiated/auto token (Speed is near the end of the row)
+    return candidates[-1]
 
 
 def merge_cisco_counter_tables(
@@ -405,7 +447,7 @@ def parse_juniper_statistics(output: str) -> list[dict]:
 def _speed_token_to_bps(token: str) -> int | None:
     text = (token or "").strip().lower().replace(" ", "")
     text = re.sub(r"^a-", "", text)
-    if text in ("auto", "a-auto", "-", "unknown"):
+    if text in ("auto", "a-auto", "-", "unknown", ""):
         return None
     match = re.match(r"^(\d+(?:\.\d+)?)(g|gbps|gb|m|mbps|mb)?$", text)
     if not match:
@@ -416,5 +458,5 @@ def _speed_token_to_bps(token: str) -> int | None:
         return int(value * 1_000_000_000)
     if unit in ("m", "mbps", "mb"):
         return int(value * 1_000_000)
-    # bare number from Cisco status → Mbps
+    # bare number from Cisco status Speed column → Mbps (1000, 100, 10)
     return int(value * 1_000_000)

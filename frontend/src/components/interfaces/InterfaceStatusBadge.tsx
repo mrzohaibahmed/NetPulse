@@ -169,13 +169,26 @@ export function UtilizationBar({ value, className }: UtilizationBarProps) {
   const pct = Math.min(Math.max(Number(value), 0), 100)
   const tone =
     pct >= 85 ? 'bg-danger' : pct >= 60 ? 'bg-warning' : 'bg-success'
+  const label =
+    pct === 0
+      ? '0%'
+      : pct > 0 && pct < 0.1
+        ? `${pct.toFixed(3)}%`
+        : pct < 10
+          ? `${pct.toFixed(2)}%`
+          : `${pct.toFixed(1)}%`
+  // Bar width: amplify tiny util so the meter is visible without lying about %.
+  const barWidth = pct > 0 && pct < 1 ? Math.max(pct * 8, 2) : pct
 
   return (
-    <div className={cn('flex min-w-[88px] items-center gap-2', className)}>
+    <div className={cn('flex min-w-[96px] items-center gap-2', className)}>
       <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-secondary">
-        <div className={cn('h-full rounded-full transition-all', tone)} style={{ width: `${pct}%` }} />
+        <div
+          className={cn('h-full rounded-full transition-all', tone)}
+          style={{ width: `${Math.min(barWidth, 100)}%` }}
+        />
       </div>
-      <span className="mono w-10 text-right text-xs text-muted-foreground">{pct.toFixed(0)}%</span>
+      <span className="mono w-14 text-right text-xs text-muted-foreground">{label}</span>
     </div>
   )
 }
