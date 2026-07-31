@@ -27,7 +27,7 @@ export function formatDateTime(value: string | null | undefined): string {
 
 export function formatPercent(value: number | null | undefined): string {
   if (value === null || value === undefined) return '—'
-  return `${value.toFixed(1)}%`
+  return formatUtilization(value)
 }
 
 export function formatRelative(value: string | null | undefined): string {
@@ -71,7 +71,12 @@ export function formatPackets(value: number | null | undefined): string {
 
 export function formatUtilization(value: number | null | undefined): string {
   if (value === null || value === undefined || Number.isNaN(Number(value))) return '—'
-  return `${Number(value).toFixed(1)}%`
+  const n = Number(value)
+  if (n === 0) return '0%'
+  // Sub-0.1% traffic on 1G/10G links is real — do not round to "0.0%"
+  if (n > 0 && n < 0.1) return `${n.toFixed(3)}%`
+  if (n < 10) return `${n.toFixed(2)}%`
+  return `${n.toFixed(1)}%`
 }
 
 export function formatSpeedBps(value: number | null | undefined): string {
