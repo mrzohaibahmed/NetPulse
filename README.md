@@ -1,6 +1,6 @@
-# Network Monitor (NetPulse)
+# NetPulse (Network Monitor)
 
-A full-stack LAN monitoring system that continuously pings devices, profiles them with Nmap, discovers hosts on your subnet, fires email alerts on critical outages, and shows live status in a React dashboard.
+Full-stack LAN monitoring and switch storm-protection platform. NetPulse continuously pings devices, profiles them with Nmap, discovers hosts on your subnet, inventories switch interfaces over SSH, scores storm risk from live counters, and can automatically shut down / recover ports when a broadcast storm is confirmed safe to mitigate.
 
 ---
 
@@ -8,7 +8,7 @@ A full-stack LAN monitoring system that continuously pings devices, profiles the
 
 - [What this project does](#what-this-project-does)
 - [How it works](#how-it-works)
-- [Storm protection & interfaces](#storm-protection--interfaces)
+- [Storm protection pipeline](#storm-protection-pipeline)
 - [System architecture](#system-architecture)
 - [Tech stack](#tech-stack)
 - [Project structure](#project-structure)
@@ -23,33 +23,37 @@ A full-stack LAN monitoring system that continuously pings devices, profiles the
 
 ## What this project does
 
-NetPulse watches devices on your local network and answers three questions continuously:
+NetPulse answers five operational questions continuously:
 
 1. **Is the device reachable?** — ICMP ping on a schedule (or on demand).
 2. **What is running on it?** — Periodic Nmap scans for OS, open ports, services, MAC, and vendor.
-3. **Did something important go down?** — In-app alerts plus optional email when a critical device goes offline.
+3. **What interfaces exist on the switch?** — SSH discovery of port inventory, VLANs, neighbors, and monitoring intent.
+4. **Is a storm forming?** — Stats → eligibility → risk → confirmation → safety → prepare → mitigation.
+5. **Did something important go down?** — In-app alerts plus optional email when a critical device goes offline.
 
 Operators use the React UI to:
 
 | Page | Purpose |
 |------|---------|
 | **Dashboard** | Live KPIs, status charts, response-time trends, recent activity |
-| **Devices** | CRUD inventory, CSV import, manual ping / Nmap, per-device ping overrides |
-| **Interfaces** | Switch interface inventory, discovery, and stats |
-| **Storm Protection** | Eligibility, risk, confirmation, safety, incidents, mitigation/recovery |
+| **Devices** | CRUD inventory, CSV import, manual ping / Nmap, per-device ping + SSH overrides |
+| **Interfaces** | Switch inventory, discovery, stats, monitoring mode, manual shutdown / recover |
+| **Storm Protection** | Eligibility, risk, confirmation, safety, incidents, mitigation & recovery history |
 | **Discovery** | Suggest local `/24` range and sweep IPs; auto-register new online hosts |
 | **History** | Filterable ping history and per-device uptime |
 | **Alerts** | Acknowledge or dismiss critical outage alerts |
 | **Reports** | Uptime reports; export devices/history as CSV or Excel |
-| **Settings** | Global ping interval/timeout/retries, SMTP, storm mitigation mode |
+| **Settings** | Ping interval, SMTP, mitigation mode, auto-recovery, retention |
 | **Account** | Change username/password; admins manage users |
 
 Roles:
 
-- **super-admin** — full admin rights plus exclusive user/role management for other super-admins
-- **admin** — full write access (devices, discovery, settings, users, storm mitigation controls)
-- **operator** — viewer access plus on-demand Nmap scans and alert acknowledge/dismiss
-- **viewer** — read-only dashboard, devices, history, reports, alerts
+| Role | Access |
+|------|--------|
+| **super-admin** | Full admin rights plus exclusive management of other super-admins |
+| **admin** | Full write access (devices, discovery, settings, users, storm mitigation/recovery) |
+| **operator** | Viewer access plus on-demand Nmap, alert ack/dismiss, selected storm actions |
+| **viewer** | Read-only dashboard, devices, interfaces, history, reports, alerts |
 
 ---
 
@@ -63,97 +67,166 @@ Roles:
 │ (Vite/TS)    │   poll 10–20s     │ + APScheduler   │                 │          │
 └──────────────┘                   └────────┬────────┘                 └──────────┘
                                             │
-                     ┌──────────────────────┼──────────────────────┐
-                     ▼                      ▼                      ▼
-              ICMP ping (ping3)      Nmap (python-nmap)      SMTP email
-              every ~30s             every ~1 hour          on critical
-              (Settings)             (.env interval)        offline
+          ┌─────────────┬───────────────────┼───────────────────┬──────────────┐
+          ▼             ▼                   ▼                   ▼              ▼
+     ICMP ping     Nmap profiling    SSH iface discovery   SNMP/SSH stats   SMTP email
+     (~30s)        (~1 hour)         (~1 hour)             (~60s → storm)   critical
 ```
 
-1. On startup, Flask loads settings, seeds default users if needed, and starts APScheduler.
-2. The **ping job** loads devices with `monitor: true`, respects per-device intervals, pings each host, updates status, writes `pingHistory`, and may create an alert.
-3. The **Nmap job** scans currently **Online** devices only, stores OS/ports/services under `networkInfo` on the device document.
-4. The frontend authenticates with JWT and polls dashboard/device APIs so the UI stays live without WebSockets.
+1. On startup, Flask loads settings, ensures indexes, seeds default users if needed, and starts APScheduler.
+2. The **ping job** monitors devices with `monitor: true`, writes `pingHistory`, and may create alerts.
+3. The **Nmap job** scans currently **Online** devices and stores OS/ports under `networkInfo`.
+4. The **interface discovery job** SSHs into eligible switches and upserts the `interfaces` inventory.
+5. The **stats + storm chain** polls counters, then runs eligibility → risk → confirmation → safety → prepare → optional auto-mitigation.
+6. The **recovery job** (30s) evaluates MITIGATED / MONITORING incidents for auto-recovery and re-mitigation.
+7. The **retention job** (daily) refreshes TTL indexes and purges closed incidents per settings.
+8. The frontend authenticates with JWT and polls APIs so the UI stays live without WebSockets.
 
 ### 1. Automatic ping monitoring
 
 **Where:** `backend/scheduler.py` → `services/monitor_service.py` → `services/ping_service.py`
 
 1. APScheduler runs `monitor_all_devices` on the global interval from Settings (`pingInterval`, default from `SCAN_INTERVAL`, usually 30s).
-2. For each device with `monitor: true`, if enough time has passed since `lastCheckedAt` (honoring optional `pingInterval` / timeout / retries overrides), the service sends an ICMP echo via `ping3`.
+2. For each device with `monitor: true`, if enough time has passed since `lastCheckedAt` (honoring optional per-device overrides), the service sends an ICMP echo via `ping3`.
 3. Results update the device:
    - **Success** → `Online`, reset `consecutiveFailures`, set `lastSeen` and `responseTime`
    - **Failure + critical** → `Offline (Critical)`
    - **Failure + non-critical** → `Not Reachable`
-4. Every check (automatic or manual) is stored in `pingHistory` with `scanType` of `Automatic` or `Manual`.
-5. Changing `pingInterval` in Settings calls `reschedule_monitor_job` so the loop updates without restarting Flask.
+4. Every check is stored in `pingHistory` with `scanType` of `Automatic` or `Manual`.
+5. Changing `pingInterval` in Settings reschedules the loop without restarting Flask.
 
 ### 2. Nmap deep scanning
 
-**Where:** `backend/scheduler.py` → `services/nmap_service.py` (also triggered from `routes/nmap_routes.py`)
+**Where:** `backend/scheduler.py` → `services/nmap_service.py` (also `routes/nmap_routes.py`)
 
-1. A separate scheduler job runs every `NMAP_SCAN_INTERVAL` seconds (default 3600).
-2. Only devices currently marked `Online` are scanned (avoids hanging on dead hosts).
-3. A thread pool (`MAX_SCAN_THREADS`, default 5) runs Nmap with `NMAP_ARGUMENTS` (default `-A -T4`).
-4. Parsed results are written to the device’s `networkInfo` (OS, ports, services, MAC, vendor) and shown in the device details drawer.
-5. Operator+ roles can also trigger a single-device or “scan all online” Nmap run from the API/UI (viewers cannot).
+1. Runs every `NMAP_SCAN_INTERVAL` seconds (default 3600).
+2. Only **Online** devices are scanned.
+3. A thread pool (`MAX_SCAN_THREADS`) runs Nmap with `NMAP_ARGUMENTS` (default `-A -T4`).
+4. Results land on the device’s `networkInfo` and appear in the device drawer.
+5. Operator+ roles can trigger single-device or “scan all online” Nmap from the UI/API.
 
-Requires the **Nmap binary** on `PATH` (or set `NMAP_PATH`). Aggressive flags often need Administrator privileges on Windows.
+Requires the **Nmap binary** on `PATH` (or `NMAP_PATH`). Aggressive flags often need Administrator privileges on Windows.
 
 ### 3. Subnet discovery
 
 **Where:** `services/discovery_service.py` via `POST /api/discovery/scan-range`
 
-1. `GET /api/discovery/network-hint` probes the local IP (UDP connect to `8.8.8.8`) and suggests a `/24` start/end range.
-2. The range scan uses a thread pool to ping hosts (capped to protect resources).
-3. Online hosts get a best-effort reverse DNS name.
-4. Hosts not already in MongoDB can be auto-saved as devices (`deviceType: Unknown`, `monitor: true`, status `Online`) so they enter the ping loop immediately.
+1. `GET /api/discovery/network-hint` suggests a local `/24` range.
+2. A thread pool pings hosts in the range.
+3. Online hosts get best-effort reverse DNS.
+4. Unknown hosts can be auto-saved (`deviceType: Unknown`, `monitor: true`) so they enter the ping loop immediately.
 
-### 4. Alerting and email
+### 4. Switch interface discovery & stats
+
+**Where:** `services/interface_collection/` (see also [`backend/services/interface_collection/README.md`](backend/services/interface_collection/README.md))
+
+1. **Discovery** (SSH) parses interface status, switchport, CDP/LLDP, and classifies access / trunk / uplink / protected ports.
+2. Documents are upserted into `interfaces` with monitoring intent (`AUTO`, `DISABLED_BY_USER`, …).
+3. **Stats** prefer SNMP counters and fall back to SSH; samples are written to `interface_stats`.
+4. From the Interfaces UI (or API), admins can:
+   - Change monitoring mode per port
+   - Trigger **manual shutdown** (creates a MANUAL incident + mitigation)
+   - Trigger **manual recover** for a mitigated incident
+
+### 5. Alerting and email
 
 **Where:** `services/alert_service.py` + `services/email_service.py`
 
-1. After each ping update, the monitor compares previous vs new status.
-2. Transition of a **critical** device into `Offline (Critical)` creates an `alerts` document (once per outage transition, not on every failed ping).
-3. If SMTP is enabled, a background thread sends email using Settings / `.env` values.
-4. Operators (and admins) acknowledge or dismiss alerts in the UI; viewers can view alerts only.
+1. Transition of a **critical** device into `Offline (Critical)` creates an `alerts` document once per outage.
+2. If SMTP is enabled, a background thread sends email using Settings / `.env`.
+3. Operators (and admins) acknowledge or dismiss alerts; viewers can view only.
 
-### 5. Authentication and roles
+### 6. Authentication and roles
 
 **Where:** `utils/auth.py`, `services/user_service.py`, `routes/auth_routes.py`
 
 - Login returns a JWT (`JWT_SECRET`, `JWT_EXPIRE_HOURS`).
 - Passwords are stored with bcrypt.
+- SSH / SMTP secrets at rest are encrypted with Fernet (`SECRETS_ENCRYPTION_KEY`).
 - Roles inherit privileges: `super-admin` ⊃ `admin` ⊃ `operator` ⊃ `viewer`.
-- Route handlers enforce the minimum required role (e.g. Nmap scan and alert ack/dismiss require `operator` or higher).
 - First boot with an empty `users` collection seeds default admin and viewer accounts.
 
-### 6. Frontend data loading
+### 7. Frontend data loading
 
 **Where:** `frontend/src/hooks/queries.ts`, Vite proxy in `vite.config.ts`
 
-- TanStack Query polls the API (dashboard ~10s, devices ~15s, history ~20s).
+- TanStack Query polls the API (dashboard ~10s, devices ~15s, history ~20s, storm panels as configured).
 - In development, Vite proxies `/api` and `/health` to `http://127.0.0.1:5000`.
-- In production, `npm run build` produces `frontend/dist`; Flask serves that SPA at `/` when the folder exists.
+- In production, `npm run build` produces `frontend/dist`; Flask serves that SPA when present.
 
 ---
 
-## Storm protection & interfaces
+## Storm protection pipeline
 
-NetPulse also discovers switch interfaces, collects stats, and runs a storm-protection
-pipeline: eligibility → risk → confirmation → safety → diagnostics/prepare → mitigation.
+Storm protection runs after each interface-stats cycle (unless disabled via env flags). It is append-only history with live-state gates — there is **no pipeline generation / versioning counter**.
 
-**Mitigation is fully automatic by design.** There is no separate emergency or manual
-port-shutdown path. Behavior is controlled by `mitigationMode` in settings:
+```
+Interface Stats
+      ↓
+Eligibility          (access port? monitoring on? not uplink/trunk/protected?)
+      ↓
+Risk Score           (broadcast / multicast / unknown unicast / util / errors / …)
+      ↓
+Confirmation         (consecutive high-risk samples → CONFIRMED)
+      ↓
+Safety Engine        (device online, SSH OK, not already shut, cooldown, …)
+      ↓
+Orchestrator Prepare (live CONFIRMED + current risk + fresh SAFE required)
+      ↓
+Incident + Diagnostics snapshot
+      ↓
+Mitigation           (SHUTDOWN) — automatic or admin-triggered
+      ↓
+Recovery             (NO_SHUTDOWN / no shutdown) — policy + Recovery Safety
+      ↓
+Post-recovery reset  (confirmation reset + safety invalidate + cancel orphan READY)
+      ↓
+MONITORING           (recoveredAt + stabilization window)
+      ↓
+RESOLVED  or  re-mitigate if a *fresh* storm appears after recoveredAt
+```
 
-- **`automatic`** — after prepare, the scheduler shuts down `READY_FOR_MITIGATION`
-  interfaces via the Mitigation Engine.
-- **`manual`** (default) — the pipeline stops after prepare; an admin triggers
-  shutdown/recovery from the Storm Protection UI.
+### Mitigation modes
 
-Recovery (re-enable) follows the same automatic/admin model via recovery settings
-(`autoRecovery`, cooldown, stabilization). Historical incident logs may still show
-older incident types from before this design; new incidents are storm-pipeline only.
+Controlled by Settings `mitigationMode`:
+
+| Mode | Behavior |
+|------|----------|
+| **`manual`** (default) | Pipeline stops after prepare (`READY_FOR_MITIGATION`). Admin executes shutdown / recovery from Storm Protection or Interfaces. |
+| **`automatic`** | Scheduler shuts down ready incidents via the Mitigation Engine after prepare. |
+
+### Recovery protections (kept intact)
+
+After a successful recovery verification the engine:
+
+1. Sets incident status to **MONITORING** and writes **`recoveredAt`**
+2. **Resets confirmation** to `NOT_CONFIRMED`
+3. **Invalidates safety** with a post-recovery UNSAFE row
+4. **Cancels orphan** `OPEN` / `PREPARED` / `READY_FOR_MITIGATION` incidents on that interface
+5. Returns to monitoring for the stabilization window
+
+Additional gates:
+
+- **Recovery Safety Engine** (rules R0–R8) and **Recovery Policy** before locks / SSH
+- **Orchestrator live CONFIRMED gating** — prepare never trusts stale SAFE history alone
+- **Stale SAFE protection** — safety must be newer than the current confirmation
+- **Re-mitigation freshness** — confirmation / risk after `recoveredAt` only
+- Lightweight mitigation verification and recovery verification before status transitions
+
+### Key settings
+
+| Setting | Meaning | Default |
+|---------|---------|---------|
+| `mitigationMode` | `automatic` \| `manual` | `manual` |
+| `autoRecovery` | Scheduler may recover MITIGATED ports | `true` |
+| `cooldownMinutes` | Wait after mitigation before recovery | `5` |
+| `stabilizationSeconds` | MONITORING window after recovery | `60` |
+| `maximumRecoveryAttempts` | Cap before `RECOVERY_FAILED` | `3` |
+| `reMitigationThreshold` | Risk score that can re-trigger after recovery | `75` |
+| `dataRetentionDays` | TTL for ping/stats/evaluation history | `90` |
+| `incidentRetentionDays` | Retention for closed incidents + attempt logs | `365` |
+
+Deep dive on interface collection: [`backend/services/interface_collection/README.md`](backend/services/interface_collection/README.md).
 
 ---
 
@@ -163,22 +236,31 @@ older incident types from before this design; new incidents are storm-pipeline o
 ┌─────────────────────────────────────────────────────────────┐
 │                    React frontend (NetPulse)                │
 │         Vite + TypeScript + Tailwind + TanStack Query       │
+│  Dashboard · Devices · Interfaces · Storm · Discovery · …   │
 └──────────────────────────────┬──────────────────────────────┘
                                │ HTTP + Bearer JWT
 ┌──────────────────────────────▼──────────────────────────────┐
 │                   Flask backend (app.py)                    │
 │  Blueprints: auth, devices, scan, nmap, history, dashboard, │
-│              discovery, alerts, settings, reports           │
+│  discovery, interfaces, storm, alerts, settings, reports    │
 │                                                             │
 │  APScheduler                                                │
-│  • device_monitor_job  → monitor_all_devices (ping)         │
-│  • nmap_scan_job       → scan_all_online_devices            │
+│  • device_monitor_job      → ping monitoring                │
+│  • nmap_scan_job           → Online device profiling        │
+│  • interface_discovery_job → SSH inventory                  │
+│  • interface_stats_job     → stats → storm pipeline chain   │
+│  • storm_recovery_job      → auto-recovery / remmitigation  │
+│  • data_retention_job      → TTL + closed-incident purge    │
 └──────────────────────────────┬──────────────────────────────┘
                                │
 ┌──────────────────────────────▼──────────────────────────────┐
 │                         MongoDB                             │
 │  devices · pingHistory · alerts · settings · users ·        │
-│  auditLogs                                                  │
+│  auditLogs · interfaces · interface_stats ·                 │
+│  eligibility_results · storm_risk_history ·                 │
+│  storm_confirmation_history · storm_safety_history ·        │
+│  storm_incidents · storm_mitigation_history ·               │
+│  storm_recovery_history · storm_*_locks                     │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -188,10 +270,10 @@ older incident types from before this design; new incidents are storm-pipeline o
 
 | Layer | Technologies |
 |-------|----------------|
-| Frontend | React 19, TypeScript, Vite 8, Tailwind CSS 4, TanStack Query/Table, Recharts, Radix UI, Framer Motion |
+| Frontend | React 19, TypeScript, Vite, Tailwind CSS 4, TanStack Query/Table, Recharts, Radix UI, Framer Motion |
 | Backend | Flask 3, Flask-CORS, APScheduler, PyMongo |
-| Monitoring | `ping3` (ICMP), `python-nmap` (Nmap) |
-| Auth | PyJWT, bcrypt |
+| Monitoring | `ping3` (ICMP), `python-nmap` (Nmap), Paramiko (SSH), SNMP for interface stats |
+| Auth / secrets | PyJWT, bcrypt, cryptography (Fernet) |
 | Export | openpyxl (Excel), CSV |
 | Database | MongoDB |
 
@@ -200,29 +282,36 @@ older incident types from before this design; new incidents are storm-pipeline o
 ## Project structure
 
 ```
-Network Monitor/
+NetPulse/
 ├── README.md
 ├── backend/
-│   ├── app.py                 # Flask app, blueprints, SPA static serving
-│   ├── scheduler.py           # Ping + Nmap background jobs
+│   ├── app.py                      # Flask app, indexes, bootstrap, SPA hosting
+│   ├── scheduler.py                # Ping, Nmap, interfaces, storm, retention jobs
 │   ├── requirements.txt
 │   ├── .env / .env.example
-│   ├── config/                # MongoDB + env (incl. Nmap settings)
-│   ├── models/                # Device / ping history document helpers
-│   ├── routes/                # REST blueprints
-│   ├── services/              # Ping, monitor, Nmap, discovery, alerts, email, …
-│   ├── utils/                 # JWT, serializers, pagination, logging
+│   ├── config/                     # MongoDB + env (Nmap, SSH, SNMP, storm)
+│   ├── models/                     # Device, interface, ping history helpers
+│   ├── routes/                     # REST blueprints (incl. interfaces + storm)
+│   ├── services/
+│   │   ├── interface_collection/   # SSH discovery, stats, monitoring state
+│   │   ├── storm/                  # Eligibility → risk → confirm → safety → …
+│   │   │   ├── diagnostics/        # Read-only evidence capture
+│   │   │   ├── mitigation/         # Shutdown engine, verifier, audit
+│   │   │   └── recovery/           # Policy, safety, engine, post-recovery
+│   │   └── …                       # Ping, monitor, Nmap, discovery, alerts, …
+│   ├── tests/                      # Unit tests (recovery, safety, orchestrator, …)
+│   ├── utils/                      # JWT, serializers, pagination, logging
 │   └── logs/monitor.log
 └── frontend/
     ├── src/
-    │   ├── api/               # HTTP client + endpoint helpers
-    │   ├── auth/              # Auth context
-    │   ├── components/        # Layout, devices, shared UI, Radix primitives
-    │   ├── hooks/             # React Query hooks (polling)
-    │   ├── pages/             # Dashboard, Devices, Discovery, …
+    │   ├── api/                    # HTTP client + endpoint helpers
+    │   ├── auth/                   # Auth context
+    │   ├── components/             # Layout, devices, interfaces, shared UI
+    │   ├── hooks/                  # React Query hooks (polling)
+    │   ├── pages/                  # Dashboard, Devices, Interfaces, Storm, …
     │   └── types/
     ├── package.json
-    └── vite.config.ts         # Dev server + /api proxy
+    └── vite.config.ts              # Dev server + /api proxy
 ```
 
 More detail: [`backend/README.md`](backend/README.md), [`frontend/README.md`](frontend/README.md).
@@ -233,39 +322,52 @@ More detail: [`backend/README.md`](backend/README.md), [`frontend/README.md`](fr
 
 | Collection | Purpose |
 |------------|---------|
-| `devices` | Inventory, status, ping overrides, Nmap `networkInfo` |
+| `devices` | Inventory, status, ping overrides, SSH/SNMP creds, Nmap `networkInfo` |
 | `pingHistory` | Time-series of every manual/automatic ping |
 | `alerts` | Critical offline events (acknowledge / dismiss) |
-| `settings` | Global ping + SMTP config (editable in UI) |
+| `settings` | Global ping, SMTP, storm mitigation/recovery, retention |
 | `users` | Accounts with bcrypt password hashes |
-| `auditLogs` | Admin action trail (creates, imports, settings changes, …) |
+| `auditLogs` | Admin / storm action trail |
+| `interfaces` | Discovered switch ports + monitoring intent |
+| `interface_stats` | Counter / rate samples for risk scoring |
+| `eligibility_results` | Latest eligibility decisions |
+| `storm_risk_history` | Append-only risk scores |
+| `storm_confirmation_history` | Append-only confirmation / reset rows |
+| `storm_safety_history` | Append-only safety evaluations |
+| `storm_incidents` | Storm + manual incidents, timeline, `recoveredAt` |
+| `storm_mitigation_history` | Mitigation attempt audit |
+| `storm_recovery_history` | Recovery attempt audit (incl. blocked policy) |
+| `storm_mitigation_locks` / `storm_recovery_locks` | Lease locks (TTL) |
 
 **Device status values:** `Online`, `Not Reachable`, `Offline (Critical)`, `Unknown`.
+
+**Common incident statuses:** `OPEN` → `READY_FOR_MITIGATION` → `MITIGATED` → `MONITORING` → `RESOLVED` (also `MITIGATION_FAILED`, `RECOVERY_FAILED`, `CANCELLED`, …).
 
 ---
 
 ## Configuration
 
-Copy and edit `backend/.env` (see also `backend/.env.example`):
+Copy and edit `backend/.env` from `backend/.env.example`. Core variables:
 
 ```env
 # Database
 MONGO_URI=mongodb://localhost:27017
 DATABASE_NAME=NetworkMonitor
 
-# Flask
-FLASK_DEBUG=true
+# Flask (keep false in production / shared hosts)
+FLASK_DEBUG=false
+
+# Auth + secrets at rest
+JWT_SECRET=change-me-in-production
+JWT_EXPIRE_HOURS=8
+SECRETS_ENCRYPTION_KEY=replace-with-fernet-generate-key-output
+DEFAULT_ADMIN_USER=admin
+DEFAULT_ADMIN_PASSWORD=admin123
 
 # Ping defaults (also adjustable in Settings UI)
 SCAN_INTERVAL=30
 PING_TIMEOUT_MS=1000
 PING_RETRIES=3
-
-# Auth
-JWT_SECRET=change-me-in-production
-JWT_EXPIRE_HOURS=8
-DEFAULT_ADMIN_USER=admin
-DEFAULT_ADMIN_PASSWORD=admin123
 
 # Email alerts (optional)
 ALERT_EMAIL_ENABLED=true
@@ -283,18 +385,40 @@ NMAP_ARGUMENTS=-A -T4
 MAX_SCAN_THREADS=5
 NMAP_TIMEOUT=300
 NMAP_PATH=
+
+# Interface discovery + stats
+INTERFACE_SCAN_INTERVAL=3600
+INTERFACE_STATS_INTERVAL=60
+MAX_INTERFACE_THREADS=5
+MAX_INTERFACE_STATS_THREADS=8
+SSH_DEFAULT_USERNAME=
+SSH_DEFAULT_PASSWORD=
+SSH_DEFAULT_VENDOR=cisco_ios
+SNMP_DEFAULT_COMMUNITY=public
+
+# Retention
+DATA_RETENTION_DAYS=90
+INCIDENT_RETENTION_DAYS=365
+
+# Storm (high-level; many thresholds live in .env.example)
+STORM_ENABLE_ELIGIBILITY=true
+STORM_ENABLE_RISK=true
+STORM_MITIGATION_MODE=manual
+STORM_AUTO_RECOVERY=true
+STORM_RE_MITIGATION_THRESHOLD=75
 ```
 
 | Variable | Meaning |
 |----------|---------|
 | `MONGO_URI` / `DATABASE_NAME` | MongoDB connection (required) |
-| `SCAN_INTERVAL` | Default ping interval in seconds |
-| `JWT_*` | Token signing and lifetime |
-| `DEFAULT_ADMIN_*` | First admin credentials when DB has no users |
-| `ALERT_*` / `SMTP_*` | Critical offline email |
-| `NMAP_*` | Background profiling interval, flags, concurrency, binary path |
+| `JWT_*` / `SECRETS_ENCRYPTION_KEY` | Token signing + encrypted SSH/SMTP secrets |
+| `SCAN_INTERVAL` | Default ping interval (seconds) |
+| `INTERFACE_SCAN_INTERVAL` | SSH rediscovery interval (`0` disables schedule) |
+| `INTERFACE_STATS_INTERVAL` | Stats + storm chain interval (`0` disables) |
+| `STORM_MITIGATION_MODE` | Bootstrap default for Settings `mitigationMode` |
+| `DATA_RETENTION_DAYS` / `INCIDENT_RETENTION_DAYS` | History / closed-incident retention |
 
-Use `NMAP_ARGUMENTS=-sV -T4` if you cannot run elevated (skips aggressive OS detection).
+Use `NMAP_ARGUMENTS=-sV -T4` if you cannot run elevated. Prefer per-device SSH credentials via the Devices UI over global `SSH_DEFAULT_*`.
 
 ---
 
@@ -302,26 +426,54 @@ Use `NMAP_ARGUMENTS=-sV -T4` if you cannot run elevated (skips aggressive OS det
 
 All JSON APIs are under `/api` except `/health`. Most routes require `Authorization: Bearer <token>`.
 
-| Method | Route | Description | Role |
-|--------|-------|-------------|------|
-| POST | `/api/auth/login` | Login, returns JWT | Public |
-| GET | `/api/auth/me` | Current user | Any |
-| PUT | `/api/auth/account` | Update own account | Any |
-| GET/PUT | `/api/users` / `/api/users/<id>` | List / update users | Admin |
-| POST/GET/PUT/DELETE | `/api/devices` … | Device CRUD + CSV import | Admin write |
-| POST | `/api/devices/<id>/scan` | Manual ICMP ping | Any |
-| POST | `/api/devices/<id>/scan-details` | Manual Nmap scan | Any |
-| POST | `/api/devices/scan-all-details` | Nmap all online devices | Any |
-| GET | `/api/history`, `/api/devices/<id>/history` | Ping history / uptime | Any |
-| GET | `/api/discovery/network-hint` | Suggest LAN range | Any |
-| POST | `/api/discovery/scan-range` | Subnet sweep | Admin |
-| GET | `/api/dashboard/*` | Summary, stats, charts | Any |
-| GET/POST | `/api/alerts` … | List / acknowledge / dismiss | Any |
-| GET/PUT | `/api/settings` | Read / update global settings | Admin write |
-| GET | `/api/reports/uptime` | Uptime report | Any |
-| GET | `/api/reports/export/devices` | Export devices (csv/xlsx) | Any |
-| GET | `/api/reports/export/history` | Export history (csv/xlsx) | Any |
-| GET | `/health` | Server + MongoDB ping | Public |
+### Core
+
+| Method | Route | Description |
+|--------|-------|-------------|
+| POST | `/api/auth/login` | Login, returns JWT |
+| GET | `/api/auth/me` | Current user |
+| PUT | `/api/auth/account` | Update own account |
+| GET/PUT | `/api/users` … | User management (admin+) |
+| CRUD | `/api/devices` … | Device inventory + CSV import |
+| POST | `/api/devices/<id>/scan` | Manual ICMP ping |
+| POST | `/api/devices/<id>/scan-details` | Manual Nmap scan |
+| GET | `/api/history` | Ping history |
+| GET | `/api/discovery/network-hint` | Suggest LAN range |
+| POST | `/api/discovery/scan-range` | Subnet sweep |
+| GET | `/api/dashboard/*` | Summary, stats, charts |
+| GET/POST | `/api/alerts` … | List / acknowledge / dismiss |
+| GET/PUT | `/api/settings` | Global settings (incl. storm) |
+| GET | `/api/reports/*` | Uptime + CSV/XLSX export |
+| GET | `/health` | Server + MongoDB ping |
+
+### Interfaces
+
+| Method | Route | Description |
+|--------|-------|-------------|
+| GET | `/api/interfaces` | List / filter discovered interfaces |
+| GET | `/api/interfaces/<device_id>` | Interfaces for one device |
+| POST | `/api/interfaces/discover-all` | Bulk SSH discovery |
+| POST | `/api/interfaces/discover/<device_id>` | Discover one device |
+| POST | `/api/interfaces/stats/collect-all` | Bulk stats poll |
+| POST | `/api/interfaces/<device_id>/stats/collect` | Stats for one device |
+| POST | `/api/interfaces/<device_id>/<iface>/monitoring` | Set monitoring mode |
+| POST | `/api/interfaces/<device_id>/<iface>/manual-shutdown` | Operator shutdown |
+| POST | `/api/interfaces/<device_id>/<iface>/manual-recover` | Operator recovery |
+| GET | `/api/interfaces/<device_id>/<iface>/history` | Stats history |
+
+### Storm protection
+
+| Method | Route | Description |
+|--------|-------|-------------|
+| GET | `/api/storm/config` | Effective storm config |
+| POST | `/api/storm/*/evaluate` / `evaluate-all` | Run eligibility / risk / confirmation / safety |
+| GET | `/api/storm/eligibility` · `/risk` · `/confirmation` · `/safety` | History queries |
+| GET | `/api/storm/incidents` … | Incident list / detail |
+| POST | `/api/storm/orchestrator/prepare` · `prepare-all` | Prepare mitigation |
+| POST | `/api/storm/mitigation/execute` · `rollback` | Shutdown / rollback |
+| GET | `/api/storm/mitigation/history` … | Mitigation audit |
+| POST | `/api/storm/recovery/execute` · `retry` | Recovery |
+| GET | `/api/storm/recovery/history` … | Recovery audit |
 
 Full endpoint tables: [`backend/README.md`](backend/README.md).
 
@@ -332,9 +484,10 @@ Full endpoint tables: [`backend/README.md`](backend/README.md).
 ### Prerequisites
 
 - Python 3.10+
-- Node.js 18+ (for the frontend)
+- Node.js 18+ (frontend)
 - MongoDB (local or Atlas)
-- [Nmap](https://nmap.org/download.html) installed for deep scans
+- [Nmap](https://nmap.org/download.html) for deep scans
+- SSH reachability to managed switches for interface / storm features
 - On Windows, run the terminal **as Administrator** for reliable ICMP and aggressive Nmap
 
 ### 1. Backend
@@ -344,7 +497,7 @@ cd backend
 python -m venv venv
 .\venv\Scripts\activate
 pip install -r requirements.txt
-# Create backend/.env from the Configuration section above
+# Create backend/.env from .env.example
 python app.py
 ```
 
@@ -358,7 +511,7 @@ npm install
 npm run dev
 ```
 
-UI: `http://127.0.0.1:5173` (proxies `/api` to the Flask app)
+UI: `http://127.0.0.1:5173` (proxies `/api` to Flask)
 
 ### 3. Single-process UI (optional)
 
@@ -369,7 +522,17 @@ cd ..\backend
 python app.py
 ```
 
-Flask serves the built SPA from `frontend/dist` at `http://127.0.0.1:5000`.
+Flask serves `frontend/dist` at `http://127.0.0.1:5000`.
+
+### 4. Tests
+
+```powershell
+cd backend
+.\venv\Scripts\activate
+python -m unittest discover -s tests -p "test_*.py" -q
+```
+
+Coverage includes confirmation, safety, diagnostics/orchestrator, recovery engine, recovery safety, and post-recovery invalidation.
 
 ---
 
@@ -382,7 +545,7 @@ Created on first run when the `users` collection is empty:
 | `admin` (or `DEFAULT_ADMIN_USER`) | `admin123` (or `DEFAULT_ADMIN_PASSWORD`) | admin |
 | `viewer` | `viewer123` | viewer |
 
-Change these immediately for any shared or production environment.
+Change these immediately for any shared or production environment. Generate strong `JWT_SECRET` and `SECRETS_ENCRYPTION_KEY` before production use (see `.env.example`).
 
 ---
 
@@ -391,10 +554,14 @@ Change these immediately for any shared or production environment.
 | Issue | Likely cause | Fix |
 |-------|----------------|-----|
 | Pings always fail | ICMP needs elevation on Windows | Run the terminal / IDE as Administrator |
-| Nmap errors or empty OS info | Missing binary or no admin rights | Install Nmap, set `NMAP_PATH`, run elevated, or use `NMAP_ARGUMENTS=-sV -T4` |
+| Nmap errors or empty OS info | Missing binary or no admin rights | Install Nmap, set `NMAP_PATH`, run elevated, or use `-sV -T4` |
+| Interface discovery skipped | Device not `Online` or missing SSH creds | Fix reachability; set per-device SSH credentials |
+| Storm never prepares | Not CONFIRMED, risk low, or SAFE stale vs confirmation | Check Storm Protection panels; wait for fresh confirmation + safety |
+| Mitigation loops after recovery | Should not happen with post-recovery reset | Confirm `recoveredAt` is set and latest confirmation is `NOT_CONFIRMED` |
 | UI not updating from Flask alone | Stale or missing build | Run `npm run build` in `frontend/` |
 | MongoDB connection errors | Bad URI / DB down | Check `MONGO_URI` and that MongoDB is reachable |
-| Duplicate scheduler jobs | Debug reloader | App only starts the scheduler in the child process when `FLASK_DEBUG=true` |
+| Duplicate scheduler jobs | Debug reloader | Scheduler starts only in the child process when `FLASK_DEBUG=true` |
+| Decrypt / SSH secret errors | Key rotated | Keep `SECRETS_ENCRYPTION_KEY` stable or re-enter secrets |
 | No email on outage | SMTP off or misconfigured | Enable in Settings / `.env`; use an app password for Gmail |
 
 Logs: `backend/logs/monitor.log` (also printed to the console).
