@@ -6,6 +6,7 @@ Runs inside APScheduler context.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import Optional
 
 from config.database import db
 from services.settings_service import get_settings
@@ -16,6 +17,87 @@ from services.storm.recovery.policy import validate_recovery_policy
 from utils.monitor_logger import get_monitor_logger
 
 logger = get_monitor_logger("storm.recovery.scheduler")
+
+
+def _incident_sort_key(inc: dict) -> tuple:
+    """Newest-first key using createdAt, then incidentId as tie-breaker."""
+    created = inc.get("createdAt") or inc.get("timestamp") or datetime.min.replace(
+        tzinfo=timezone.utc
+    )
+    if getattr(created, "tzinfo", None) is None:
+        created = created.replace(tzinfo=timezone.utc)
+    return (created, str(inc.get("incidentId") or ""))
+
+
+def _newest_mitigated_per_interface(
+    incidents: list[dict],
+    *,
+    now: Optional[datetime] = None,
+) -> list[dict]:
+    """
+    Keep only the newest MITIGATED incident per (deviceId, interface).
+
+    Older duplicates are auto-resolved as superseded so they stop competing
+    for recovery SSH and saturating the switch (which blocks rediscovery).
+    """
+    if not incidents:
+        return []
+
+    when = now or datetime.now(timezone.utc)
+    groups: dict[tuple[str, str], list[dict]] = {}
+    for inc in incidents:
+        device_id = inc.get("deviceId")
+        interface = str(inc.get("interface") or "").strip()
+        if device_id is None or not interface:
+            continue
+        key = (str(device_id), interface)
+        groups.setdefault(key, []).append(inc)
+
+    selected: list[dict] = []
+    for (_device_key, interface), group in groups.items():
+        ordered = sorted(group, key=_incident_sort_key, reverse=True)
+        newest = ordered[0]
+        selected.append(newest)
+        newest_id = newest.get("incidentId") or "unknown"
+        for stale in ordered[1:]:
+            stale_id = stale.get("incidentId")
+            if not stale_id:
+                continue
+            try:
+                append_timeline_event(
+                    stale_id,
+                    "Superseded",
+                    detail=(
+                        f"Older MITIGATED incident closed; recovery continues on "
+                        f"{newest_id}."
+                    ),
+                )
+                db.storm_incidents.update_one(
+                    {"incidentId": stale_id, "status": "MITIGATED"},
+                    {
+                        "$set": {
+                            "status": "RESOLVED",
+                            "updatedAt": when,
+                            "supersededBy": newest_id,
+                            "resolveReason": (
+                                f"Superseded by newer mitigated incident {newest_id}"
+                            ),
+                        }
+                    },
+                )
+                logger.info(
+                    "[RECOVERY.SCHEDULER] Superseded stale MITIGATED %s → %s | %s",
+                    stale_id,
+                    newest_id,
+                    interface,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "[RECOVERY.SCHEDULER] Failed to supersede %s: %s",
+                    stale_id,
+                    exc,
+                )
+    return selected
 
 
 def run_recovery_cycle() -> None:
@@ -37,7 +119,11 @@ def run_recovery_cycle() -> None:
             device_id = inc.get("deviceId")
             interface = inc.get("interface")
 
-            # Check if a storm returned in the meantime
+            # Only evidence produced AFTER recovery may trigger remmitigation.
+            recovered_at = inc.get("recoveredAt") or inc.get("updatedAt")
+            if recovered_at is not None and getattr(recovered_at, "tzinfo", None) is None:
+                recovered_at = recovered_at.replace(tzinfo=timezone.utc)
+
             latest_confirm = db.storm_confirmation_history.find_one(
                 {"deviceId": device_id, "interface": interface},
                 sort=[("timestamp", -1)],
@@ -47,15 +133,41 @@ def run_recovery_cycle() -> None:
                 sort=[("timestamp", -1)],
             )
 
+            def _is_post_recovery(doc: dict | None) -> bool:
+                if not doc or recovered_at is None:
+                    return False
+                ts = doc.get("timestamp")
+                if ts is None:
+                    return False
+                if getattr(ts, "tzinfo", None) is None:
+                    ts = ts.replace(tzinfo=timezone.utc)
+                return ts > recovered_at
+
             storm_reappeared = False
             reason = ""
 
-            if latest_confirm and latest_confirm.get("confirmed"):
+            confirm_active = bool(
+                latest_confirm
+                and (
+                    latest_confirm.get("confirmed")
+                    or str(latest_confirm.get("state") or "").upper() == "CONFIRMED"
+                )
+            )
+            if confirm_active and _is_post_recovery(latest_confirm):
+                # Ignore post-recovery reset rows (reset=True, not confirmed).
+                if not latest_confirm.get("reset"):
+                    storm_reappeared = True
+                    reason = "Storm confirmed by confirmation engine after recovery."
+            elif (
+                latest_risk
+                and _is_post_recovery(latest_risk)
+                and float(latest_risk.get("riskScore", 0)) >= risk_threshold
+            ):
                 storm_reappeared = True
-                reason = "Storm confirmed by confirmation engine."
-            elif latest_risk and float(latest_risk.get("riskScore", 0)) >= risk_threshold:
-                storm_reappeared = True
-                reason = f"Traffic risk score {latest_risk.get('riskScore')} exceeded threshold."
+                reason = (
+                    f"Traffic risk score {latest_risk.get('riskScore')} "
+                    "exceeded threshold after recovery."
+                )
 
             if storm_reappeared:
                 res = trigger_re_mitigation(incident_id, reason)
@@ -90,6 +202,22 @@ def run_recovery_cycle() -> None:
                         {"incidentId": incident_id},
                         {"$set": {"status": "RESOLVED", "updatedAt": now}},
                     )
+                    # Belt-and-suspenders: keep pipeline invalidated at close.
+                    from services.storm.recovery.post_recovery import (  # noqa: PLC0415
+                        invalidate_pipeline_after_recovery,
+                    )
+
+                    invalidate_pipeline_after_recovery(
+                        device_id,
+                        interface,
+                        incident_id=incident_id,
+                        hostname=inc.get("hostname"),
+                        ip_address=inc.get("ipAddress"),
+                        reason=(
+                            "Recovery resolved — monitoring baseline restored; "
+                            "new storm required for mitigation"
+                        ),
+                    )
                     record_recovery_history(
                         incident_id=incident_id,
                         device_id=device_id,
@@ -112,8 +240,15 @@ def run_recovery_cycle() -> None:
         mitigated_incidents = list(
             db.storm_incidents.find({"status": "MITIGATED"})
         )
+        # One recovery candidate per interface — older duplicates only burn SSH
+        # budget (and can wedge the switch SSH daemon, starving rediscovery).
+        mitigated_incidents = _newest_mitigated_per_interface(
+            mitigated_incidents, now=now
+        )
         for inc in mitigated_incidents:
             incident_id = inc.get("incidentId")
+            device_id = inc.get("deviceId")
+            interface = inc.get("interface")
 
             # Check if maximum recovery attempts exceeded
             max_attempts = int(settings.get("maximumRecoveryAttempts", 3))
@@ -122,14 +257,69 @@ def run_recovery_cycle() -> None:
                 # Retries exceeded. Do not try auto-recovery again.
                 continue
 
-            # Verify conditions
+            # Recovery Safety first (SSH deferred until cheap gates pass).
             val_res = validate_recovery_policy(incident_id)
-            if val_res.get("passed"):
-                logger.info("[RECOVERY.SCHEDULER] Auto-recovery policy passed for %s", incident_id)
-                try:
-                    res = execute_recovery(incident_id, force=False, operator="SYSTEM")
-                    logger.info("[RECOVERY.SCHEDULER] Auto-recovery executed for %s: %s", incident_id, res)
-                except Exception as exc:  # noqa: BLE001
-                    logger.error("[RECOVERY.SCHEDULER] Auto-recovery run error | %s | %s", incident_id, exc)
+            if not val_res.get("passed"):
+                logger.info(
+                    "[RECOVERY.SCHEDULER] Recovery safety blocked %s | rule=%s | %s",
+                    incident_id,
+                    val_res.get("failedRule"),
+                    val_res.get("reason"),
+                )
+                # Throttle BLOCKED history to avoid a row every 30s while cooling down.
+                last_blocked = db.storm_recovery_history.find_one(
+                    {"incidentId": incident_id, "recoveryStatus": "BLOCKED"},
+                    sort=[("timestamp", -1)],
+                )
+                should_record = True
+                if last_blocked and last_blocked.get("timestamp"):
+                    ts = last_blocked["timestamp"]
+                    if getattr(ts, "tzinfo", None) is None:
+                        ts = ts.replace(tzinfo=timezone.utc)
+                    prev_rule = (last_blocked.get("verificationResult") or {}).get(
+                        "failedRule"
+                    )
+                    same_rule = prev_rule == val_res.get("failedRule")
+                    if same_rule and (now - ts).total_seconds() < 300:
+                        should_record = False
+                if should_record:
+                    record_recovery_history(
+                        incident_id=incident_id,
+                        device_id=inc.get("deviceId"),
+                        interface=inc.get("interface"),
+                        recovery_status="BLOCKED",
+                        verification_result={
+                            "success": False,
+                            "error": val_res.get("reason"),
+                            "failedRule": val_res.get("failedRule"),
+                            "checks": val_res.get("checks") or {},
+                            "engine": "recovery_safety",
+                        },
+                        retry_count=attempts,
+                    )
+                continue
+
+            logger.info(
+                "[RECOVERY.SCHEDULER] Auto-recovery policy passed for %s", incident_id
+            )
+            try:
+                # Policy already evaluated — skip re-validation to avoid a second SSH.
+                res = execute_recovery(
+                    incident_id,
+                    force=False,
+                    operator="SYSTEM",
+                    skip_policy_validation=True,
+                )
+                logger.info(
+                    "[RECOVERY.SCHEDULER] Auto-recovery executed for %s: %s",
+                    incident_id,
+                    res,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "[RECOVERY.SCHEDULER] Auto-recovery run error | %s | %s",
+                    incident_id,
+                    exc,
+                )
     except Exception as exc:  # noqa: BLE001
         logger.error("[RECOVERY.SCHEDULER] Auto-recovery checks failed: %s", exc)

@@ -35,6 +35,9 @@ from services.retention_service import ensure_retention_ttl_indexes
 from services.interface_collection.monitoring_state import (
     migrate_interface_monitoring_state,
 )
+from utils.monitor_logger import get_monitor_logger
+
+_bootstrap_logger = get_monitor_logger("app.bootstrap")
 
 # Serve built frontend (Vite) if present.
 BASE_DIR = Path(__file__).resolve().parent
@@ -136,6 +139,58 @@ def bootstrap():
     ensure_retention_ttl_indexes()
     # Repair sticky monitoringEnabled=false latch (idempotent).
     migrate_interface_monitoring_state(apply=True)
+    # Remove retired pipelineGeneration field + indexes (idempotent).
+    _remove_pipeline_generation_artifacts()
+
+
+def _remove_pipeline_generation_artifacts() -> None:
+    """Unset pipelineGeneration from storm collections and drop related indexes."""
+    field = "pipelineGeneration"
+    collections = (
+        "interfaces",
+        "storm_risk_history",
+        "storm_confirmation_history",
+        "storm_safety_history",
+        "storm_incidents",
+        "storm_mitigation_history",
+        "storm_recovery_history",
+    )
+    for name in collections:
+        try:
+            result = db[name].update_many(
+                {field: {"$exists": True}},
+                {"$unset": {field: ""}},
+            )
+            if result.modified_count:
+                _bootstrap_logger.info(
+                    "[PIPELINE-GEN] unset %s from %s (%s docs)",
+                    field,
+                    name,
+                    result.modified_count,
+                )
+        except Exception as exc:  # noqa: BLE001
+            _bootstrap_logger.warning(
+                "[PIPELINE-GEN] unset failed on %s: %s", name, exc
+            )
+
+    index_drops = (
+        ("interfaces", "idx_iface_pipeline_generation"),
+        ("storm_risk_history", "idx_risk_gen"),
+        ("storm_confirmation_history", "idx_confirm_gen"),
+        ("storm_safety_history", "idx_safety_gen"),
+        ("storm_mitigation_history", "idx_mitigation_gen"),
+        ("storm_recovery_history", "idx_recovery_gen"),
+        ("storm_incidents", "idx_incident_pipeline_generation_status"),
+        ("storm_incidents", "idx_incident_pipeline_generation_created"),
+    )
+    for collection, index_name in index_drops:
+        try:
+            db[collection].drop_index(index_name)
+            _bootstrap_logger.info(
+                "[PIPELINE-GEN] dropped index %s.%s", collection, index_name
+            )
+        except Exception:  # noqa: BLE001
+            pass
 
 
 bootstrap()

@@ -21,6 +21,7 @@ from typing import Any, Optional
 
 from bson import ObjectId
 
+from services.settings_service import get_settings
 from services.storm.diagnostics.collector import capture_diagnostics
 from services.storm.incident import (
     append_timeline_event,
@@ -52,11 +53,89 @@ def _oid(device_id):
     return device_id
 
 
+def _as_aware(ts: Any) -> Optional[datetime]:
+    if ts is None:
+        return None
+    if isinstance(ts, datetime):
+        if ts.tzinfo is None:
+            return ts.replace(tzinfo=timezone.utc)
+        return ts
+    return None
+
+
 def _latest_safety(device_id, interface: str) -> Optional[dict]:
     return _db().storm_safety_history.find_one(
         {"deviceId": _oid(device_id), "interface": interface},
         sort=[("timestamp", -1)],
     )
+
+
+def _latest_confirmation(device_id, interface: str) -> Optional[dict]:
+    from services.storm.confirmation_history import (  # noqa: PLC0415
+        load_latest_confirmation,
+    )
+
+    return load_latest_confirmation(device_id, interface)
+
+
+def _latest_risk(device_id, interface: str) -> Optional[dict]:
+    from services.storm.confirmation_history import load_latest_risk  # noqa: PLC0415
+
+    return load_latest_risk(device_id, interface)
+
+
+def _is_currently_confirmed(doc: Optional[dict]) -> bool:
+    if not doc:
+        return False
+    return bool(doc.get("confirmed")) or str(doc.get("state") or "").upper() == "CONFIRMED"
+
+
+def _validate_live_storm_gates(
+    device_id,
+    interface: str,
+    *,
+    safety_doc: Optional[dict],
+) -> tuple[bool, str]:
+    """
+    Mitigation may only be prepared for an *active* storm backed by fresh safety.
+
+    Gates
+    -----
+    1. Latest confirmation must be CONFIRMED
+    2. Latest risk must still be at/above remmitigation threshold
+    3. Latest safety must be safe=True AND not older than the confirmation
+    """
+    confirmation = _latest_confirmation(device_id, interface)
+    if not _is_currently_confirmed(confirmation):
+        return False, "Storm is not currently confirmed — fresh confirmation required"
+
+    settings = get_settings()
+    risk_threshold = float(settings.get("reMitigationThreshold", 75.0))
+    risk = _latest_risk(device_id, interface)
+    try:
+        score = float((risk or {}).get("riskScore") or 0.0)
+    except (TypeError, ValueError):
+        score = 0.0
+    if score < risk_threshold:
+        return (
+            False,
+            f"Risk no longer high ({score:.1f} < {risk_threshold:.0f}) — fresh storm required",
+        )
+
+    if not safety_doc or not safety_doc.get("safe"):
+        return False, (safety_doc or {}).get("reason") or "Safety result missing or unsafe"
+
+    safety_ts = _as_aware(safety_doc.get("timestamp"))
+    confirm_ts = _as_aware((confirmation or {}).get("timestamp"))
+    if safety_ts is None or confirm_ts is None:
+        return False, "Safety/confirmation timestamps missing — cannot verify freshness"
+    if safety_ts < confirm_ts:
+        return (
+            False,
+            "Safety result is stale relative to current confirmation — re-evaluate safety",
+        )
+
+    return True, "Live storm gates passed"
 
 
 def prepare(
@@ -69,6 +148,7 @@ def prepare(
     diagnostics: Optional[dict] = None,
     safety: Optional[dict] = None,
     incident_metadata: Optional[dict[str, Any]] = None,
+    require_live_storm: bool = True,
 ) -> dict[str, Any]:
     """
     Prepare the environment for mitigation without executing it.
@@ -76,10 +156,15 @@ def prepare(
     Steps
     -----
     1. Validate latest Safety Result (must be safe)
-    2. Capture Diagnostics (read-only)
-    3. Create Incident (one per open storm)
-    4. Build Mitigation Context
-    5. Return READY_FOR_MITIGATION
+    2. Validate live confirmation + risk + safety freshness (unless bypassed)
+    3. Capture Diagnostics (read-only)
+    4. Create Incident (one per open storm)
+    5. Build Mitigation Context
+    6. Return READY_FOR_MITIGATION
+
+    ``require_live_storm`` defaults True. Operator emergency/manual flows that
+    already created their own incident may call prepare with
+    ``require_live_storm=False`` only when explicitly justified by the caller.
     """
     name = str(interface or "").strip()
     device_key = str(device_id)
@@ -95,7 +180,7 @@ def prepare(
             "context": {},
         }
 
-    # 1) Validate safety
+    # 1) Validate safety document presence
     safety_doc = safety
     if safety_doc is None:
         try:
@@ -116,6 +201,23 @@ def prepare(
             "reason": reason,
             "context": {},
         }
+
+    # 1b) Live storm gates — never prepare from stale SAFE history alone
+    if require_live_storm:
+        ok, gate_reason = _validate_live_storm_gates(
+            device_id, name, safety_doc=safety_doc
+        )
+        if not ok:
+            logger.info("Mitigation preparation blocked | %s | %s", name, gate_reason)
+            return {
+                "ready": False,
+                "status": STATUS_BLOCKED,
+                "incidentId": None,
+                "deviceId": device_key,
+                "interface": name,
+                "reason": gate_reason,
+                "context": {},
+            }
 
     # Reuse open prepared incident if already ready
     existing = None
@@ -225,9 +327,11 @@ def prepare(
 
 def prepare_all_safe(*, probe_ssh: bool = True) -> dict[str, Any]:
     """
-    Run prepare() for every interface with a latest SAFE safety result.
+    Run prepare() for every interface whose *latest* confirmation is CONFIRMED
+    and whose *latest* safety result is SAFE.
 
-    Safe for APScheduler — never raises, never executes mitigation.
+    Selecting from confirmation (not safety history alone) prevents stale
+    SAFE rows from endlessly re-preparing mitigation after recovery.
     """
     logger.info("[ORCHESTRATOR] Bulk prepare started")
     total = 0
@@ -236,7 +340,8 @@ def prepare_all_safe(*, probe_ssh: bool = True) -> dict[str, Any]:
     errors = 0
 
     try:
-        pipeline = [
+        # Start from currently CONFIRMED storms (same selection idea as safety bulk).
+        confirm_pipeline = [
             {"$sort": {"timestamp": -1}},
             {
                 "$group": {
@@ -244,17 +349,47 @@ def prepare_all_safe(*, probe_ssh: bool = True) -> dict[str, Any]:
                         "deviceId": "$deviceId",
                         "interface": "$interface",
                     },
-                    "doc": {"$first": "$$ROOT"},
+                    "confirmed": {"$first": "$confirmed"},
+                    "state": {"$first": "$state"},
                 }
             },
-            {"$replaceRoot": {"newRoot": "$doc"}},
-            {"$match": {"safe": True}},
+            {
+                "$match": {
+                    "$or": [
+                        {"confirmed": True},
+                        {"state": "CONFIRMED"},
+                    ]
+                }
+            },
         ]
-        for row in _db().storm_safety_history.aggregate(pipeline):
-            device_id = row.get("deviceId")
-            name = row.get("interface")
+        for row in _db().storm_confirmation_history.aggregate(confirm_pipeline):
+            key = row.get("_id") or {}
+            device_id = key.get("deviceId")
+            name = key.get("interface")
             if device_id is None or not name:
                 continue
+            # Defense in depth — never prepare from a superseded confirmation.
+            try:
+                from services.storm.confirmation_history import (  # noqa: PLC0415
+                    load_latest_confirmation,
+                )
+
+                latest = load_latest_confirmation(device_id, name)
+                if not latest or not (
+                    latest.get("confirmed")
+                    or str(latest.get("state") or "").upper() == "CONFIRMED"
+                ):
+                    blocked += 1
+                    logger.info(
+                        "[ORCHESTRATOR] prepare skipped | %s | not currently confirmed",
+                        name,
+                    )
+                    continue
+            except Exception as exc:  # noqa: BLE001
+                errors += 1
+                logger.error("[ORCHESTRATOR] confirmation gate failed | %s | %s", name, exc)
+                continue
+
             total += 1
             try:
                 result = prepare(
@@ -262,7 +397,7 @@ def prepare_all_safe(*, probe_ssh: bool = True) -> dict[str, Any]:
                     name,
                     probe_ssh=probe_ssh,
                     require_safety=True,
-                    safety=row,
+                    require_live_storm=True,
                 )
                 if result.get("ready"):
                     ready += 1

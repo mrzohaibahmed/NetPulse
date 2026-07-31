@@ -253,13 +253,79 @@ class OrchestratorPrepareTests(unittest.TestCase):
         self.assertFalse(result["ready"])
         self.assertEqual(result["status"], STATUS_BLOCKED)
 
+    def test_prepare_blocked_when_storm_not_confirmed(self):
+        now = datetime.now(timezone.utc)
+        with patch(
+            "services.storm.orchestrator._latest_confirmation",
+            return_value={
+                "confirmed": False,
+                "state": "NOT_CONFIRMED",
+                "timestamp": now,
+            },
+        ), patch(
+            "services.storm.orchestrator._latest_risk",
+            return_value={"riskScore": 90.0, "timestamp": now},
+        ):
+            result = prepare(
+                "507f1f77bcf86cd799439011",
+                "Gi1/0/10",
+                require_safety=True,
+                persist=False,
+                safety={"safe": True, "reason": "ok", "timestamp": now},
+                diagnostics=_diag_package(),
+            )
+        self.assertFalse(result["ready"])
+        self.assertIn("not currently confirmed", result["reason"].lower())
+
+    def test_prepare_blocked_when_safety_stale_vs_confirmation(self):
+        confirm_ts = datetime.now(timezone.utc)
+        stale_safety_ts = confirm_ts.replace(year=confirm_ts.year - 1)
+        with patch(
+            "services.storm.orchestrator._latest_confirmation",
+            return_value={
+                "confirmed": True,
+                "state": "CONFIRMED",
+                "timestamp": confirm_ts,
+            },
+        ), patch(
+            "services.storm.orchestrator._latest_risk",
+            return_value={"riskScore": 90.0, "timestamp": confirm_ts},
+        ), patch(
+            "services.storm.orchestrator.get_settings",
+            return_value={"reMitigationThreshold": 75},
+        ):
+            result = prepare(
+                "507f1f77bcf86cd799439011",
+                "Gi1/0/10",
+                require_safety=True,
+                persist=False,
+                safety={"safe": True, "reason": "ok", "timestamp": stale_safety_ts},
+                diagnostics=_diag_package(),
+            )
+        self.assertFalse(result["ready"])
+        self.assertIn("stale", result["reason"].lower())
+
     def test_prepare_workflow_ready(self):
+        now = datetime.now(timezone.utc)
         with patch(
             "services.storm.orchestrator.find_open_incident",
             return_value=None,
         ), patch(
             "services.storm.orchestrator.append_timeline_event",
             return_value=None,
+        ), patch(
+            "services.storm.orchestrator._latest_confirmation",
+            return_value={
+                "confirmed": True,
+                "state": "CONFIRMED",
+                "timestamp": now,
+            },
+        ), patch(
+            "services.storm.orchestrator._latest_risk",
+            return_value={"riskScore": 96.0, "timestamp": now},
+        ), patch(
+            "services.storm.orchestrator.get_settings",
+            return_value={"reMitigationThreshold": 75},
         ):
             result = prepare(
                 "507f1f77bcf86cd799439011",
@@ -267,7 +333,7 @@ class OrchestratorPrepareTests(unittest.TestCase):
                 require_safety=True,
                 persist=False,
                 probe_ssh=False,
-                safety={"safe": True, "reason": "ok"},
+                safety={"safe": True, "reason": "ok", "timestamp": now},
                 diagnostics=_diag_package(),
             )
         self.assertTrue(result["ready"])

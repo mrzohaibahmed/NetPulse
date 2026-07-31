@@ -645,6 +645,9 @@ export interface RecoveryLog {
     success?: boolean
     error?: string
     output?: string
+    failedRule?: string | null
+    checks?: Record<string, boolean | null>
+    engine?: string
     stats?: {
       adminStatus?: string
       operStatus?: string
@@ -659,5 +662,9 @@ export interface RecoveryLog {
   }
   retryCount: number
   timestamp: string
+  /** Recovery Safety Engine — present on BLOCKED logs */
+  failedRule?: string | null
+  checks?: Record<string, boolean | null>
+  engine?: string
 }
 

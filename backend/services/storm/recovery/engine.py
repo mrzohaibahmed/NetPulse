@@ -43,10 +43,14 @@ def execute_recovery(
     *,
     force: bool = False,
     operator: str = "SYSTEM",
+    skip_policy_validation: bool = False,
 ) -> dict[str, Any]:
     """
-    Acquires recovery locks, runs policy validation (unless forced),
-    executes recovery strategy, runs verification, and handles retry incrementation.
+    Runs Recovery Safety (unless forced / pre-validated), acquires recovery locks,
+    executes recovery strategy, verifies, and handles retry incrementation.
+
+    skip_policy_validation: set by the scheduler after a successful
+    validate_recovery_policy() so SSH is not opened twice in one cycle.
     """
     db = _db()
     incident = get_incident(incident_id)
@@ -62,7 +66,22 @@ def execute_recovery(
     max_attempts = int(settings.get("maximumRecoveryAttempts", 3))
     stabilization_seconds = int(settings.get("stabilizationSeconds", 60))
 
-    # Concurrency Lock (shared with Safety and Mitigation)
+    # 1) Recovery Safety Engine BEFORE locks (cheap checks first; SSH only if needed).
+    #    Do not acquire locks until policy passes — avoids lock/R8 conflict and
+    #    avoids holding locks during a failing validation.
+    if not force and not skip_policy_validation:
+        val_res = validate_recovery_policy(incident_id)
+        if not val_res.get("passed"):
+            reason = val_res.get("reason") or "Policy rejected"
+            failed_rule = val_res.get("failedRule")
+            detail = f"{failed_rule}: {reason}" if failed_rule else reason
+            logger.warning(
+                "Recovery policy rejected | incident=%s | %s", incident_id, detail
+            )
+            append_timeline_event(incident_id, "Recovery Blocked", detail=detail)
+            raise ValueError(f"Recovery policy validation failed: {detail}")
+
+    # 2) Concurrency locks (R8 availability was checked by Recovery Safety)
     device_lock_id, interface_lock_id = LockService.acquire_recovery_locks(
         _oid(device_id), interface
     )
@@ -80,21 +99,12 @@ def execute_recovery(
     )
 
     try:
-        # 1) Validate conditions (unless forced)
-        if not force:
-            val_res = validate_recovery_policy(incident_id)
-            if not val_res.get("passed"):
-                reason = val_res.get("reason") or "Policy rejected"
-                logger.warning("Recovery policy rejected | incident=%s | %s", incident_id, reason)
-                append_timeline_event(incident_id, "Recovery Blocked", detail=reason)
-                raise ValueError(f"Recovery policy validation failed: {reason}")
-
         # Fetch device document
         device = db.devices.find_one({"_id": _oid(device_id)})
         if not device:
             raise ValueError(f"Device not found for ID: {device_id}")
 
-        # 2) Execute Recovery Strategy ("no shutdown")
+        # 3) Execute Recovery Strategy ("no shutdown")
         strategy = NoShutdownRecoveryStrategy()
         with SSHMitigationExecutor(device) as executor:
             vendor = executor.creds.vendor
@@ -116,16 +126,36 @@ def execute_recovery(
             now = datetime.now(timezone.utc)
             stab_end = now + timedelta(seconds=stabilization_seconds)
 
-            # Update incident status to MONITORING for stabilization period
+            # Update incident status to MONITORING for stabilization period.
+            # recoveredAt anchors remmitigation freshness checks.
             db.storm_incidents.update_one(
                 {"incidentId": incident_id},
                 {
                     "$set": {
                         "status": "MONITORING",
                         "stabilizationEnd": stab_end,
+                        "recoveredAt": now,
                         "updatedAt": now,
                     }
                 },
+            )
+
+            # Return pipeline to a clean monitoring baseline so stale SAFE /
+            # CONFIRMED history cannot immediately re-trigger mitigation.
+            from services.storm.recovery.post_recovery import (  # noqa: PLC0415
+                invalidate_pipeline_after_recovery,
+            )
+
+            invalidate_pipeline_after_recovery(
+                device_id,
+                interface,
+                incident_id=incident_id,
+                hostname=device.get("hostname") or incident.get("hostname"),
+                ip_address=device.get("ipAddress") or incident.get("ipAddress"),
+                reason=(
+                    "Post-recovery reset — fresh stats/confirmation/safety "
+                    "required before any new mitigation"
+                ),
             )
 
             # Collect stats
@@ -238,17 +268,51 @@ def trigger_re_mitigation(incident_id: str, reason: str) -> dict[str, Any]:
     target_incident_id = incident_id
 
     try:
-        # 1) Call orchestrator prepare
+        # 1) Re-evaluate Mitigation Safety against the *current* storm.
+        #    Post-recovery invalidation leaves latest safety as UNSAFE; do not
+        #    reuse that — require a fresh safety decision for remmitigation.
+        from services.storm.safety import evaluate as evaluate_safety  # noqa: PLC0415
+
+        safety_result = evaluate_safety(
+            device_id,
+            interface,
+            probe_ssh=True,
+            persist=True,
+        )
+        if not safety_result.safe:
+            reason_blocked = safety_result.reason or "Safety rejected remmitigation"
+            logger.error(
+                "Re-mitigation blocked by safety | incident=%s | %s",
+                incident_id,
+                reason_blocked,
+            )
+            return {
+                "success": False,
+                "incidentId": incident_id,
+                "status": "BLOCKED",
+                "error": reason_blocked,
+            }
+
+        # 2) Call orchestrator prepare (live storm gates + fresh safety)
         from services.storm.orchestrator import prepare as prepare_mitigation  # noqa: PLC0415
         prep_res = prepare_mitigation(
             device_id=device_id,
             interface=interface,
             probe_ssh=True,
             require_safety=True,
+            require_live_storm=True,
+            safety={
+                "safe": True,
+                "reason": safety_result.reason,
+                "failedRule": safety_result.failed_rule,
+                "status": safety_result.status,
+                "timestamp": safety_result.timestamp or datetime.now(timezone.utc),
+                "checks": dict(safety_result.checks or {}),
+            },
         )
         target_incident_id = str(prep_res.get("incidentId") or incident_id)
 
-        # 2) Call mitigation engine
+        # 3) Call mitigation engine
         if prep_res.get("ready"):
             append_timeline_event(
                 target_incident_id,

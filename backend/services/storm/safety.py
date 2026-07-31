@@ -423,14 +423,30 @@ def evaluate_all_safety(*, probe_ssh: bool = True) -> dict[str, Any]:
             name = key.get("interface")
             if device_id is None or not name:
                 continue
+            # Only evaluate interfaces whose latest confirmation is still CONFIRMED.
+            try:
+                from services.storm.confirmation_history import (  # noqa: PLC0415
+                    load_latest_confirmation,
+                )
+
+                latest = load_latest_confirmation(device_id, name)
+                if not latest or not (
+                    latest.get("confirmed")
+                    or str(latest.get("state") or "").upper() == "CONFIRMED"
+                ):
+                    continue
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("[SAFETY] Confirmation gate skipped %s: %s", name, exc)
+                continue
+
             total += 1
             try:
                 result = engine.evaluate(
                     device_id,
                     name,
                     probe_ssh=probe_ssh,
-                    hostname=row.get("hostname"),
-                    ip_address=row.get("ipAddress"),
+                    hostname=row.get("hostname") or (latest or {}).get("hostname"),
+                    ip_address=row.get("ipAddress") or (latest or {}).get("ipAddress"),
                     persist=True,
                 )
                 if result.safe:

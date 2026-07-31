@@ -72,6 +72,45 @@ def execute_mitigation(
             f"which is not allowed for strategy '{strategy_name}'."
         )
 
+    # Defense in depth: automatic SYSTEM shutdowns require a live CONFIRMED
+    # storm with a current SAFE safety result.
+    if strategy_name == "SHUTDOWN" and str(operator).upper() == "SYSTEM":
+        incident_type = str(
+            incident.get("incidentType") or incident.get("type") or "STORM"
+        ).upper()
+        if incident_type == "STORM":
+            latest_confirm = db.storm_confirmation_history.find_one(
+                {
+                    "deviceId": _oid(device_id),
+                    "interface": interface,
+                },
+                sort=[("timestamp", -1)],
+            )
+            confirmed = bool(
+                latest_confirm
+                and (
+                    latest_confirm.get("confirmed")
+                    or str(latest_confirm.get("state") or "").upper() == "CONFIRMED"
+                )
+            )
+            if not confirmed:
+                raise ValueError(
+                    "Mitigation rejected: storm is not currently confirmed. "
+                    "Automatic shutdown requires a fresh confirmation sequence."
+                )
+
+            latest_safety = db.storm_safety_history.find_one(
+                {
+                    "deviceId": _oid(device_id),
+                    "interface": interface,
+                },
+                sort=[("timestamp", -1)],
+            )
+            if not latest_safety or not latest_safety.get("safe"):
+                raise ValueError(
+                    "Mitigation rejected: latest safety result is not SAFE"
+                )
+
     # Instantiate strategy
     if strategy_name == "SHUTDOWN":
         strategy = ShutdownInterfaceStrategy()

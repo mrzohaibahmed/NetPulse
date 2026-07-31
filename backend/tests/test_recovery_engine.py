@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import unittest
 from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, call, patch
 
 from bson import ObjectId
 
@@ -107,81 +107,97 @@ class RecoveryEngineTests(unittest.TestCase):
             RecoveryState.REMITIGATE,
         )
 
-    @patch("services.storm.recovery.policy.get_incident")
-    @patch("services.storm.recovery.policy._db")
-    def test_policy_validation_all_passing(self, mock_db_fn, mock_get_incident):
-        """Test policy checks pass when all conditions are satisfied."""
-        mock_get_incident.return_value = self.incident_doc
-
-        fake_db = MagicMock()
-        fake_db.devices.find_one.return_value = self.device_doc
-        # Rule 1: Mitigation was 10 minutes ago (expired)
-        fake_db.storm_mitigation_history.find_one.return_value = {
-            "timestamp": datetime.now(timezone.utc) - timedelta(minutes=10),
-            "status": "SUCCESS",
-        }
-        # Rule 4: Storm NOT confirmed
-        fake_db.storm_confirmation_history.find_one.return_value = {
-            "confirmed": False,
-        }
-        # Rule 5: Risk is 20 (below threshold 75)
-        fake_db.storm_risk_history.find_one.return_value = {
-            "riskScore": 20.0,
-        }
-        mock_db_fn.return_value = fake_db
-
-        with patch("services.storm.recovery.policy.evaluate_safety") as mock_safety, \
-             patch("services.storm.recovery.policy.SSHMitigationExecutor") as mock_ssh_exec:
-            # Rule 3: SSH works
-            mock_ssh_exec.return_value.__enter__.return_value.collector = MagicMock()
-            # Rule 6: Safety passes
-            mock_safety.return_value.safe = True
-
+    def test_policy_validation_all_passing(self):
+        """Test policy checks pass when all recovery safety conditions are satisfied."""
+        # Delegates to Recovery Safety Engine — patch evaluate_recovery_safety.
+        with patch(
+            "services.storm.recovery.policy.evaluate_recovery_safety"
+        ) as mock_eval:
+            mock_eval.return_value = MagicMock(
+                to_api_dict=lambda: {
+                    "passed": True,
+                    "safe": True,
+                    "checks": {
+                        "stormCleared": True,
+                        "riskBelowThreshold": True,
+                        "cooldownExpired": True,
+                        "deviceReachable": True,
+                        "sshReachable": True,
+                        "interfaceAdminDown": True,
+                        "noNewerActiveIncident": True,
+                        "recoveryLockAvailable": True,
+                    },
+                    "reason": "All recovery safety checks passed",
+                    "failedRule": None,
+                    "status": "SAFE",
+                }
+            )
             res = validate_recovery_policy(self.incident_id)
             self.assertTrue(res["passed"], f"Policy check failed: {res.get('reason')}")
+            mock_eval.assert_called_once()
 
-    @patch("services.storm.recovery.policy.get_incident")
-    @patch("services.storm.recovery.policy._db")
-    def test_policy_fails_if_storm_confirmed(self, mock_db_fn, mock_get_incident):
-        """Test policy validation fails if storm confirmation status is still active."""
+    @patch(
+        "services.storm.recovery.safety.recovery_locks_available", return_value=True
+    )
+    @patch("services.storm.recovery.safety.SSHMitigationExecutor")
+    @patch("services.storm.recovery.safety.get_settings")
+    @patch("services.storm.recovery.safety.get_incident")
+    @patch("services.storm.recovery.safety._db")
+    def test_policy_fails_if_storm_confirmed(
+        self,
+        mock_db_fn,
+        mock_get_incident,
+        mock_settings,
+        mock_ssh,
+        _mock_locks,
+    ):
+        """Storm still confirmed → R1 fails (Recovery Safety, not Mitigation RULE_1)."""
         mock_get_incident.return_value = self.incident_doc
-
+        mock_settings.return_value = {
+            "cooldownMinutes": 5,
+            "reMitigationThreshold": 75.0,
+        }
         fake_db = MagicMock()
         fake_db.devices.find_one.return_value = self.device_doc
         fake_db.storm_mitigation_history.find_one.return_value = {
             "timestamp": datetime.now(timezone.utc) - timedelta(minutes=10),
             "status": "SUCCESS",
         }
-        # Rule 4: Storm IS active/confirmed!
-        fake_db.storm_confirmation_history.find_one.return_value = {
-            "confirmed": True,
-        }
-        fake_db.storm_risk_history.find_one.return_value = {
-            "riskScore": 15.0,
-        }
+        fake_db.storm_confirmation_history.find_one.return_value = {"confirmed": True}
+        fake_db.storm_risk_history.find_one.return_value = {"riskScore": 15.0}
+        fake_db.storm_incidents.find_one.return_value = None
         mock_db_fn.return_value = fake_db
 
-        with patch("services.storm.recovery.policy.evaluate_safety") as mock_safety, \
-             patch("services.storm.recovery.policy.SSHMitigationExecutor") as mock_ssh_exec:
-            mock_ssh_exec.return_value.__enter__.return_value.collector = MagicMock()
-            mock_safety.return_value.safe = True
+        res = validate_recovery_policy(self.incident_id)
+        self.assertFalse(res["passed"])
+        self.assertFalse(res["checks"]["stormCleared"])
+        self.assertEqual(res["failedRule"], "R1")
+        mock_ssh.assert_not_called()
 
-            res = validate_recovery_policy(self.incident_id)
-            self.assertFalse(res["passed"])
-            self.assertFalse(res["checks"]["stormNotConfirmed"])
-
-    @patch("services.storm.recovery.policy.get_incident")
-    @patch("services.storm.recovery.policy._db")
+    @patch(
+        "services.storm.recovery.safety.recovery_locks_available", return_value=True
+    )
+    @patch("services.storm.recovery.safety.SSHMitigationExecutor")
+    @patch("services.storm.recovery.safety.get_settings")
+    @patch("services.storm.recovery.safety.get_incident")
+    @patch("services.storm.recovery.safety._db")
     def test_policy_offline_stale_response_time_not_reachable(
-        self, mock_db_fn, mock_get_incident
+        self,
+        mock_db_fn,
+        mock_get_incident,
+        mock_settings,
+        mock_ssh,
+        _mock_locks,
     ):
-        """Offline status with a leftover non-null responseTime must not pass Rule 2."""
+        """Offline status with leftover responseTime must not pass R4."""
         mock_get_incident.return_value = self.incident_doc
-
+        mock_settings.return_value = {
+            "cooldownMinutes": 5,
+            "reMitigationThreshold": 75.0,
+        }
         offline_device = dict(self.device_doc)
         offline_device["status"] = "Not Reachable"
         offline_device["responseTime"] = 12.5
-        offline_device["lastSeen"] = datetime.now(timezone.utc) - timedelta(hours=2)
 
         fake_db = MagicMock()
         fake_db.devices.find_one.return_value = offline_device
@@ -191,25 +207,36 @@ class RecoveryEngineTests(unittest.TestCase):
         }
         fake_db.storm_confirmation_history.find_one.return_value = {"confirmed": False}
         fake_db.storm_risk_history.find_one.return_value = {"riskScore": 10.0}
+        fake_db.storm_incidents.find_one.return_value = None
         mock_db_fn.return_value = fake_db
 
-        with patch("services.storm.recovery.policy.evaluate_safety") as mock_safety, \
-             patch("services.storm.recovery.policy.SSHMitigationExecutor") as mock_ssh_exec:
-            mock_ssh_exec.return_value.__enter__.return_value.collector = MagicMock()
-            mock_safety.return_value.safe = True
+        res = validate_recovery_policy(self.incident_id)
+        self.assertFalse(res["checks"]["deviceReachable"])
+        self.assertFalse(res["passed"])
+        self.assertEqual(res["failedRule"], "R4")
+        mock_ssh.assert_not_called()
 
-            res = validate_recovery_policy(self.incident_id)
-            self.assertFalse(res["checks"]["deviceReachable"])
-            self.assertFalse(res["passed"])
-
-    @patch("services.storm.recovery.policy.get_incident")
-    @patch("services.storm.recovery.policy._db")
+    @patch(
+        "services.storm.recovery.safety.recovery_locks_available", return_value=True
+    )
+    @patch("services.storm.recovery.safety.SSHMitigationExecutor")
+    @patch("services.storm.recovery.safety.get_settings")
+    @patch("services.storm.recovery.safety.get_incident")
+    @patch("services.storm.recovery.safety._db")
     def test_policy_online_status_is_reachable_regardless_of_response_time(
-        self, mock_db_fn, mock_get_incident
+        self,
+        mock_db_fn,
+        mock_get_incident,
+        mock_settings,
+        mock_ssh,
+        _mock_locks,
     ):
-        """Online status is authoritative for Rule 2 even when responseTime is null."""
+        """Online status is authoritative for R4 even when responseTime is null."""
         mock_get_incident.return_value = self.incident_doc
-
+        mock_settings.return_value = {
+            "cooldownMinutes": 5,
+            "reMitigationThreshold": 75.0,
+        }
         online_device = dict(self.device_doc)
         online_device["status"] = "Online"
         online_device["responseTime"] = None
@@ -222,15 +249,20 @@ class RecoveryEngineTests(unittest.TestCase):
         }
         fake_db.storm_confirmation_history.find_one.return_value = {"confirmed": False}
         fake_db.storm_risk_history.find_one.return_value = {"riskScore": 10.0}
+        fake_db.storm_incidents.find_one.return_value = None
+        fake_db.interfaces.find_one.return_value = {"adminStatus": "down"}
         mock_db_fn.return_value = fake_db
+        mock_ssh.return_value.__enter__.return_value.collector = MagicMock()
 
-        with patch("services.storm.recovery.policy.evaluate_safety") as mock_safety, \
-             patch("services.storm.recovery.policy.SSHMitigationExecutor") as mock_ssh_exec:
-            mock_ssh_exec.return_value.__enter__.return_value.collector = MagicMock()
-            mock_safety.return_value.safe = True
-
+        with patch(
+            "services.storm.diagnostics.snapshots.parse_interface_snapshot",
+            return_value={"adminStatus": "down", "available": True},
+        ):
             res = validate_recovery_policy(self.incident_id)
-            self.assertTrue(res["checks"]["deviceReachable"])
+
+        self.assertTrue(res["checks"]["deviceReachable"])
+        self.assertTrue(res["passed"])
+        self.assertIsNone(res.get("failedRule"))
 
     @patch("services.storm.recovery.engine.collect_post_recovery_stats")
     @patch("services.storm.recovery.engine.LockService.release_recovery_locks")
@@ -239,8 +271,10 @@ class RecoveryEngineTests(unittest.TestCase):
     @patch("services.storm.recovery.engine._db")
     @patch("services.storm.recovery.engine.validate_recovery_policy")
     @patch("services.storm.recovery.engine.SSHMitigationExecutor")
+    @patch("services.storm.recovery.post_recovery.invalidate_pipeline_after_recovery")
     def test_successful_recovery_execution(
         self,
+        mock_invalidate,
         mock_ssh,
         mock_val,
         mock_db_fn,
@@ -252,6 +286,7 @@ class RecoveryEngineTests(unittest.TestCase):
         """Test successful recovery execute, verification, and status monitoring transition."""
         mock_get_incident.return_value = self.incident_doc
         mock_val.return_value = {"passed": True}
+        mock_invalidate.return_value = {"ok": True, "cancelledIncidents": 0}
 
         fake_db = MagicMock()
         fake_db.devices.find_one.return_value = self.device_doc
@@ -275,11 +310,16 @@ class RecoveryEngineTests(unittest.TestCase):
             {
                 "$set": {
                     "status": "MONITORING",
-                    "stabilizationEnd": unittest.mock.ANY,
-                    "updatedAt": unittest.mock.ANY,
+                    "stabilizationEnd": ANY,
+                    "recoveredAt": ANY,
+                    "updatedAt": ANY,
                 }
             },
         )
+        mock_invalidate.assert_called_once()
+        self.assertEqual(mock_invalidate.call_args[0][0], self.device_id)
+        self.assertEqual(mock_invalidate.call_args[0][1], self.interface)
+        self.assertNotIn("advance_generation", mock_invalidate.call_args.kwargs)
 
     @patch("services.storm.recovery.engine.LockService.release_recovery_locks")
     @patch("services.storm.recovery.engine.LockService.acquire_recovery_locks")
@@ -321,7 +361,7 @@ class RecoveryEngineTests(unittest.TestCase):
             {
                 "$set": {
                     "recoveryRetryCount": 1,
-                    "updatedAt": unittest.mock.ANY,
+                    "updatedAt": ANY,
                 }
             },
         )
@@ -426,7 +466,7 @@ class RecoveryEngineTests(unittest.TestCase):
             {
                 "$set": {
                     "status": "RECOVERY_FAILED",
-                    "updatedAt": unittest.mock.ANY,
+                    "updatedAt": ANY,
                 }
             },
         )
@@ -446,25 +486,44 @@ class RecoveryEngineTests(unittest.TestCase):
         ), self.assertRaises(ValueError):
             execute_recovery(self.incident_id)
 
+    @patch("services.storm.recovery.scheduler.get_settings")
     @patch("services.storm.recovery.scheduler.record_recovery_history")
     @patch("services.storm.recovery.scheduler.db")
     @patch("services.storm.recovery.scheduler.trigger_re_mitigation")
     def test_scheduler_stabilization_re_mitigates_if_storm_reappears(
-        self, mock_trigger, mock_db, mock_record_history
+        self, mock_trigger, mock_db, mock_record_history, mock_settings
     ):
         """Test that scheduling cycle triggers re-mitigation if storm reappears during stabilization."""
-        # Mock incident in MONITORING status
+        mock_settings.return_value = {
+            "autoRecovery": True,
+            "reMitigationThreshold": 75.0,
+            "maximumRecoveryAttempts": 3,
+        }
+        # Mock incident in MONITORING status with recoveredAt anchor
+        recovered_at = datetime.now(timezone.utc) - timedelta(seconds=20)
         inc = dict(self.incident_doc)
         inc["status"] = "MONITORING"
+        inc["recoveredAt"] = recovered_at
         inc["stabilizationEnd"] = datetime.now(timezone.utc) + timedelta(seconds=30)
-        mock_db.storm_incidents.find.return_value = [inc]
 
-        # Storm confirmed reappearance
+        def find_side_effect(query):
+            if query.get("status") == "MONITORING":
+                return [inc]
+            # Do not bleed MONITORING rows into the MITIGATED sweep.
+            return []
+
+        mock_db.storm_incidents.find.side_effect = find_side_effect
+
+        # Storm confirmed AFTER recovery (fresh evidence only)
         mock_db.storm_confirmation_history.find_one.return_value = {
             "confirmed": True,
+            "state": "CONFIRMED",
+            "timestamp": recovered_at + timedelta(seconds=5),
+            "reset": False,
         }
         mock_db.storm_risk_history.find_one.return_value = {
             "riskScore": 90.0,
+            "timestamp": recovered_at + timedelta(seconds=5),
         }
 
         mock_trigger.return_value = {
@@ -474,7 +533,10 @@ class RecoveryEngineTests(unittest.TestCase):
         }
         run_recovery_cycle()
         # Verify trigger_re_mitigation called
-        mock_trigger.assert_called_with(self.incident_id, "Storm confirmed by confirmation engine.")
+        mock_trigger.assert_called_with(
+            self.incident_id,
+            "Storm confirmed by confirmation engine after recovery.",
+        )
         mock_record_history.assert_called_with(
             incident_id="storm-2026-000099",
             device_id=self.device_id,
@@ -482,7 +544,10 @@ class RecoveryEngineTests(unittest.TestCase):
             recovery_status="REMITIGATED",
             verification_result={
                 "success": False,
-                "error": "Storm re-mitigated: Storm confirmed by confirmation engine.",
+                "error": (
+                    "Storm re-mitigated: Storm confirmed by confirmation "
+                    "engine after recovery."
+                ),
             },
             retry_count=0,
         )
@@ -561,46 +626,65 @@ class RecoveryEngineTests(unittest.TestCase):
 
         mock_validate.assert_called_once_with(self.incident_id)
         mock_execute.assert_called_once_with(
-            self.incident_id, force=False, operator="SYSTEM"
+            self.incident_id,
+            force=False,
+            operator="SYSTEM",
+            skip_policy_validation=True,
         )
 
-    @patch("services.storm.recovery.policy.get_incident")
-    @patch("services.storm.recovery.policy._db")
-    def test_policy_rule7_rejects_mitigation_failed(
-        self, mock_db_fn, mock_get_incident
+    @patch(
+        "services.storm.recovery.safety.recovery_locks_available", return_value=True
+    )
+    @patch("services.storm.recovery.safety.SSHMitigationExecutor")
+    @patch("services.storm.recovery.safety.get_settings")
+    @patch("services.storm.recovery.safety.get_incident")
+    @patch("services.storm.recovery.safety._db")
+    def test_policy_rejects_mitigation_failed(
+        self,
+        mock_db_fn,
+        mock_get_incident,
+        mock_settings,
+        mock_ssh,
+        _mock_locks,
     ):
-        """Rule 7 must fail for true MITIGATION_FAILED (nothing to recover)."""
+        """MITIGATION_FAILED is not recoverable (port was never shut down)."""
         failed_incident = dict(self.incident_doc)
         failed_incident["status"] = "MITIGATION_FAILED"
         mock_get_incident.return_value = failed_incident
-
-        fake_db = MagicMock()
-        fake_db.devices.find_one.return_value = self.device_doc
-        fake_db.storm_mitigation_history.find_one.return_value = {
-            "timestamp": datetime.now(timezone.utc) - timedelta(minutes=10),
-            "status": "SUCCESS",
+        mock_settings.return_value = {
+            "cooldownMinutes": 5,
+            "reMitigationThreshold": 75.0,
         }
-        fake_db.storm_confirmation_history.find_one.return_value = {"confirmed": False}
-        fake_db.storm_risk_history.find_one.return_value = {"riskScore": 10.0}
-        mock_db_fn.return_value = fake_db
+        mock_db_fn.return_value = MagicMock()
 
-        with patch("services.storm.recovery.policy.evaluate_safety") as mock_safety, \
-             patch("services.storm.recovery.policy.SSHMitigationExecutor") as mock_ssh_exec:
-            mock_ssh_exec.return_value.__enter__.return_value.collector = MagicMock()
-            mock_safety.return_value.safe = True
+        res = validate_recovery_policy(self.incident_id)
+        self.assertFalse(res["passed"])
+        self.assertEqual(res["failedRule"], "R0")
+        mock_ssh.assert_not_called()
 
-            res = validate_recovery_policy(self.incident_id)
-            self.assertFalse(res["checks"]["incidentStillOpen"])
-            self.assertFalse(res["passed"])
-
-    @patch("services.storm.recovery.policy.evaluate_safety")
-    @patch("services.storm.recovery.policy.SSHMitigationExecutor")
-    @patch("services.storm.recovery.policy.get_incident")
-    @patch("services.storm.recovery.policy._db")
-    def test_policy_bypasses_only_ssh_rule(
-        self, mock_db_fn, mock_get_incident, mock_ssh_exec, mock_safety
+    @patch("services.storm.safety.evaluate")
+    @patch(
+        "services.storm.recovery.safety.recovery_locks_available", return_value=True
+    )
+    @patch("services.storm.recovery.safety.SSHMitigationExecutor")
+    @patch("services.storm.recovery.safety.get_settings")
+    @patch("services.storm.recovery.safety.get_incident")
+    @patch("services.storm.recovery.safety._db")
+    def test_policy_does_not_call_mitigation_safety(
+        self,
+        mock_db_fn,
+        mock_get_incident,
+        mock_settings,
+        mock_ssh,
+        _mock_locks,
+        mock_mitigation_safety,
     ):
+        """Recovery policy must use Recovery Safety only — never Mitigation Safety."""
         mock_get_incident.return_value = self.incident_doc
+        mock_settings.return_value = {
+            "cooldownMinutes": 5,
+            "reMitigationThreshold": 75.0,
+        }
         fake_db = MagicMock()
         fake_db.devices.find_one.return_value = self.device_doc
         fake_db.storm_mitigation_history.find_one.return_value = {
@@ -609,36 +693,47 @@ class RecoveryEngineTests(unittest.TestCase):
         }
         fake_db.storm_confirmation_history.find_one.return_value = {"confirmed": False}
         fake_db.storm_risk_history.find_one.return_value = {"riskScore": 20.0}
+        fake_db.storm_incidents.find_one.return_value = None
+        fake_db.interfaces.find_one.return_value = {"adminStatus": "down"}
         mock_db_fn.return_value = fake_db
-        mock_ssh_exec.return_value.__enter__.return_value.collector = MagicMock()
-        mock_safety.return_value.safe = True
+        mock_ssh.return_value.__enter__.return_value.collector = MagicMock()
 
-        res = validate_recovery_policy(self.incident_id)
+        with patch(
+            "services.storm.diagnostics.snapshots.parse_interface_snapshot",
+            return_value={"adminStatus": "down", "available": True},
+        ):
+            res = validate_recovery_policy(self.incident_id)
 
         self.assertTrue(res["passed"])
-        mock_safety.assert_called_once_with(
-            device_id=self.device_id,
-            interface=self.interface,
-            probe_ssh=False,
-            skip_check_codes={"RULE_3"},
-            persist=False,
-        )
+        mock_mitigation_safety.assert_not_called()
+        self.assertNotIn("safetyPassed", res["checks"])
+        self.assertIn("stormCleared", res["checks"])
 
     @patch("services.storm.recovery.engine.append_timeline_event")
     @patch("services.storm.mitigation.engine.execute_mitigation")
     @patch("services.storm.orchestrator.prepare")
+    @patch("services.storm.safety.evaluate")
     @patch("services.storm.recovery.engine.get_incident")
     @patch("services.storm.recovery.engine._db")
     def test_trigger_re_mitigation_uses_prepared_incident_id(
         self,
         mock_db_fn,
         mock_get_incident,
+        mock_safety,
         mock_prepare,
         mock_execute_mitigation,
         mock_append_timeline,
     ):
         mock_get_incident.return_value = dict(self.incident_doc, status="MONITORING")
         mock_db_fn.return_value = MagicMock()
+        mock_safety.return_value = MagicMock(
+            safe=True,
+            reason="All safety checks passed",
+            failed_rule=None,
+            status="SAFE",
+            timestamp=datetime.now(timezone.utc),
+            checks={"stormConfirmed": True},
+        )
         mock_prepare.return_value = {
             "ready": True,
             "incidentId": "storm-2026-000123",
@@ -654,11 +749,12 @@ class RecoveryEngineTests(unittest.TestCase):
 
         self.assertTrue(res["success"])
         self.assertEqual(res["incidentId"], "storm-2026-000123")
+        mock_safety.assert_called_once()
         mock_execute_mitigation.assert_called_once_with(
             "storm-2026-000123", "SHUTDOWN", operator="SYSTEM"
         )
         self.assertIn(
-            unittest.mock.call(
+            call(
                 "storm-2026-000123",
                 "Re-Mitigation Started",
                 detail=f"Triggered by recovery incident {self.incident_id}",
