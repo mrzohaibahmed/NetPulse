@@ -174,6 +174,35 @@ def execute_recovery(
                 retry_count=retry_count,
             )
 
+            # Automatic (SYSTEM) verified recovery only — never block the workflow.
+            if str(operator).upper() == "SYSTEM":
+                try:
+                    from services.email_service import (  # noqa: PLC0415
+                        send_storm_recovery_notification,
+                    )
+
+                    refreshed = get_incident(incident_id) or incident
+                    send_storm_recovery_notification(
+                        refreshed,
+                        verification_result={
+                            "success": True,
+                            "output": verification_output,
+                            "stats": stats,
+                        },
+                        reason=(
+                            "Automatic recovery verified — port restored "
+                            "(stabilization monitoring started)"
+                        ),
+                        operator=operator,
+                        recovered_at=now,
+                    )
+                except Exception as mail_exc:  # noqa: BLE001
+                    logger.warning(
+                        "Storm recovery email failed | incident=%s | %s",
+                        incident_id,
+                        mail_exc,
+                    )
+
             return {
                 "success": True,
                 "status": "MONITORING",
@@ -239,6 +268,31 @@ def execute_recovery(
             },
             retry_count=retry_count,
         )
+
+        if str(operator).upper() == "SYSTEM":
+            try:
+                from services.email_service import (  # noqa: PLC0415
+                    send_storm_recovery_failure,
+                )
+
+                refreshed = get_incident(incident_id) or incident
+                send_storm_recovery_failure(
+                    refreshed,
+                    verification_result={
+                        "success": False,
+                        "error": str(exc),
+                        "output": verification_output,
+                    },
+                    reason=str(exc),
+                    operator=operator,
+                    action_status=history_status,
+                )
+            except Exception as mail_exc:  # noqa: BLE001
+                logger.warning(
+                    "Storm recovery failure email failed | incident=%s | %s",
+                    incident_id,
+                    mail_exc,
+                )
 
         return {
             "success": False,

@@ -31,6 +31,16 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "reMitigationThreshold": int(os.getenv("STORM_RE_MITIGATION_THRESHOLD", "75")),
     "dataRetentionDays": int(os.getenv("DATA_RETENTION_DAYS", "90")),
     "incidentRetentionDays": int(os.getenv("INCIDENT_RETENTION_DAYS", "365")),
+    "stormNotifications": {
+        "enabled": os.getenv("STORM_EMAIL_ENABLED", "true").lower() in ("1", "true", "yes"),
+        "shutdownEmails": os.getenv("STORM_EMAIL_SHUTDOWN", "true").lower()
+        in ("1", "true", "yes"),
+        "recoveryEmails": os.getenv("STORM_EMAIL_RECOVERY", "true").lower()
+        in ("1", "true", "yes"),
+        "failureEmails": os.getenv("STORM_EMAIL_FAILURE", "true").lower()
+        in ("1", "true", "yes"),
+        "toAddress": (os.getenv("STORM_EMAIL_TO") or "").strip(),
+    },
     "updatedAt": None,
 }
 
@@ -78,7 +88,20 @@ def get_public_settings():
         "reMitigationThreshold": int(settings.get("reMitigationThreshold", 75)),
         "dataRetentionDays": int(settings.get("dataRetentionDays", 90)),
         "incidentRetentionDays": int(settings.get("incidentRetentionDays", 365)),
+        "stormNotifications": _public_storm_notifications(settings),
         "updatedAt": settings.get("updatedAt"),
+    }
+
+
+def _public_storm_notifications(settings: dict) -> dict[str, Any]:
+    defaults = DEFAULT_SETTINGS["stormNotifications"]
+    raw = settings.get("stormNotifications") or {}
+    return {
+        "enabled": bool(raw.get("enabled", defaults["enabled"])),
+        "shutdownEmails": bool(raw.get("shutdownEmails", defaults["shutdownEmails"])),
+        "recoveryEmails": bool(raw.get("recoveryEmails", defaults["recoveryEmails"])),
+        "failureEmails": bool(raw.get("failureEmails", defaults["failureEmails"])),
+        "toAddress": str(raw.get("toAddress") or defaults.get("toAddress") or "").strip(),
     }
 
 
@@ -161,6 +184,23 @@ def update_settings(payload: dict):
         update["incidentRetentionDays"] = clamp_incident_retention_days(
             payload["incidentRetentionDays"]
         )
+
+    if "stormNotifications" in payload and isinstance(payload["stormNotifications"], dict):
+        current_storm = dict(
+            current.get("stormNotifications") or DEFAULT_SETTINGS["stormNotifications"]
+        )
+        incoming = payload["stormNotifications"]
+        if "enabled" in incoming and incoming["enabled"] is not None:
+            current_storm["enabled"] = bool(incoming["enabled"])
+        if "shutdownEmails" in incoming and incoming["shutdownEmails"] is not None:
+            current_storm["shutdownEmails"] = bool(incoming["shutdownEmails"])
+        if "recoveryEmails" in incoming and incoming["recoveryEmails"] is not None:
+            current_storm["recoveryEmails"] = bool(incoming["recoveryEmails"])
+        if "failureEmails" in incoming and incoming["failureEmails"] is not None:
+            current_storm["failureEmails"] = bool(incoming["failureEmails"])
+        if "toAddress" in incoming and incoming["toAddress"] is not None:
+            current_storm["toAddress"] = str(incoming["toAddress"]).strip()
+        update["stormNotifications"] = current_storm
 
     db.settings.update_one({"_id": SETTINGS_ID}, {"$set": update})
     updated_doc = get_settings()
