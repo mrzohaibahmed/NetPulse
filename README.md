@@ -225,6 +225,7 @@ Additional gates:
 | `reMitigationThreshold` | Risk score that can re-trigger after recovery | `75` |
 | `dataRetentionDays` | TTL for ping/stats/evaluation history | `90` |
 | `incidentRetentionDays` | Retention for closed incidents + attempt logs | `365` |
+| `stormNotifications` | Enable storm emails (shutdown / recovery / failure) + recipient | enabled |
 
 Deep dive on interface collection: [`backend/services/interface_collection/README.md`](backend/services/interface_collection/README.md).
 

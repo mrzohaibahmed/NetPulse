@@ -178,6 +178,13 @@ export interface AppSettings {
   reMitigationThreshold?: number
   dataRetentionDays?: number
   incidentRetentionDays?: number
+  stormNotifications?: {
+    enabled: boolean
+    shutdownEmails: boolean
+    recoveryEmails: boolean
+    failureEmails: boolean
+    toAddress: string
+  }
   updatedAt: string | null
 }
 

@@ -33,6 +33,11 @@ const schema = z.object({
   reMitigationThreshold: z.number().min(1).max(100),
   dataRetentionDays: z.number().min(7).max(3650),
   incidentRetentionDays: z.number().min(30).max(3650),
+  stormNotificationsEnabled: z.boolean(),
+  stormShutdownEmails: z.boolean(),
+  stormRecoveryEmails: z.boolean(),
+  stormFailureEmails: z.boolean(),
+  stormEmailTo: z.string(),
 })
 
 type FormValues = z.infer<typeof schema>
@@ -62,6 +67,11 @@ export function SettingsPage() {
       reMitigationThreshold: 75,
       dataRetentionDays: 90,
       incidentRetentionDays: 365,
+      stormNotificationsEnabled: true,
+      stormShutdownEmails: true,
+      stormRecoveryEmails: true,
+      stormFailureEmails: true,
+      stormEmailTo: '',
     },
   })
 
@@ -86,6 +96,11 @@ export function SettingsPage() {
       reMitigationThreshold: data.reMitigationThreshold ?? 75,
       dataRetentionDays: data.dataRetentionDays ?? 90,
       incidentRetentionDays: data.incidentRetentionDays ?? 365,
+      stormNotificationsEnabled: data.stormNotifications?.enabled ?? true,
+      stormShutdownEmails: data.stormNotifications?.shutdownEmails ?? true,
+      stormRecoveryEmails: data.stormNotifications?.recoveryEmails ?? true,
+      stormFailureEmails: data.stormNotifications?.failureEmails ?? true,
+      stormEmailTo: data.stormNotifications?.toAddress ?? '',
     })
   }, [settingsQuery.data, form])
 
@@ -127,6 +142,13 @@ export function SettingsPage() {
       reMitigationThreshold: values.reMitigationThreshold,
       dataRetentionDays: values.dataRetentionDays,
       incidentRetentionDays: values.incidentRetentionDays,
+      stormNotifications: {
+        enabled: values.stormNotificationsEnabled,
+        shutdownEmails: values.stormShutdownEmails,
+        recoveryEmails: values.stormRecoveryEmails,
+        failureEmails: values.stormFailureEmails,
+        toAddress: values.stormEmailTo.trim(),
+      },
     })
     form.setValue('smtpPassword', '')
   })
@@ -135,7 +157,7 @@ export function SettingsPage() {
     <div className="space-y-6">
       <PageHeader
         title="Settings"
-        description="Configure global ping parameters and SMTP email alerts"
+        description="Configure global ping parameters, SMTP, and storm email notifications"
       />
 
       <form className="space-y-6" onSubmit={(e) => void onSubmit(e)}>
@@ -240,6 +262,65 @@ export function SettingsPage() {
               />
               Use TLS
             </label>
+          </CardContent>
+        </Card>
+
+        <Card className="glass">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Mail className="h-5 w-5 text-primary" />
+              Storm email notifications
+            </CardTitle>
+            <CardDescription>
+              Automatic emails after verified shutdown/recovery (and failures). Uses the SMTP
+              settings above. Leave recipient blank to use the alert recipient.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <label className="flex items-center gap-2 text-sm">
+              <Checkbox
+                checked={form.watch('stormNotificationsEnabled')}
+                onCheckedChange={(checked) =>
+                  form.setValue('stormNotificationsEnabled', Boolean(checked))
+                }
+              />
+              Enable storm notifications
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <Checkbox
+                checked={form.watch('stormShutdownEmails')}
+                onCheckedChange={(checked) =>
+                  form.setValue('stormShutdownEmails', Boolean(checked))
+                }
+              />
+              Enable shutdown emails
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <Checkbox
+                checked={form.watch('stormRecoveryEmails')}
+                onCheckedChange={(checked) =>
+                  form.setValue('stormRecoveryEmails', Boolean(checked))
+                }
+              />
+              Enable recovery emails
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <Checkbox
+                checked={form.watch('stormFailureEmails')}
+                onCheckedChange={(checked) =>
+                  form.setValue('stormFailureEmails', Boolean(checked))
+                }
+              />
+              Enable failure emails
+            </label>
+            <div className="space-y-1.5 max-w-md">
+              <Label htmlFor="stormEmailTo">Storm notification recipient</Label>
+              <Input
+                id="stormEmailTo"
+                placeholder="Leave blank to use SMTP alert recipient"
+                {...form.register('stormEmailTo')}
+              />
+            </div>
           </CardContent>
         </Card>
 

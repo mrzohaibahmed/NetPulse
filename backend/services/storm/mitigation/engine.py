@@ -209,10 +209,14 @@ def execute_mitigation(
         event_name = "Shutdown Executed" if strategy_name == "SHUTDOWN" else "No Shutdown Executed"
         append_timeline_event(incident_id, event_name)
 
+        now = datetime.now(timezone.utc)
         new_status = "MITIGATED" if strategy_name == "SHUTDOWN" else "RESOLVED"
+        status_set: dict[str, Any] = {"status": new_status, "updatedAt": now}
+        if strategy_name == "SHUTDOWN":
+            status_set["mitigatedAt"] = now
         db.storm_incidents.update_one(
             {"incidentId": incident_id},
-            {"$set": {"status": new_status, "updatedAt": datetime.now(timezone.utc)}},
+            {"$set": status_set},
         )
 
         record_mitigation_history(
@@ -233,6 +237,34 @@ def execute_mitigation(
             session_id=audit_context.get("sessionId"),
             reason=audit_context.get("reason"),
         )
+
+        # Automatic (SYSTEM) verified shutdown only — never block the workflow.
+        if strategy_name == "SHUTDOWN" and str(operator).upper() == "SYSTEM":
+            try:
+                from services.email_service import (  # noqa: PLC0415
+                    send_storm_shutdown_notification,
+                )
+
+                refreshed = get_incident(incident_id) or incident
+                send_storm_shutdown_notification(
+                    refreshed,
+                    verification_result={
+                        "success": True,
+                        "output": verification_output,
+                    },
+                    reason=(
+                        (audit_context or {}).get("reason")
+                        or refreshed.get("reason")
+                        or "Storm confirmed — automatic port shutdown"
+                    ),
+                    operator=operator,
+                )
+            except Exception as mail_exc:  # noqa: BLE001
+                logger.warning(
+                    "Storm shutdown email failed | incident=%s | %s",
+                    incident_id,
+                    mail_exc,
+                )
 
         return {
             "success": True,
@@ -295,6 +327,32 @@ def execute_mitigation(
         )
 
         safe_error = "Mitigation verification failed" if verification_passed is False else "Mitigation execution failed"
+
+        if strategy_name == "SHUTDOWN" and str(operator).upper() == "SYSTEM":
+            try:
+                from services.email_service import (  # noqa: PLC0415
+                    send_storm_mitigation_failure,
+                )
+
+                refreshed = get_incident(incident_id) or incident
+                send_storm_mitigation_failure(
+                    refreshed,
+                    verification_result={
+                        "success": False,
+                        "error": safe_error,
+                        "output": verification_output,
+                    },
+                    reason=safe_error,
+                    operator=operator,
+                    action_status=new_status,
+                )
+            except Exception as mail_exc:  # noqa: BLE001
+                logger.warning(
+                    "Storm mitigation failure email failed | incident=%s | %s",
+                    incident_id,
+                    mail_exc,
+                )
+
         return {
             "success": False,
             "status": history_status,
