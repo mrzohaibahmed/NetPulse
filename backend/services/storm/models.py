@@ -150,10 +150,7 @@ class NormalizedInterface:
             is_protected=_coerce_bool(
                 raw.get("is_protected", raw.get("isProtected")), False
             ),
-            monitoring_enabled=_coerce_bool(
-                raw.get("monitoring_enabled", raw.get("monitoringEnabled")),
-                True,
-            ),
+            monitoring_enabled=_resolve_monitoring_preference(raw),
             port_mode=port_mode,
             neighbor=raw.get("neighbor") or {},
             hostname=raw.get("hostname"),
@@ -192,6 +189,33 @@ def _status(value: Any) -> str:
     if value is None:
         return "unknown"
     return str(value).strip().lower()
+
+
+def _resolve_monitoring_preference(raw: dict[str, Any]) -> bool:
+    """
+    Administrator monitoring preference for Eligibility RULE_1.
+
+    ``monitoringMode=DISABLED_BY_USER`` wins. Otherwise fall back to the
+    legacy ``monitoringEnabled`` / ``monitoring_enabled`` mirror so existing
+    unit tests and callers that pass preference=false without a mode keep
+    working. Operational admin/oper state is NOT folded in here (RULE_2/3).
+    """
+    from services.interface_collection.monitoring_state import (  # noqa: PLC0415
+        MONITORING_MODE_DISABLED_BY_USER,
+        normalize_monitoring_mode,
+        preference_enabled_for_mode,
+    )
+
+    mode = normalize_monitoring_mode(
+        raw.get("monitoring_mode", raw.get("monitoringMode"))
+    )
+    if mode is not None:
+        return preference_enabled_for_mode(mode)
+
+    return _coerce_bool(
+        raw.get("monitoring_enabled", raw.get("monitoringEnabled")),
+        True,
+    )
 
 
 def _coerce_bool(value: Any, default: bool) -> bool:

@@ -132,6 +132,7 @@ def _enrich_with_classification(row: dict) -> dict:
             "portMode": 1,
             "mode": 1,
             "monitoringEnabled": 1,
+            "monitoringMode": 1,
             "adminStatus": 1,
             "operStatus": 1,
             "hostname": 1,

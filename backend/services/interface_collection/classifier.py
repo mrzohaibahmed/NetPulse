@@ -215,14 +215,16 @@ def classify_interface(iface: dict) -> dict:
     else:
         is_protected = False
 
-    # monitoring_enabled: default true unless admin-down or explicitly disabled
-    if "monitoringEnabled" in iface and iface.get("monitoringEnabled") is not None:
-        # Honour explicit prior value only when not admin-down (admin-down forces off)
-        monitoring_enabled = bool(iface.get("monitoringEnabled"))
-        if admin_status == "down":
-            monitoring_enabled = False
-    else:
-        monitoring_enabled = admin_status != "down"
+    # Monitoring preference is administrator intent only.
+    # Never latch monitoring off because adminStatus is temporarily down —
+    # operational exclusion is Eligibility RULE_2 / RULE_3.
+    from services.interface_collection.monitoring_state import (  # noqa: PLC0415
+        apply_monitoring_preference,
+        resolve_monitoring_mode,
+    )
+
+    monitoring_mode = resolve_monitoring_mode(iface)
+    apply_monitoring_preference(iface, monitoring_mode)
 
     iface["isAccess"] = is_access
     iface["isTrunk"] = is_trunk
@@ -230,15 +232,17 @@ def classify_interface(iface: dict) -> dict:
     iface["isInfrastructure"] = is_infrastructure
     iface["isManagement"] = is_management
     iface["isProtected"] = is_protected
-    iface["monitoringEnabled"] = monitoring_enabled
 
     logger.debug(
-        "[IFACE] Classified %s | mode=%s uplink=%s infra=%s mgmt=%s neighbor=%s",
+        "[IFACE] Classified %s | mode=%s uplink=%s infra=%s mgmt=%s "
+        "monitoring=%s neighbor=%s admin=%s",
         name,
         port_mode,
         is_uplink,
         is_infrastructure,
         is_management,
+        iface.get("monitoringMode"),
         device_type if has_neighbor else "-",
+        admin_status or "-",
     )
     return iface

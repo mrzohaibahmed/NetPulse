@@ -189,11 +189,20 @@ def persist_interfaces(
     """
     Normalise, classify, and upsert interface documents keyed by ``(deviceId, name)``.
 
-    Preserves administrator overrides for ``isProtected`` and an explicit
-    ``monitoringEnabled=false`` across rediscovery.
+    Preserves administrator overrides for ``isProtected`` and
+    ``monitoringMode=DISABLED_BY_USER`` across rediscovery.
+
+    Does **not** preserve bare legacy ``monitoringEnabled=false`` values that
+    were produced by the old admin-down latch.
 
     Returns the number of interfaces written (upserted or updated).
     """
+    from services.interface_collection.monitoring_state import (  # noqa: PLC0415
+        MONITORING_MODE_AUTO,
+        MONITORING_MODE_DISABLED_BY_USER,
+        resolve_monitoring_mode,
+    )
+
     now = datetime.now(timezone.utc)
     written = 0
     seen_names: set[str] = set()
@@ -222,9 +231,14 @@ def persist_interfaces(
         if existing:
             if existing.get("isProtected") is not None:
                 normalised["isProtected"] = bool(existing.get("isProtected"))
-            # Honour explicit disable; classifier still forces off when admin-down
-            if existing.get("monitoringEnabled") is False:
+            # Preserve administrator monitoring intent only (never sticky latch)
+            monitoring_mode = resolve_monitoring_mode(normalised, existing=existing)
+            normalised["monitoringMode"] = monitoring_mode
+            if monitoring_mode == MONITORING_MODE_DISABLED_BY_USER:
                 normalised["monitoringEnabled"] = False
+            else:
+                normalised["monitoringMode"] = MONITORING_MODE_AUTO
+                normalised["monitoringEnabled"] = True
 
         classified = classify_interface(normalised)
 
@@ -245,6 +259,7 @@ def persist_interfaces(
             is_management=classified.get("isManagement", False),
             is_protected=classified.get("isProtected", False),
             monitoring_enabled=classified.get("monitoringEnabled", True),
+            monitoring_mode=classified.get("monitoringMode", MONITORING_MODE_AUTO),
             access_vlan=classified.get("accessVlan"),
             voice_vlan=classified.get("voiceVlan"),
             native_vlan=classified.get("nativeVlan"),

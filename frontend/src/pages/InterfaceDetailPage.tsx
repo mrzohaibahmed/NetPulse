@@ -40,6 +40,16 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -141,13 +151,69 @@ function sourceBadgeVariant(
   }
 }
 
+function monitoringBadgeLabel(iface: {
+  administratorDisabled?: boolean
+  monitoringMode?: string
+  monitoringReason?: string
+  monitoringEnabled?: boolean
+  adminStatus?: string
+  operStatus?: string
+  effectiveMonitoring?: boolean
+} | null): string | null {
+  if (!iface) return null
+  if (
+    iface.administratorDisabled === true ||
+    iface.monitoringMode === 'DISABLED_BY_USER' ||
+    (iface.monitoringEnabled === false && iface.monitoringMode !== 'AUTO')
+  ) {
+    return 'Monitoring Disabled'
+  }
+  const reason = iface.monitoringReason
+  if (reason === 'administrative_down' || reason === 'operational_down') {
+    return 'Interface Down'
+  }
+  const admin = (iface.adminStatus || '').toLowerCase()
+  const oper = (iface.operStatus || '').toLowerCase()
+  if (admin === 'down' || oper === 'down') {
+    return 'Interface Down'
+  }
+  return null
+}
+
+function monitoringDetailValue(iface: {
+  administratorDisabled?: boolean
+  monitoringMode?: string
+  monitoringReason?: string
+  monitoringEnabled?: boolean
+  effectiveMonitoring?: boolean
+} | null): string {
+  if (!iface) return '—'
+  if (iface.administratorDisabled || iface.monitoringMode === 'DISABLED_BY_USER') {
+    return 'disabled by administrator'
+  }
+  if (iface.monitoringReason === 'administrative_down') {
+    return 'paused — administrative down'
+  }
+  if (iface.monitoringReason === 'operational_down') {
+    return 'paused — operational down'
+  }
+  if (iface.effectiveMonitoring) {
+    return 'enabled'
+  }
+  if (iface.monitoringEnabled === false) {
+    return 'disabled'
+  }
+  return 'enabled'
+}
+
 export function InterfaceDetailPage() {
   const navigate = useNavigate()
   const { deviceId = '', interfaceName: rawName = '' } = useParams()
   const interfaceName = decodeURIComponent(rawName)
-  const { isAdmin } = useAuth()
+  const { isAdmin, isOperator } = useAuth()
   const mutations = useInterfaceMutations()
   const [historyLimit, setHistoryLimit] = useState('100')
+  const [confirmAction, setConfirmAction] = useState<'shutdown' | 'recover' | null>(null)
 
   const stormIncidentsQuery = useStormIncidentsQuery({
     limit: 50,
@@ -283,6 +349,8 @@ export function InterfaceDetailPage() {
     latestStat?.discards ??
     (latestStat?.rxDiscards ?? 0) + (latestStat?.txDiscards ?? 0)
 
+  const canManualRecover = latestIncident?.status === 'MITIGATED'
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center gap-3">
@@ -301,28 +369,65 @@ export function InterfaceDetailPage() {
         title={interfaceName}
         description={`${hostname} · ${ipAddress}${iface?.description ? ` · ${iface.description}` : ''}`}
         actions={
-          <div className="flex flex-wrap items-center gap-2">
-            {isAdmin ? (
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-center gap-2">
+              {isAdmin ? (
+                <Button
+                  type="button"
+                  disabled={mutations.collectDevice.isPending}
+                  onClick={() => mutations.collectDevice.mutate(deviceId)}
+                >
+                  <RefreshCw className="mr-2 h-4 w-4" />
+                  {mutations.collectDevice.isPending ? 'Collecting…' : 'Collect stats'}
+                </Button>
+              ) : null}
+              {isOperator ? (
+                <Button
+                  type="button"
+                  variant="destructive"
+                  disabled={mutations.manualShutdown.isPending}
+                  onClick={() => setConfirmAction('shutdown')}
+                >
+                  {mutations.manualShutdown.isPending ? 'Shutting down…' : 'Manual shutdown'}
+                </Button>
+              ) : null}
+              {isOperator && canManualRecover ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={mutations.manualRecover.isPending}
+                  onClick={() => setConfirmAction('recover')}
+                >
+                  {mutations.manualRecover.isPending ? 'Recovering…' : 'Manual recover'}
+                </Button>
+              ) : null}
               <Button
                 type="button"
-                disabled={mutations.collectDevice.isPending}
-                onClick={() => mutations.collectDevice.mutate(deviceId)}
+                variant="secondary"
+                onClick={() => {
+                  void statsQuery.refetch()
+                  void historyQuery.refetch()
+                  void inventoryQuery.refetch()
+                }}
               >
-                <RefreshCw className="mr-2 h-4 w-4" />
-                {mutations.collectDevice.isPending ? 'Collecting…' : 'Collect stats'}
+                Refresh
               </Button>
+            </div>
+            {isOperator ? (
+              <div className="text-right text-xs text-muted-foreground">
+                {latestIncident ? (
+                  <>
+                    Latest incident <span className="mono">{latestIncident.incidentId}</span> is{' '}
+                    <span className="font-medium text-foreground">
+                      {latestIncident.status}
+                    </span>
+                    {!canManualRecover ? '. Manual recover becomes available at MITIGATED.' : null}
+                  </>
+                ) : (
+                  'No incident is currently associated with this interface. Manual recover appears after a successful mitigation reaches MITIGATED.'
+                )}
+              </div>
             ) : null}
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={() => {
-                void statsQuery.refetch()
-                void historyQuery.refetch()
-                void inventoryQuery.refetch()
-              }}
-            >
-              Refresh
-            </Button>
           </div>
         }
       />
@@ -341,11 +446,14 @@ export function InterfaceDetailPage() {
         {iface?.nativeVlan != null ? (
           <Badge variant="outline">Native VLAN {iface.nativeVlan}</Badge>
         ) : null}
-        {iface?.monitoringEnabled === false ? (
-          <Badge variant="outline" className="border-muted-foreground/40 text-muted-foreground">
-            monitoring off
-          </Badge>
-        ) : null}
+        {(() => {
+          const label = monitoringBadgeLabel(iface)
+          return label ? (
+            <Badge variant="outline" className="border-muted-foreground/40 text-muted-foreground">
+              {label}
+            </Badge>
+          ) : null
+        })()}
         {latestStat?.collectionMethod ? (
           <Badge variant="muted" className="uppercase">
             via {latestStat.collectionMethod}
@@ -499,8 +607,36 @@ export function InterfaceDetailPage() {
             <DetailRow label="Protected" value={iface?.isProtected ? 'yes' : 'no'} />
             <DetailRow
               label="Monitoring"
-              value={iface?.monitoringEnabled === false ? 'disabled' : 'enabled'}
+              value={monitoringDetailValue(iface)}
             />
+            {(isAdmin || isOperator) && iface ? (
+              <div className="flex items-center justify-between gap-2 pt-1">
+                <span className="text-muted-foreground">Admin preference</span>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={mutations.setMonitoring.isPending}
+                  onClick={() =>
+                    mutations.setMonitoring.mutate({
+                      deviceId,
+                      interfaceName,
+                      enabled: Boolean(
+                        iface.administratorDisabled ||
+                          iface.monitoringMode === 'DISABLED_BY_USER' ||
+                          iface.monitoringEnabled === false,
+                      ),
+                    })
+                  }
+                >
+                  {iface.administratorDisabled ||
+                  iface.monitoringMode === 'DISABLED_BY_USER' ||
+                  iface.monitoringEnabled === false
+                    ? 'Enable monitoring'
+                    : 'Disable monitoring'}
+                </Button>
+              </div>
+            ) : null}
             <DetailRow
               label="Access VLAN"
               value={iface?.accessVlan != null ? String(iface.accessVlan) : '—'}
@@ -698,7 +834,7 @@ export function InterfaceDetailPage() {
             <div className="space-y-1">
               <CardTitle className="text-base">Storm Diagnostics</CardTitle>
               <p className="text-sm text-muted-foreground">
-                Interface shutdown and recovery are performed automatically by Storm Protection.
+                Storm Protection still handles the automated path. Operator-authorized manual shutdown and recovery are available from the page actions above.
               </p>
             </div>
           </CardHeader>
@@ -992,6 +1128,59 @@ export function InterfaceDetailPage() {
           )}
         </CardContent>
       </Card>
+
+      <AlertDialog open={confirmAction === 'shutdown'} onOpenChange={(open) => !open && setConfirmAction(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Shut down interface {interfaceName}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This sends a live shutdown command to the switch port and creates a MANUAL incident record.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                mutations.manualShutdown.mutate({
+                  deviceId,
+                  interfaceName,
+                  confirm: true,
+                })
+                setConfirmAction(null)
+              }}
+            >
+              Yes, shut down interface {interfaceName}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={confirmAction === 'recover'} onOpenChange={(open) => !open && setConfirmAction(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Recover interface {interfaceName}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This sends a live recovery command to re-enable the port and reuses the current mitigated incident.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                mutations.manualRecover.mutate({
+                  deviceId,
+                  interfaceName,
+                  confirm: true,
+                  incidentId: latestIncident?.incidentId,
+                })
+                setConfirmAction(null)
+              }}
+            >
+              Yes, recover interface {interfaceName}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

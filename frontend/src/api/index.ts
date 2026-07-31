@@ -352,6 +352,69 @@ export const collectDeviceInterfaceStats = (deviceId: string) =>
     timeoutMs: 180000,
   })
 
+export const setInterfaceMonitoring = (payload: {
+  deviceId: string
+  interfaceName: string
+  enabled?: boolean
+  monitoringMode?: 'AUTO' | 'DISABLED_BY_USER'
+}) => {
+  const encoded = encodeURIComponent(payload.interfaceName)
+  return apiRequest<{
+    success: boolean
+    message: string
+    data: NetworkInterface
+  }>(`/api/interfaces/${payload.deviceId}/${encoded}/monitoring`, {
+    method: 'POST',
+    body: {
+      ...(payload.monitoringMode ? { monitoringMode: payload.monitoringMode } : {}),
+      ...(payload.enabled !== undefined ? { enabled: payload.enabled } : {}),
+    },
+  })
+}
+
+export const manualShutdownInterface = (payload: {
+  deviceId: string
+  interfaceName: string
+  confirm: boolean
+  reason?: string
+}) => {
+  const encoded = encodeURIComponent(payload.interfaceName)
+  return apiRequest<{
+    success: boolean
+    message: string
+    incidentId: string
+    status: string
+    commandsExecuted?: string[]
+  }>(`/api/interfaces/${payload.deviceId}/${encoded}/manual-shutdown`, {
+    method: 'POST',
+    body: { confirm: payload.confirm, reason: payload.reason },
+    timeoutMs: 180000,
+  })
+}
+
+export const manualRecoverInterface = (payload: {
+  deviceId: string
+  interfaceName: string
+  confirm: boolean
+  incidentId?: string
+}) => {
+  const encoded = encodeURIComponent(payload.interfaceName)
+  return apiRequest<{
+    success: boolean
+    message: string
+    incidentId: string
+    status: string
+    retryCount?: number
+  }>(`/api/interfaces/${payload.deviceId}/${encoded}/manual-recover`, {
+    method: 'POST',
+    body: {
+      confirm: payload.confirm,
+      ...(payload.incidentId ? { incidentId: payload.incidentId } : {}),
+    },
+    timeoutMs: 180000,
+  })
+}
+
 export const collectAllInterfaceStats = () =>
   apiRequest<{
     success: boolean

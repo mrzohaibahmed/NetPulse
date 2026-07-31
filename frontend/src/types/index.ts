@@ -301,7 +301,19 @@ export interface NetworkInterface {
   isInfrastructure: boolean
   isManagement: boolean
   isProtected: boolean
+  /** Preference mirror: true when monitoringMode is AUTO. */
   monitoringEnabled: boolean
+  /** Administrator intent: AUTO | DISABLED_BY_USER */
+  monitoringMode?: 'AUTO' | 'DISABLED_BY_USER' | string
+  administratorDisabled?: boolean
+  /** Preference + admin/oper up. */
+  effectiveMonitoring?: boolean
+  monitoringReason?:
+    | 'active'
+    | 'administrator_disabled'
+    | 'administrative_down'
+    | 'operational_down'
+    | string
   accessVlan: number | null
   voiceVlan?: number | null
   nativeVlan: number | null
@@ -403,6 +415,10 @@ export interface EligibilityResult {
   isManagement?: boolean
   isProtected?: boolean
   monitoringEnabled?: boolean
+  monitoringMode?: 'AUTO' | 'DISABLED_BY_USER' | string
+  administratorDisabled?: boolean
+  effectiveMonitoring?: boolean
+  monitoringReason?: string
 }
 
 export interface StormConfig {
