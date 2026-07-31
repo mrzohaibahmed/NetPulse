@@ -1,6 +1,6 @@
 # NetPulse Frontend
 
-Enterprise NOC dashboard for NetPulse Network Monitor.
+Enterprise NOC dashboard for NetPulse Network Monitor — device reachability, switch interfaces, and storm protection.
 
 ## Stack
 
@@ -26,11 +26,36 @@ npm run build
 npm run preview
 ```
 
+Flask serves `dist/` automatically when you run the backend after a build.
+
+## Pages
+
+| Route | Page |
+|-------|------|
+| `/` | Dashboard |
+| `/devices` | Device inventory |
+| `/interfaces` | Switch interfaces |
+| `/interfaces/:deviceId/:interfaceName` | Interface detail + history |
+| `/storm` | Storm Protection (eligibility → recovery) |
+| `/discovery` | Subnet discovery |
+| `/history` | Ping history |
+| `/alerts` | Outage alerts |
+| `/reports` | Uptime / exports |
+| `/settings` | Ping, SMTP, mitigation, recovery, retention |
+| `/account` | Profile / user admin |
+| `/login` | Sign-in |
+
 ## Structure
 
+- `src/api` — HTTP client + endpoint helpers
+- `src/auth` — Auth context + protected routes
 - `src/components/ui` — design system primitives
 - `src/components/layout` — sidebar + top navbar shell
-- `src/components/shared` — KPI cards, health gauge, status badges, empty/error states
+- `src/components/shared` — KPI cards, gauges, badges, empty/error states
 - `src/components/devices` — device table drawer + form dialog
-- `src/hooks/queries.ts` — API hooks (polling preserved)
+- `src/components/interfaces` — interface status badges / helpers
+- `src/hooks` — React Query hooks (polling preserved)
 - `src/pages` — route screens (lazy-loaded)
+- `src/types` — shared TypeScript models
+
+See the root [`README.md`](../README.md) for architecture, storm pipeline, and API overview.

@@ -1,149 +1,75 @@
-# Network Monitor — Backend API
+# NetPulse — Backend API
 
-Flask REST API for monitoring network devices. Stores devices in MongoDB, pings them manually or on a schedule, keeps ping history, discovers devices on an IP range, sends alerts, and exposes dashboard/report data for the React frontend.
-
-When `frontend/dist` exists, Flask also serves the built React UI at `/`.
+Flask REST API for LAN monitoring, switch interface collection, and storm protection. Stores inventory in MongoDB, runs APScheduler jobs for ping / Nmap / SSH discovery / stats / recovery, and can serve the built React SPA from `frontend/dist`.
 
 ## Features
 
-- **Authentication** — JWT login, admin/viewer roles, account management
-- **Device CRUD** — create, list, update, delete monitored devices
-- **CSV import** — bulk import devices from a spreadsheet
-- **Manual scan** — ping a single device and update its status
-- **Automatic monitoring** — background scheduler pings devices with `monitor: true`
-- **Ping history** — every scan (manual or automatic) stored in MongoDB
-- **Network discovery** — scan an IP range, detect online hosts, auto-save new devices
-- **Dashboard APIs** — summaries, statistics, and chart data
-- **Reports** — uptime reports and CSV/Excel export
-- **Alerts** — in-app alert list with acknowledge/dismiss; email for critical offline events
-- **Settings** — global ping interval, timeout, retries, and SMTP config (persisted in MongoDB)
-- **Audit logging** — administrative actions recorded
+- **Authentication** — JWT login, roles (`super-admin` / `admin` / `operator` / `viewer`), account management
+- **Device CRUD** — create, list, update, delete, CSV import, cascade delete
+- **ICMP monitoring** — scheduled + manual ping with per-device overrides
+- **Nmap profiling** — scheduled + on-demand deep scans for Online devices
+- **Subnet discovery** — IP range sweep with optional auto-register
+- **Interface discovery** — SSH inventory (status, VLANs, neighbors, monitoring intent)
+- **Interface stats** — SNMP preferred, SSH fallback; feeds the storm pipeline
+- **Storm protection** — eligibility → risk → confirmation → safety → prepare → mitigation → recovery
+- **Manual shutdown / recover** — operator actions on individual interfaces
+- **Alerts + email** — critical offline transitions
+- **Settings** — ping, SMTP, mitigation mode, auto-recovery, retention
+- **Audit logging** — administrative and storm execution trail
+- **Data retention** — TTL indexes + daily closed-incident purge
 - **Frontend hosting** — serves `frontend/dist` when present
 
-## Tech Stack
+## Tech stack
 
 | Layer | Technology |
 |-------|------------|
 | API | Flask, Flask-CORS |
 | Database | MongoDB (PyMongo) |
-| Auth | PyJWT, bcrypt |
+| Auth / secrets | PyJWT, bcrypt, cryptography (Fernet) |
 | Scheduling | APScheduler |
-| Ping | ping3 |
+| Ping / scan | ping3, python-nmap |
+| Switch access | Paramiko (SSH), SNMP |
 | Export | openpyxl |
 | Config | python-dotenv |
 
-## Project Structure
+## Project structure
 
 ```
 backend/
-├── app.py                  # Flask entry point (+ frontend static serving)
-├── scheduler.py            # Background monitoring scheduler
+├── app.py                  # Entry point, indexes, bootstrap, SPA static
+├── scheduler.py            # Ping, Nmap, discovery, stats→storm, recovery, retention
 ├── requirements.txt
-├── .env                    # Environment variables (not committed)
-├── config/
-│   ├── database.py         # MongoDB connection
-│   └── email.py            # Email env defaults
-├── models/
-│   ├── device.py
-│   └── ping_history.py
-├── routes/
-│   ├── auth_routes.py      # Login, users, account
-│   ├── device_routes.py    # Device CRUD + CSV import
-│   ├── scan_routes.py      # Manual device scan
-│   ├── history_routes.py   # Ping history
-│   ├── dashboard_routes.py # Dashboard & charts
-│   ├── discovery_routes.py # IP range discovery
-│   ├── alert_routes.py     # Alert list / acknowledge / dismiss
-│   ├── settings_routes.py  # Global settings
-│   └── report_routes.py    # Uptime reports & export
+├── .env / .env.example
+├── config/                 # MongoDB + env
+├── models/                 # Device, interface, ping history helpers
+├── routes/                 # REST blueprints (auth … interfaces … storm)
 ├── services/
-│   ├── ping_service.py
-│   ├── monitor_service.py
-│   ├── history_service.py
-│   ├── discovery_service.py
-│   ├── alert_service.py
-│   ├── email_service.py
-│   ├── settings_service.py
-│   ├── user_service.py
-│   └── audit_service.py
+│   ├── interface_collection/
+│   ├── storm/              # eligibility, risk, confirmation, safety, …
+│   │   ├── diagnostics/
+│   │   ├── mitigation/
+│   │   └── recovery/       # policy, safety, engine, post_recovery
+│   └── …                   # ping, monitor, nmap, discovery, alerts, …
+├── tests/
 ├── utils/
-│   ├── auth.py             # JWT + password helpers
-│   ├── serializers.py
-│   ├── pagination.py
-│   └── monitor_logger.py
-└── logs/
-    └── monitor.log
+└── logs/monitor.log
 ```
 
 ## Setup
-
-### 1. Prerequisites
-
-- Python 3.10+
-- MongoDB (local or Atlas)
-- Network access for ICMP ping (may require admin privileges on Windows)
-
-### 2. Virtual environment
 
 ```powershell
 cd backend
 python -m venv venv
 .\venv\Scripts\activate
 pip install -r requirements.txt
-```
-
-### 3. Environment variables
-
-Create `backend/.env`:
-
-```env
-MONGO_URI=mongodb://localhost:27017
-DATABASE_NAME=NetworkMonitor
-SCAN_INTERVAL=30
-FLASK_DEBUG=true
-
-# Auth
-JWT_SECRET=change-me-in-production
-JWT_EXPIRE_HOURS=8
-DEFAULT_ADMIN_USER=admin
-DEFAULT_ADMIN_PASSWORD=admin123
-
-# Email alerts (optional — can also be configured in Settings UI)
-ALERT_EMAIL_TO=your-email@example.com
-SMTP_HOST=smtp.gmail.com
-SMTP_PORT=587
-SMTP_USER=your-email@example.com
-SMTP_PASSWORD=your-app-password
-SMTP_FROM=your-email@example.com
-SMTP_USE_TLS=true
-ALERT_EMAIL_ENABLED=true
-```
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `MONGO_URI` | MongoDB connection string | required |
-| `DATABASE_NAME` | Database name | required |
-| `SCAN_INTERVAL` | Default auto-monitor interval (seconds) | `30` |
-| `FLASK_DEBUG` | Flask debug/reloader | `true` |
-| `JWT_SECRET` | Token signing secret | dev default |
-| `JWT_EXPIRE_HOURS` | Token lifetime | `8` |
-| `DEFAULT_ADMIN_USER` | First admin username | `admin` |
-| `DEFAULT_ADMIN_PASSWORD` | First admin password | `admin123` |
-| `ALERT_EMAIL_TO` | Alert recipient | — |
-| `SMTP_*` | SMTP settings | see `.env.example` |
-
-### 4. Run the server
-
-```powershell
-cd backend
-.\venv\Scripts\activate
+# Copy .env.example → .env and set MONGO_URI, JWT_SECRET, SECRETS_ENCRYPTION_KEY
 python app.py
 ```
 
 - API: `http://127.0.0.1:5000`
 - With built frontend: UI also at `http://127.0.0.1:5000`
 
-On startup the scheduler pings all devices where `monitor` is `true`. The interval comes from Settings (default: `SCAN_INTERVAL`).
+See the root [`README.md`](../README.md) for the full env table, storm pipeline, and collections.
 
 ## Authentication
 
@@ -153,13 +79,8 @@ All `/api/*` routes except login require a Bearer token.
 POST /api/auth/login
 Content-Type: application/json
 
-{
-  "username": "admin",
-  "password": "admin123"
-}
+{ "username": "admin", "password": "admin123" }
 ```
-
-Use the returned token:
 
 ```http
 Authorization: Bearer <token>
@@ -167,178 +88,72 @@ Authorization: Bearer <token>
 
 | Role | Access |
 |------|--------|
-| `admin` | Full access — devices, discovery, settings, user management |
-| `viewer` | Read-only access to dashboard, devices, history, reports |
+| `super-admin` | Full access + manage other super-admins |
+| `admin` | Full write (devices, discovery, settings, storm mitigation/recovery) |
+| `operator` | Read + Nmap, alert ack/dismiss, selected storm actions |
+| `viewer` | Read-only |
 
-Default users are created on first run if the `users` collection is empty.
+Default users are created on first run if `users` is empty.
 
-## Email Alerts
+## Scheduler jobs
 
-When a **critical** device transitions to **Offline (Critical)**, the monitor:
+| Job | Default interval | Purpose |
+|-----|------------------|---------|
+| `device_monitor_job` | Settings `pingInterval` (~30s) | ICMP monitoring |
+| `nmap_scan_job` | `NMAP_SCAN_INTERVAL` (3600s) | Online device profiling |
+| `interface_discovery_job` | `INTERFACE_SCAN_INTERVAL` (3600s) | SSH inventory |
+| `interface_stats_job` | `INTERFACE_STATS_INTERVAL` (60s) | Stats → eligibility → risk → confirmation → safety → prepare → auto-mitigation |
+| `storm_recovery_job` | 30s | Auto-recovery / remmitigation / stabilization |
+| `data_retention_job` | Daily 03:15 | TTL refresh + closed-incident purge |
 
-1. Creates an in-app alert
-2. Sends an email (if SMTP is configured)
+Set `INTERFACE_SCAN_INTERVAL=0` or `INTERFACE_STATS_INTERVAL=0` to disable those schedules (manual API triggers still work).
 
-Alerts fire once per outage transition, not on every failed ping while the device stays offline.
+## Storm pipeline (summary)
 
-SMTP can be configured in `backend/.env` or updated at runtime via **Settings** in the UI.
-
-## API Reference
-
-All API routes are prefixed with `/api` unless noted.
-
-### Health
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/` | Frontend UI (if built) or API status JSON |
-| GET | `/health` | Server and database health |
-
-### Auth
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/auth/login` | Login |
-| GET | `/api/auth/me` | Current user |
-| PUT | `/api/auth/account` | Update own username/password |
-| GET | `/api/users` | List users (admin) |
-| PUT | `/api/users/<id>` | Update user (admin) |
-
-### Devices
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/devices` | Create device (admin) |
-| GET | `/api/devices` | List devices (paginated, filterable) |
-| GET | `/api/devices/<id>` | Get one device |
-| PUT | `/api/devices/<id>` | Update device (admin) |
-| DELETE | `/api/devices/<id>` | Delete device (admin) |
-| POST | `/api/devices/import` | CSV import (admin) |
-
-**Device fields:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `hostname` | string | Device name |
-| `ipAddress` | string | IPv4 address (unique) |
-| `deviceType` | string | Device category |
-| `critical` | boolean | Mark as critical |
-| `monitor` | boolean | Include in automatic monitoring |
-| `status` | string | `Online`, `Not Reachable`, `Offline (Critical)`, `Unknown` |
-| `responseTime` | number \| null | Last ping time in ms |
-| `lastSeen` | datetime \| null | Last successful response |
-| `pingInterval` | number \| null | Per-device override (seconds) |
-| `pingTimeoutMs` | number \| null | Per-device timeout override |
-| `pingRetries` | number \| null | Per-device retry override |
-
-### Scanning
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/devices/<id>/scan` | Manually ping a device |
-
-### History
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/history` | Ping history (paginated, filterable) |
-| GET | `/api/devices/<id>/history` | Device history + uptime + trend |
-
-Filters: `status`, `scanType`, `deviceId`, `deviceType`, `startDate`, `endDate`, `q`.
-
-### Discovery
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/discovery/network-hint` | Suggest local scan range |
-| POST | `/api/discovery/scan-range` | Scan IP range (admin) |
-
-### Dashboard
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/dashboard/summary` | Device counts and percentages |
-| GET | `/api/dashboard/recent-history` | Last 20 ping records |
-| GET | `/api/dashboard/device-status` | All devices with status |
-| GET | `/api/dashboard/statistics` | Scan stats and averages |
-| GET | `/api/dashboard/charts/device-status` | Status chart data |
-| GET | `/api/dashboard/charts/device-type` | Device type chart |
-| GET | `/api/dashboard/charts/response-time` | Avg response time chart |
-| GET | `/api/dashboard/charts/scan-activity` | Daily scan activity |
-
-### Alerts
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/alerts` | List alerts |
-| POST | `/api/alerts/<id>/acknowledge` | Acknowledge alert |
-| POST | `/api/alerts/<id>/dismiss` | Dismiss alert |
-
-### Settings
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/settings` | Get settings |
-| PUT | `/api/settings` | Update settings (admin) |
-
-Updating `pingInterval` reschedules the monitor job without restarting the server.
-
-### Reports
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/reports/uptime` | Uptime report per device |
-| GET | `/api/reports/export/devices` | Export devices (CSV/XLSX) |
-| GET | `/api/reports/export/history` | Export history (CSV/XLSX) |
-
-## MongoDB Collections
-
-| Collection | Purpose |
-|------------|---------|
-| `devices` | Monitored network devices |
-| `pingHistory` | Every ping result |
-| `alerts` | Critical offline alerts |
-| `settings` | Global app settings (ping + SMTP) |
-| `users` | Login accounts |
-| `auditLogs` | Admin action audit trail |
-
-## Automatic Monitoring
-
-`scheduler.py` uses APScheduler to call `monitor_all_devices()` on an interval from Settings.
-
-For each device with `monitor: true`:
-
-1. Check if per-device interval allows a scan
-2. Ping the device
-3. Update status, response time, last seen, consecutive failures
-4. Save ping history with `scanType: "Automatic"`
-5. Send alert if a critical device goes offline
-
-Each device scan is wrapped in its own `try/except` so one failure does not stop the cycle.
-
-## Logging
-
-Logs are written to `logs/monitor.log` and the console.
-
-```powershell
-Get-Content logs\monitor.log -Wait
+```
+Stats → Eligibility → Risk → Confirmation → Safety → Prepare → Mitigation → Recovery
 ```
 
-## Development Notes
+After successful recovery:
 
-- Run commands from `backend/` so Python imports resolve correctly.
-- Flask debug mode uses a reloader; the scheduler only starts in the correct process to avoid duplicate jobs.
-- Set `FLASK_DEBUG=false` in production.
-- ICMP ping may require elevated permissions on Windows.
-- Build the frontend (`npm run build` in `frontend/`) to serve the UI from Flask at `/`.
+1. Status → `MONITORING` + `recoveredAt`
+2. Confirmation reset + safety invalidation
+3. Orphan READY incidents cancelled
+4. Stabilization → `RESOLVED`, or remmitigate only on a **fresh** post-`recoveredAt` storm
 
-## Example Workflow
+Prepare requires **live CONFIRMED**, current high risk, and SAFE fresher than confirmation. There is no pipeline-generation versioning layer.
 
-1. Start the API: `python app.py`
-2. Log in: `POST /api/auth/login`
-3. Create a device: `POST /api/devices`
-4. Scan it: `POST /api/devices/<id>/scan`
-5. Check history: `GET /api/history`
-6. View dashboard: `GET /api/dashboard/summary`
-7. Discover devices: `POST /api/discovery/scan-range`
-8. Export report: `GET /api/reports/export/devices?format=csv`
+## API groups
+
+| Prefix | Purpose |
+|--------|---------|
+| `/api/auth`, `/api/users` | Login, account, users |
+| `/api/devices`, `/api/devices/<id>/scan*` | Inventory, ping, Nmap |
+| `/api/history`, `/api/dashboard`, `/api/reports` | History, KPIs, export |
+| `/api/discovery` | Subnet sweep |
+| `/api/interfaces` | Discovery, stats, monitoring, manual shutdown/recover |
+| `/api/storm` | Eligibility, risk, confirmation, safety, incidents, mitigation, recovery |
+| `/api/alerts`, `/api/settings` | Alerts, global settings |
+| `/health` | Liveness + MongoDB |
+
+Detailed path tables live in the root README.
+
+## MongoDB collections (high level)
+
+`devices`, `pingHistory`, `alerts`, `settings`, `users`, `auditLogs`, `interfaces`, `interface_stats`, `eligibility_results`, `storm_risk_history`, `storm_confirmation_history`, `storm_safety_history`, `storm_incidents`, `storm_mitigation_history`, `storm_recovery_history`, mitigation/recovery lock collections.
+
+## Tests
+
+```powershell
+cd backend
+.\venv\Scripts\activate
+python -m unittest discover -s tests -p "test_*.py" -q
+```
+
+## Development notes
+
+- Run commands from `backend/` so imports resolve.
+- Keep `FLASK_DEBUG=false` in production; debug binds to `127.0.0.1` only when enabled.
+- ICMP and aggressive Nmap often need elevation on Windows.
+- Prefer per-device SSH credentials over `SSH_DEFAULT_*`.
+- Build the frontend (`npm run build` in `frontend/`) to serve the UI from Flask.
