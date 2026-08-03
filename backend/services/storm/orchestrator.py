@@ -268,6 +268,15 @@ def prepare(
     if not diag.get("safety") and safety_doc:
         diag = {**diag, "safety": safety_doc}
 
+    # Merge source-attribution extras from prepare_all into diagnostics
+    meta = incident_metadata or {}
+    if meta.get("sourceAttribution") and not diag.get("sourceAttribution"):
+        diag = {**diag, "sourceAttribution": meta["sourceAttribution"]}
+    if meta.get("affectedInterfaces") is not None:
+        diag = {**diag, "affectedInterfaces": meta.get("affectedInterfaces")}
+    if meta.get("relatedInterfaces") is not None:
+        diag = {**diag, "relatedInterfaces": meta.get("relatedInterfaces")}
+
     # 3) Incident
     try:
         incident = create_incident_from_diagnostics(
@@ -330,16 +339,27 @@ def prepare_all_safe(*, probe_ssh: bool = True) -> dict[str, Any]:
     Run prepare() for every interface whose *latest* confirmation is CONFIRMED
     and whose *latest* safety result is SAFE.
 
-    Selecting from confirmation (not safety history alone) prevents stale
-    SAFE rows from endlessly re-preparing mitigation after recovery.
+    When source arbitration is enabled, only the selected originating
+    interface per (device, broadcast domain) is prepared — flood victims
+    that somehow remain CONFIRMED are skipped.
     """
     logger.info("[ORCHESTRATOR] Bulk prepare started")
     total = 0
     ready = 0
     blocked = 0
     errors = 0
+    skipped_receivers = 0
 
     try:
+        from services.storm.source_arbitration_config import (  # noqa: PLC0415
+            get_source_arbitration_config,
+        )
+        from services.storm.storm_source_selector import (  # noqa: PLC0415
+            is_selected_storm_source,
+        )
+
+        arb_cfg = get_source_arbitration_config()
+
         # Start from currently CONFIRMED storms (same selection idea as safety bulk).
         confirm_pipeline = [
             {"$sort": {"timestamp": -1}},
@@ -390,14 +410,52 @@ def prepare_all_safe(*, probe_ssh: bool = True) -> dict[str, Any]:
                 logger.error("[ORCHESTRATOR] confirmation gate failed | %s | %s", name, exc)
                 continue
 
+            # Source arbitration: only prepare the selected origin.
+            if arb_cfg.enable_source_arbitration:
+                try:
+                    selected, selection = is_selected_storm_source(device_id, name)
+                    if not selected:
+                        skipped_receivers += 1
+                        logger.info(
+                            "[ORCHESTRATOR] prepare skipped | %s | not selected source "
+                            "(selected=%s)",
+                            name,
+                            selection.best.interface if selection.best else None,
+                        )
+                        continue
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "[ORCHESTRATOR] source arbitration failed | %s | %s — proceeding",
+                        name,
+                        exc,
+                    )
+
             total += 1
             try:
+                # Attach related/affected interfaces from arbitration runners/receivers
+                related_meta = None
+                try:
+                    if arb_cfg.enable_source_arbitration:
+                        _ok, selection = is_selected_storm_source(device_id, name)
+                        related_meta = {
+                            "sourceAttribution": selection.to_dict(),
+                            "affectedInterfaces": [
+                                c.interface for c in selection.receivers
+                            ],
+                            "relatedInterfaces": [
+                                c.interface for c in selection.runners_up
+                            ],
+                        }
+                except Exception:  # noqa: BLE001
+                    related_meta = None
+
                 result = prepare(
                     device_id,
                     name,
                     probe_ssh=probe_ssh,
                     require_safety=True,
                     require_live_storm=True,
+                    incident_metadata=related_meta,
                 )
                 if result.get("ready"):
                     ready += 1
@@ -411,16 +469,19 @@ def prepare_all_safe(*, probe_ssh: bool = True) -> dict[str, Any]:
         errors += 1
 
     logger.info(
-        "[ORCHESTRATOR] Bulk complete | total=%s ready=%s blocked=%s errors=%s",
+        "[ORCHESTRATOR] Bulk complete | total=%s ready=%s blocked=%s "
+        "skippedReceivers=%s errors=%s",
         total,
         ready,
         blocked,
+        skipped_receivers,
         errors,
     )
     return {
         "total": total,
         "ready": ready,
         "blocked": blocked,
+        "skippedReceivers": skipped_receivers,
         "errors": errors,
     }
 

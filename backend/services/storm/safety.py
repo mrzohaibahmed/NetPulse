@@ -256,7 +256,14 @@ class SafetyEngine:
 
         self._log(result, started)
         if persist:
-            self._store(device_id, name, result, host, ip)
+            self._store(
+                device_id,
+                name,
+                result,
+                host,
+                ip,
+                risk_doc=ctx.risk if ctx else None,
+            )
         return result
 
     def _store(
@@ -266,6 +273,8 @@ class SafetyEngine:
         result: SafetyResult,
         hostname: Optional[str],
         ip_address: Optional[str],
+        *,
+        risk_doc: Optional[dict] = None,
     ) -> None:
         try:
             oid = device_id
@@ -278,6 +287,13 @@ class SafetyEngine:
                 hostname=hostname,
                 ip_address=ip_address,
             )
+            if risk_doc:
+                if risk_doc.get("sourceClassification") is not None:
+                    document["sourceClassification"] = risk_doc.get("sourceClassification")
+                if risk_doc.get("sourceConfidence") is not None:
+                    document["sourceConfidence"] = risk_doc.get("sourceConfidence")
+                if risk_doc.get("sourceRationale") is not None:
+                    document["sourceRationale"] = risk_doc.get("sourceRationale")
             _db()[SAFETY_COLLECTION].insert_one(document)
         except Exception as exc:  # noqa: BLE001
             logger.error("[SAFETY] Failed to store history: %s", exc)

@@ -214,10 +214,14 @@ class StormEmailEngineHookTests(unittest.TestCase):
     @patch("services.storm.mitigation.engine.SSHMitigationExecutor")
     @patch("services.storm.mitigation.engine.get_incident")
     @patch("services.storm.mitigation.engine._db")
+    @patch("services.alert_service.create_storm_shutdown_alert", return_value="alert-test")
+    @patch("services.alert_service.mark_alert_email_sent")
     @patch("services.email_service.send_storm_shutdown_notification")
     def test_engine_sends_shutdown_email_for_system(
         self,
         mock_mail,
+        _mark_email,
+        _alert,
         mock_db_fn,
         mock_get,
         mock_ssh,
@@ -259,6 +263,7 @@ class StormEmailEngineHookTests(unittest.TestCase):
         res = execute_mitigation("storm-2026-000100", "SHUTDOWN", operator="SYSTEM")
         self.assertTrue(res["success"])
         mock_mail.assert_called_once()
+        _alert.assert_called_once()
 
     @patch("services.storm.mitigation.engine.LockService.release_mitigation_locks")
     @patch("services.storm.mitigation.engine.LockService.acquire_mitigation_locks")

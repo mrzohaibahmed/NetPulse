@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
-import { Check, Search, X } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { Check, CloudLightning, Search, X } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { useAuth } from '@/auth/AuthContext'
 import { useAlertMutations, useAlertsQuery } from '@/hooks/queries'
@@ -21,9 +22,41 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { cn } from '@/lib/utils'
+
+function isStormAlert(alert: AlertItem): boolean {
+  const category = (alert.category || alert.alertType || alert.scanType || '').toLowerCase()
+  return category.includes('storm')
+}
+
+function alertSeverityTone(alert: AlertItem): 'danger' | 'warning' | 'info' | 'default' {
+  const severity = (alert.severity || '').toUpperCase()
+  if (severity === 'CRITICAL') return 'danger'
+  if (severity === 'WARNING') return 'warning'
+  if (severity === 'INFO') return 'info'
+
+  if (alert.status === 'Offline (Critical)' || alert.status === 'Offline') return 'danger'
+  if (alert.status === 'Not Reachable') return 'warning'
+  if (alert.status === 'MITIGATION_FAILED' || alert.status === 'RECOVERY_FAILED') return 'danger'
+  if (alert.status === 'MITIGATED') return 'danger'
+  if (alert.status === 'RECOVERED' || alert.status === 'MONITORING') return 'info'
+  return 'default'
+}
+
+function SeverityBadge({ severity }: { severity: string }) {
+  const value = severity.toUpperCase()
+  const variant =
+    value === 'CRITICAL' ? 'danger' : value === 'WARNING' ? 'warning' : value === 'INFO' ? 'success' : 'secondary'
+  return (
+    <Badge variant={variant} className="font-semibold uppercase tracking-wide">
+      {value}
+    </Badge>
+  )
+}
 
 export function AlertsPage() {
   const { isOperator } = useAuth()
+  const navigate = useNavigate()
   const [status, setStatus] = useState('active')
   const [query, setQuery] = useState('')
   const alertsQuery = useAlertsQuery(status, 100)
@@ -38,7 +71,11 @@ export function AlertsPage() {
       (a) =>
         a.hostname.toLowerCase().includes(q) ||
         a.ipAddress.toLowerCase().includes(q) ||
-        a.message.toLowerCase().includes(q),
+        a.message.toLowerCase().includes(q) ||
+        (a.title || '').toLowerCase().includes(q) ||
+        (a.interface || '').toLowerCase().includes(q) ||
+        (a.incidentId || '').toLowerCase().includes(q) ||
+        (a.category || '').toLowerCase().includes(q),
     )
   }, [alerts, query])
 
@@ -97,6 +134,13 @@ export function AlertsPage() {
               onAck={() => acknowledge.mutate(alert._id)}
               onDismiss={() => dismiss.mutate(alert._id)}
               busy={acknowledge.isPending || dismiss.isPending}
+              onOpenStorm={
+                isStormAlert(alert) && alert.incidentId
+                  ? () => navigate(`/storm?incident=${encodeURIComponent(alert.incidentId!)}`)
+                  : isStormAlert(alert)
+                    ? () => navigate('/storm')
+                    : undefined
+              }
             />
           ))}
         </div>
@@ -112,6 +156,7 @@ function AlertTimelineItem({
   onAck,
   onDismiss,
   busy,
+  onOpenStorm,
 }: {
   alert: AlertItem
   index: number
@@ -119,20 +164,22 @@ function AlertTimelineItem({
   onAck: () => void
   onDismiss: () => void
   busy: boolean
+  onOpenStorm?: () => void
 }) {
-  const severity =
-    alert.status === 'Offline (Critical)' || alert.status === 'Offline'
-      ? 'danger'
-      : alert.status === 'Not Reachable'
-        ? 'warning'
-        : 'default'
+  const storm = isStormAlert(alert)
+  const severity = alertSeverityTone(alert)
 
   const border =
     severity === 'danger'
       ? 'border-l-danger'
       : severity === 'warning'
         ? 'border-l-warning'
-        : 'border-l-primary'
+        : severity === 'info'
+          ? 'border-l-success'
+          : 'border-l-primary'
+
+  const displayName = alert.deviceName || alert.hostname
+  const category = alert.category || alert.alertType || alert.scanType
 
   return (
     <motion.div
@@ -142,31 +189,76 @@ function AlertTimelineItem({
       className="relative pb-4 pl-8"
     >
       <span
-        className={`absolute left-0 top-5 h-3.5 w-3.5 rounded-full border-2 border-background ${
+        className={cn(
+          'absolute left-0 top-5 flex h-3.5 w-3.5 items-center justify-center rounded-full border-2 border-background',
           severity === 'danger'
             ? 'bg-danger'
             : severity === 'warning'
               ? 'bg-warning'
-              : 'bg-primary'
-        }`}
+              : severity === 'info'
+                ? 'bg-success'
+                : 'bg-primary',
+        )}
       />
-      <Card className={`glass border-l-[3px] ${border}`}>
+      <Card
+        className={cn(
+          'glass border-l-[3px]',
+          border,
+          onOpenStorm && 'cursor-pointer transition-colors hover:bg-muted/40',
+        )}
+        onClick={onOpenStorm}
+        role={onOpenStorm ? 'link' : undefined}
+        tabIndex={onOpenStorm ? 0 : undefined}
+        onKeyDown={
+          onOpenStorm
+            ? (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault()
+                  onOpenStorm()
+                }
+              }
+            : undefined
+        }
+      >
         <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0 space-y-2">
             <div className="flex flex-wrap items-center gap-2">
-              <p className="font-semibold">{alert.hostname}</p>
-              <StatusBadge status={alert.status} pulse={false} />
+              {storm ? (
+                <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-primary/10 text-primary">
+                  <CloudLightning className="h-4 w-4" aria-hidden />
+                </span>
+              ) : null}
+              <p className="font-semibold">{alert.title || displayName}</p>
+              {alert.severity ? (
+                <SeverityBadge severity={alert.severity} />
+              ) : (
+                <StatusBadge status={alert.status} pulse={false} />
+              )}
+              {storm ? <Badge variant="outline">Storm Protection</Badge> : null}
               {alert.acknowledged ? <Badge variant="secondary">Acknowledged</Badge> : null}
               {alert.dismissed ? <Badge variant="muted">Dismissed</Badge> : null}
               {alert.emailSent ? <Badge variant="outline">Email sent</Badge> : null}
             </div>
-            <p className="text-sm text-muted-foreground">{alert.message}</p>
-            <p className="mono text-xs text-muted-foreground">
-              {alert.ipAddress} · {alert.scanType} · {formatDateTime(alert.createdAt)}
-            </p>
+            <p className="whitespace-pre-line text-sm text-muted-foreground">{alert.message}</p>
+            <div className="flex flex-wrap gap-x-3 gap-y-1 mono text-xs text-muted-foreground">
+              <span>{displayName}</span>
+              <span>{alert.ipAddress}</span>
+              {alert.interface ? <span>if {alert.interface}</span> : null}
+              {alert.incidentId ? <span>{alert.incidentId}</span> : null}
+              {alert.riskScore != null ? <span>risk {Number(alert.riskScore).toFixed(0)}</span> : null}
+              {alert.action ? <span>{alert.action}</span> : null}
+              <span>{alert.status}</span>
+              {alert.recoveryDuration ? <span>{alert.recoveryDuration}</span> : null}
+              <span>{category}</span>
+              <span>{formatDateTime(alert.createdAt)}</span>
+            </div>
           </div>
           {canAct && !alert.dismissed ? (
-            <div className="flex shrink-0 gap-2">
+            <div
+              className="flex shrink-0 gap-2"
+              onClick={(e) => e.stopPropagation()}
+              onKeyDown={(e) => e.stopPropagation()}
+            >
               {!alert.acknowledged ? (
                 <Button type="button" size="sm" variant="secondary" disabled={busy} onClick={onAck}>
                   <Check className="h-3.5 w-3.5" />

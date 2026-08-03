@@ -120,8 +120,10 @@ function ChartTooltip({
 
 const SOURCE_CLASSIFICATION_LABELS: Record<string, string> = {
   LIKELY_SOURCE: 'Likely Source',
+  POSSIBLE_SOURCE: 'Possible Source',
   LIKELY_FORWARDER: 'Likely Forwarder',
   LIKELY_RECEIVER: 'Likely Receiver',
+  NORMAL: 'Normal',
   UNKNOWN: 'Unknown',
 }
 
@@ -138,14 +140,18 @@ function formatDirectionalPackets(
 
 function sourceBadgeVariant(
   classification?: StormSourceClassification | string | null,
-): 'default' | 'secondary' | 'outline' | 'danger' {
+): 'default' | 'secondary' | 'outline' | 'danger' | 'warning' | 'success' {
   switch (classification) {
     case 'LIKELY_SOURCE':
       return 'danger'
+    case 'POSSIBLE_SOURCE':
+      return 'warning'
     case 'LIKELY_FORWARDER':
       return 'secondary'
     case 'LIKELY_RECEIVER':
       return 'outline'
+    case 'NORMAL':
+      return 'success'
     default:
       return 'default'
   }

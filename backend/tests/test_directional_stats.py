@@ -198,7 +198,8 @@ class DirectionalStatsTests(unittest.TestCase):
             interface_context={"isAccess": True},
             risk_score=80.0,
         )
-        self.assertEqual(out["sourceClassification"], LIKELY_SOURCE)
+        # TX-dominant access = flooded receiver (Cisco OutBcast)
+        self.assertEqual(out["sourceClassification"], LIKELY_RECEIVER)
         self.assertGreater(out["sourceConfidence"], 0)
 
     def test_source_classification_access_rx_dominant(self):
@@ -220,7 +221,8 @@ class DirectionalStatsTests(unittest.TestCase):
             interface_context={"isAccess": True},
             risk_score=80.0,
         )
-        self.assertEqual(out["sourceClassification"], LIKELY_RECEIVER)
+        # RX-dominant access = originating host (Cisco InBcast)
+        self.assertEqual(out["sourceClassification"], LIKELY_SOURCE)
 
     def test_risk_engine_stores_source_fields(self):
         config = RiskConfig(
