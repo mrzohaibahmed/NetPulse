@@ -89,6 +89,7 @@ def check_no_active_mitigation(ctx: SafetyContext, _cfg: SafetyConfig) -> tuple[
 
 
 def check_cooldown_expired(ctx: SafetyContext, cfg: SafetyConfig) -> tuple[bool, str]:
+    """RULE_8 — cooldown since last successful mitigation (not a safety pass)."""
     if cfg.cooldown_minutes <= 0:
         return True, "Cooldown disabled"
     if ctx.cooldown_remaining_seconds > 0:

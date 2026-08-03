@@ -213,5 +213,42 @@ class SafetyEngineTests(unittest.TestCase):
         self.assertEqual(result.failed_rule, "RULE_13")
 
 
+class MitigationCooldownSourceTests(unittest.TestCase):
+    """Cooldown must key off successful mitigation, not a safety pass."""
+
+    @patch("services.storm.safety_history._db")
+    def test_load_last_successful_mitigation_timestamp(self, mock_db):
+        from datetime import datetime, timezone
+
+        from services.storm.safety_history import (
+            load_last_successful_mitigation_timestamp,
+        )
+
+        ts = datetime(2026, 8, 3, 4, 0, tzinfo=timezone.utc)
+        coll = mock_db.return_value.__getitem__.return_value
+        coll.find_one.return_value = {"timestamp": ts, "status": "SUCCESS"}
+
+        got = load_last_successful_mitigation_timestamp(
+            "507f1f77bcf86cd799439011", "Gi1/0/10"
+        )
+        self.assertEqual(got, ts)
+        query, = coll.find_one.call_args.args
+        self.assertEqual(query["status"], "SUCCESS")
+        self.assertEqual(query["interface"], "Gi1/0/10")
+        self.assertNotIn("safe", query)
+
+    @patch("services.storm.safety_history._db")
+    def test_no_mitigation_means_no_cooldown_anchor(self, mock_db):
+        from services.storm.safety_history import (
+            load_last_successful_mitigation_timestamp,
+        )
+
+        coll = mock_db.return_value.__getitem__.return_value
+        coll.find_one.return_value = None
+        self.assertIsNone(
+            load_last_successful_mitigation_timestamp("dev1", "Gi1/0/1")
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
