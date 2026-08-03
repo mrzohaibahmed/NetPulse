@@ -213,6 +213,30 @@ class SafetyEngineTests(unittest.TestCase):
         self.assertEqual(result.failed_rule, "RULE_13")
 
 
+class MitigationAttemptCountTests(unittest.TestCase):
+    """Attempt budget must key off successful mitigations, not safety passes."""
+
+    @patch("services.storm.safety_history.load_interface", return_value={})
+    @patch("services.storm.safety_history.load_device", return_value={})
+    @patch("services.storm.safety_history._db")
+    def test_counts_successful_mitigations_only(
+        self, mock_db, _device, _iface
+    ):
+        from services.storm.safety_history import count_mitigation_attempts
+
+        coll = mock_db.return_value.__getitem__.return_value
+        coll.count_documents.return_value = 1
+
+        self.assertEqual(
+            count_mitigation_attempts("507f1f77bcf86cd799439011", "Gi1/0/9"),
+            1,
+        )
+        query, = coll.count_documents.call_args.args
+        self.assertEqual(query["status"], "SUCCESS")
+        self.assertEqual(query["interface"], "Gi1/0/9")
+        self.assertNotIn("safe", query)
+
+
 class MitigationCooldownSourceTests(unittest.TestCase):
     """Cooldown must key off successful mitigation, not a safety pass."""
 

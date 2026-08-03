@@ -685,6 +685,8 @@ export function StormProtectionPage() {
   const confirmTotal =
     confirmationQuery.data?.total ?? confirmationQuery.data?.count ?? 0
   const confirmTotalPages = confirmationQuery.data?.totalPages ?? 1
+  const requiredConfirmations =
+    stormConfig.data?.confirmation?.requiredConfirmations ?? 2
 
   const safetyRows = safetyListQuery.data?.data ?? []
   const safetyTotal = safetyListQuery.data?.total ?? safetyListQuery.data?.count ?? 0
@@ -1230,12 +1232,26 @@ export function StormProtectionPage() {
         <div>
           <h2 className="text-lg font-semibold tracking-tight">Confirmation</h2>
           <p className="text-sm text-muted-foreground">
-            Tracks whether high risk persists across consecutive polling cycles
-            before a storm is confirmed. No mitigation is performed here.
+            Tracks whether high risk persists across{' '}
+            <span className="font-medium text-foreground">
+              {requiredConfirmations}
+            </span>{' '}
+            consecutive polling cycles before a storm is confirmed. No
+            mitigation is performed here.
           </p>
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">
+                Required polls
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-2xl font-bold">{requiredConfirmations}</p>
+            </CardContent>
+          </Card>
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground">
@@ -1305,7 +1321,7 @@ export function StormProtectionPage() {
           <EmptyState
             icon={CheckCircle2}
             title="No confirmation results"
-            description="Calculate risk first, then evaluate confirmation. The scheduler confirms after each risk cycle."
+            description={`Calculate risk first, then evaluate confirmation. A storm is confirmed after ${requiredConfirmations} consecutive high-risk polls.`}
           />
         ) : (
           <Card>
@@ -1356,7 +1372,9 @@ export function StormProtectionPage() {
                       <TableCell>
                         <ConfirmationProgressBar
                           consecutive={row.consecutiveHighSamples}
-                          required={row.requiredSamples}
+                          required={
+                            row.requiredSamples || requiredConfirmations
+                          }
                           state={String(row.state)}
                         />
                       </TableCell>

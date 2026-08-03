@@ -117,8 +117,11 @@ def is_mitigation_running(device_id, interface: str) -> bool:
 
 def count_mitigation_attempts(device_id, interface: str) -> int:
     """
-    Prefer explicit counters on interface/device metadata; fall back to
-    counting SAFE history rows (proxy until Mitigation Engine exists).
+    Count successful mitigations for this device/interface.
+
+    Prefer explicit counters on interface/device metadata; otherwise count
+    SUCCESS rows in storm_mitigation_history. Safety passes alone must not
+    consume the attempt budget (RULE_13).
     """
     iface = load_interface(device_id, interface) or {}
     for key in ("mitigationAttempts", "stormMitigationAttempts"):
@@ -138,11 +141,11 @@ def count_mitigation_attempts(device_id, interface: str) -> int:
 
     try:
         return int(
-            _db()[SAFETY_COLLECTION].count_documents(
+            _db()[MITIGATION_COLLECTION].count_documents(
                 {
                     "deviceId": _as_oid(device_id),
                     "interface": interface,
-                    "safe": True,
+                    "status": "SUCCESS",
                 }
             )
         )

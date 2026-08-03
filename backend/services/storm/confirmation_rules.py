@@ -49,8 +49,8 @@ class ConfirmationConfig:
     """Policy knobs for storm confirmation."""
 
     confirmation_enabled: bool = True
-    required_confirmations: int = 4
-    risk_threshold: float = 75.0
+    required_confirmations: int = 2
+    risk_threshold: float = 25.0
     reset_on_poll_failure: bool = True
     reset_on_ineligible: bool = True
     reset_on_low_risk: bool = True
@@ -74,9 +74,9 @@ def get_confirmation_config() -> ConfirmationConfig:
     return ConfirmationConfig(
         confirmation_enabled=_env_bool("STORM_CONFIRMATION_ENABLED", True),
         required_confirmations=max(
-            1, _env_int("STORM_REQUIRED_CONFIRMATIONS", 4)
+            1, _env_int("STORM_REQUIRED_CONFIRMATIONS", 2)
         ),
-        risk_threshold=max(0.0, min(100.0, _env_float("STORM_CONFIRMATION_RISK_THRESHOLD", 75.0))),
+        risk_threshold=max(0.0, min(100.0, _env_float("STORM_CONFIRMATION_RISK_THRESHOLD", 25.0))),
         reset_on_poll_failure=_env_bool("STORM_CONFIRMATION_RESET_ON_POLL_FAILURE", True),
         reset_on_ineligible=_env_bool("STORM_CONFIRMATION_RESET_ON_INELIGIBLE", True),
         reset_on_low_risk=_env_bool("STORM_CONFIRMATION_RESET_ON_LOW_RISK", True),

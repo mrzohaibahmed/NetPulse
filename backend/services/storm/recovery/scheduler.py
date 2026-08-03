@@ -107,7 +107,7 @@ def run_recovery_cycle() -> None:
     """
     settings = get_settings()
     auto_recovery = bool(settings.get("autoRecovery", True))
-    risk_threshold = float(settings.get("reMitigationThreshold", 75.0))
+    risk_threshold = float(settings.get("reMitigationThreshold", 25.0))
 
     now = datetime.now(timezone.utc)
 

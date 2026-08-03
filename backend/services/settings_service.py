@@ -28,7 +28,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "cooldownMinutes": int(os.getenv("STORM_RECOVERY_COOLDOWN_MINUTES", "5")),
     "stabilizationSeconds": int(os.getenv("STORM_RECOVERY_STABILIZATION_SECONDS", "60")),
     "maximumRecoveryAttempts": int(os.getenv("STORM_RECOVERY_MAX_ATTEMPTS", "3")),
-    "reMitigationThreshold": int(os.getenv("STORM_RE_MITIGATION_THRESHOLD", "75")),
+    "reMitigationThreshold": int(os.getenv("STORM_RE_MITIGATION_THRESHOLD", "25")),
     "dataRetentionDays": int(os.getenv("DATA_RETENTION_DAYS", "90")),
     "incidentRetentionDays": int(os.getenv("INCIDENT_RETENTION_DAYS", "365")),
     "stormNotifications": {
@@ -85,7 +85,7 @@ def get_public_settings():
         "cooldownMinutes": int(settings.get("cooldownMinutes", 5)),
         "stabilizationSeconds": int(settings.get("stabilizationSeconds", 60)),
         "maximumRecoveryAttempts": int(settings.get("maximumRecoveryAttempts", 3)),
-        "reMitigationThreshold": int(settings.get("reMitigationThreshold", 75)),
+        "reMitigationThreshold": int(settings.get("reMitigationThreshold", 25)),
         "dataRetentionDays": int(settings.get("dataRetentionDays", 90)),
         "incidentRetentionDays": int(settings.get("incidentRetentionDays", 365)),
         "stormNotifications": _public_storm_notifications(settings),

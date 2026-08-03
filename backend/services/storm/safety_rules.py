@@ -44,12 +44,12 @@ class SafetyConfig:
 
     safety_enabled: bool = True
     automation_enabled: bool = True
-    cooldown_minutes: int = 30
+    cooldown_minutes: int = 5
     cpu_threshold: float = 90.0
     memory_threshold: float = 90.0
     maximum_attempts: int = 3
     allow_manual_override: bool = False
-    risk_threshold: float = 75.0
+    risk_threshold: float = 25.0
     require_ssh: bool = True
     # When CPU/memory metrics are unavailable, treat health check as passed.
     fail_open_missing_health: bool = True
@@ -76,7 +76,7 @@ def get_safety_config() -> SafetyConfig:
     return SafetyConfig(
         safety_enabled=_env_bool("STORM_SAFETY_ENABLED", True),
         automation_enabled=_env_bool("STORM_AUTOMATION_ENABLED", True),
-        cooldown_minutes=max(0, _env_int("STORM_COOLDOWN_MINUTES", 30)),
+        cooldown_minutes=max(0, _env_int("STORM_COOLDOWN_MINUTES", 5)),
         cpu_threshold=max(1.0, min(100.0, _env_float("STORM_CPU_THRESHOLD", 90.0))),
         memory_threshold=max(
             1.0, min(100.0, _env_float("STORM_MEMORY_THRESHOLD", 90.0))
@@ -84,7 +84,7 @@ def get_safety_config() -> SafetyConfig:
         maximum_attempts=max(1, _env_int("STORM_MAXIMUM_ATTEMPTS", 3)),
         allow_manual_override=_env_bool("STORM_ALLOW_MANUAL_OVERRIDE", False),
         risk_threshold=max(
-            0.0, min(100.0, _env_float("STORM_SAFETY_RISK_THRESHOLD", 75.0))
+            0.0, min(100.0, _env_float("STORM_SAFETY_RISK_THRESHOLD", 25.0))
         ),
         require_ssh=_env_bool("STORM_SAFETY_REQUIRE_SSH", True),
         fail_open_missing_health=_env_bool(

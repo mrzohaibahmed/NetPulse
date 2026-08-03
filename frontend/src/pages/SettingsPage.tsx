@@ -64,7 +64,7 @@ export function SettingsPage() {
       cooldownMinutes: 5,
       stabilizationSeconds: 60,
       maximumRecoveryAttempts: 3,
-      reMitigationThreshold: 75,
+      reMitigationThreshold: 25,
       dataRetentionDays: 90,
       incidentRetentionDays: 365,
       stormNotificationsEnabled: true,
@@ -93,7 +93,7 @@ export function SettingsPage() {
       cooldownMinutes: data.cooldownMinutes ?? 5,
       stabilizationSeconds: data.stabilizationSeconds ?? 60,
       maximumRecoveryAttempts: data.maximumRecoveryAttempts ?? 3,
-      reMitigationThreshold: data.reMitigationThreshold ?? 75,
+      reMitigationThreshold: data.reMitigationThreshold ?? 25,
       dataRetentionDays: data.dataRetentionDays ?? 90,
       incidentRetentionDays: data.incidentRetentionDays ?? 365,
       stormNotificationsEnabled: data.stormNotifications?.enabled ?? true,
@@ -363,7 +363,9 @@ export function SettingsPage() {
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="reMitigationThreshold">Re-mitigation risk threshold (%)</Label>
+              <Label htmlFor="reMitigationThreshold">
+                Prepare / re-mitigation risk threshold (%)
+              </Label>
               <Input
                 id="reMitigationThreshold"
                 type="number"
@@ -371,6 +373,10 @@ export function SettingsPage() {
                 max={100}
                 {...form.register('reMitigationThreshold', { valueAsNumber: true })}
               />
+              <p className="text-xs text-muted-foreground">
+                Must be at or below the confirmation risk threshold so confirmed
+                storms can be prepared for shutdown.
+              </p>
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="dataRetentionDays">Data retention (days)</Label>
