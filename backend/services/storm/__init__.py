@@ -48,6 +48,7 @@ from services.storm.safety import (
     evaluate_all_safety,
     get_safety_engine,
 )
+from services.storm.storm_source_selector import select_storm_source
 
 __all__ = [
     "ConfirmationEngine",
@@ -79,4 +80,5 @@ __all__ = [
     "get_safety_engine",
     "prepare",
     "prepare_all_safe",
+    "select_storm_source",
 ]

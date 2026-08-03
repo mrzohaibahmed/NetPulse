@@ -360,6 +360,9 @@ def serialize_safety_result(result: dict) -> dict:
         "cpuPercent": result.get("cpuPercent"),
         "memoryPercent": result.get("memoryPercent"),
         "status": result.get("status") or ("SAFE" if result.get("safe") else "UNSAFE"),
+        "sourceClassification": result.get("sourceClassification"),
+        "sourceConfidence": result.get("sourceConfidence"),
+        "sourceRationale": result.get("sourceRationale"),
         "timestamp": format_datetime(result.get("timestamp")),
     }
 

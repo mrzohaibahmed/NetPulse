@@ -242,6 +242,29 @@ def capture_diagnostics(
         },
     }
 
+    # Source attribution telemetry (best-effort — never fails diagnostics)
+    try:
+        from services.storm.storm_source_selector import (  # noqa: PLC0415
+            select_storm_source,
+        )
+
+        selection = select_storm_source(device_id, interface=name)
+        attribution = selection.to_dict()
+        risk_cls = (risk or {}).get("sourceClassification")
+        risk_conf = (risk or {}).get("sourceConfidence")
+        attribution["interfaceSourceClassification"] = risk_cls
+        attribution["interfaceSourceConfidence"] = risk_conf
+        attribution["interfaceSourceRationale"] = (risk or {}).get("sourceRationale")
+        if risk and isinstance(risk.get("rawMetrics"), dict):
+            src_metrics = (risk.get("rawMetrics") or {}).get("sourceAnalysis") or {}
+            attribution["rxTxRatio"] = src_metrics.get("rxRatio")
+            attribution["broadcastDominance"] = src_metrics.get("broadcastDominance")
+        package["sourceAttribution"] = attribution
+        package["affectedInterfaces"] = [c.interface for c in selection.receivers]
+        package["relatedInterfaces"] = [c.interface for c in selection.runners_up]
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Source attribution skipped in diagnostics | %s | %s", name, exc)
+
     logger.info(
         "Diagnostics Complete | %s | ssh=%s | mac=%s | switchport=%s",
         name,

@@ -351,7 +351,7 @@ class RecoveryEngineTests(unittest.TestCase):
         # admin status is down! (verification fails)
         mock_collector.collector.run_command.return_value = "GigabitEthernet1/0/10 is administratively down\n admin status is down"
 
-        res = execute_recovery(self.incident_id, force=False)
+        res = execute_recovery(self.incident_id, force=False, operator="admin")
         self.assertFalse(res["success"])
         self.assertEqual(res["status"], "FAILURE")
 
@@ -408,7 +408,7 @@ class RecoveryEngineTests(unittest.TestCase):
             "GigabitEthernet1/0/10 is administratively down\n admin status is down"
         )
 
-        res = execute_recovery(self.incident_id, force=False)
+        res = execute_recovery(self.incident_id, force=False, operator="admin")
         self.assertFalse(res["success"])
         self.assertEqual(res["status"], "FAILURE")
         self.assertEqual(res["retryCount"], 1)
@@ -456,7 +456,7 @@ class RecoveryEngineTests(unittest.TestCase):
         mock_collector.creds.vendor = "cisco_ios"
         mock_collector.collector.run_command.return_value = "admin status is down"
 
-        res = execute_recovery(self.incident_id, force=False)
+        res = execute_recovery(self.incident_id, force=False, operator="admin")
         self.assertFalse(res["success"])
         self.assertEqual(res["status"], "RECOVERY_FAILED")
 

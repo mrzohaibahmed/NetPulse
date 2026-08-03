@@ -81,6 +81,14 @@ def serialize_incident(doc: dict) -> dict[str, Any]:
         ),
         "safety": serialize_safety_result(safety) if isinstance(safety, dict) else None,
         "diagnosticsMeta": _jsonable(doc.get("diagnosticsMeta") or {}),
+        "sourceAttribution": _jsonable(doc.get("sourceAttribution")),
+        "sourceClassification": doc.get("sourceClassification")
+        or (risk or {}).get("sourceClassification"),
+        "sourceConfidence": doc.get("sourceConfidence")
+        if doc.get("sourceConfidence") is not None
+        else (risk or {}).get("sourceConfidence"),
+        "affectedInterfaces": list(doc.get("affectedInterfaces") or []),
+        "relatedInterfaces": list(doc.get("relatedInterfaces") or []),
         "timeline": [
             {
                 "event": item.get("event"),

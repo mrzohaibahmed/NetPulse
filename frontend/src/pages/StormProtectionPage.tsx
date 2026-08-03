@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import {
   Area,
   AreaChart,
@@ -29,6 +29,7 @@ import {
 } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useAuth } from '@/auth/AuthContext'
+import { getStormIncident } from '@/api'
 import {
   useConfirmationMutations,
   useConfirmationQuery,
@@ -100,6 +101,42 @@ function SeverityBadge({ severity }: { severity: string }) {
     <Badge variant={tone.badge} className="font-semibold uppercase tracking-wide">
       <span className={cn('h-1.5 w-1.5 rounded-full', tone.bar)} aria-hidden />
       {severity}
+    </Badge>
+  )
+}
+
+const SOURCE_LABELS: Record<string, string> = {
+  LIKELY_SOURCE: 'Likely Source',
+  POSSIBLE_SOURCE: 'Possible Source',
+  LIKELY_FORWARDER: 'Likely Forwarder',
+  LIKELY_RECEIVER: 'Likely Receiver',
+  NORMAL: 'Normal',
+  UNKNOWN: 'Unknown',
+}
+
+function SourceBadge({
+  classification,
+  confidence,
+}: {
+  classification?: string | null
+  confidence?: number | null
+}) {
+  if (!classification) return null
+  const variant =
+    classification === 'LIKELY_SOURCE'
+      ? 'danger'
+      : classification === 'POSSIBLE_SOURCE'
+        ? 'warning'
+        : classification === 'LIKELY_RECEIVER'
+          ? 'outline'
+          : classification === 'NORMAL'
+            ? 'success'
+            : 'secondary'
+  const label = SOURCE_LABELS[classification] || classification
+  return (
+    <Badge variant={variant} className="font-semibold tracking-wide">
+      {label}
+      {confidence != null ? ` · ${Number(confidence).toFixed(0)}%` : ''}
     </Badge>
   )
 }
@@ -455,6 +492,7 @@ function classificationIface(row: EligibilityResult): Pick<
 
 export function StormProtectionPage() {
   const { isAdmin } = useAuth()
+  const [searchParams] = useSearchParams()
   const eligibilityMutations = useEligibilityMutations()
   const riskMutations = useRiskMutations()
   const confirmationMutations = useConfirmationMutations()
@@ -655,6 +693,34 @@ export function StormProtectionPage() {
   const incidentRows = incidentsQuery.data?.data ?? []
   const incidentTotal = incidentsQuery.data?.total ?? incidentsQuery.data?.count ?? 0
   const incidentTotalPages = incidentsQuery.data?.totalPages ?? 1
+
+  // Deep-link from Alerts page: /storm?incident=<incidentId>
+  useEffect(() => {
+    const incidentParam = (searchParams.get('incident') || '').trim()
+    if (!incidentParam) return
+    if (selectedIncident?.incidentId === incidentParam) return
+
+    const fromList = incidentRows.find((row) => row.incidentId === incidentParam)
+    if (fromList) {
+      setSelectedIncident(fromList)
+      setExpandedSections({})
+      return
+    }
+
+    let cancelled = false
+    void getStormIncident(incidentParam)
+      .then((res) => {
+        if (cancelled || !res?.data) return
+        setSelectedIncident(res.data)
+        setExpandedSections({})
+      })
+      .catch(() => {
+        /* ignore missing incident */
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [searchParams, incidentRows, selectedIncident?.incidentId])
 
   const eligibleCount = useMemo(() => rows.filter((r) => r.eligible).length, [rows])
   const ineligibleCount = rows.length - eligibleCount
@@ -919,6 +985,7 @@ export function StormProtectionPage() {
                       <TableHead>Interface</TableHead>
                       <TableHead>Risk</TableHead>
                       <TableHead>Severity</TableHead>
+                      <TableHead>Source</TableHead>
                       <TableHead>Broadcast</TableHead>
                       <TableHead>Multicast</TableHead>
                       <TableHead>Util</TableHead>
@@ -973,6 +1040,12 @@ export function StormProtectionPage() {
                           </TableCell>
                           <TableCell>
                             <SeverityBadge severity={String(row.severity)} />
+                          </TableCell>
+                          <TableCell>
+                            <SourceBadge
+                              classification={row.sourceClassification}
+                              confidence={row.sourceConfidence}
+                            />
                           </TableCell>
                           <TableCell className="mono text-xs">
                             {formatRate(row.broadcastRate)}
@@ -1029,7 +1102,14 @@ export function StormProtectionPage() {
                         </span>
                         <SeverityBadge severity={String(selectedRisk.severity)} />
                         <EligibilityBadge eligible={selectedRisk.eligible} />
+                        <SourceBadge
+                          classification={selectedRisk.sourceClassification}
+                          confidence={selectedRisk.sourceConfidence}
+                        />
                       </div>
+                      {selectedRisk.sourceRationale ? (
+                        <p className="text-xs text-muted-foreground">{selectedRisk.sourceRationale}</p>
+                      ) : null}
 
                       <div className="grid grid-cols-2 gap-2 text-sm">
                         <MetricCell label="Broadcast" value={formatRate(selectedRisk.broadcastRate)} />
@@ -1770,11 +1850,42 @@ export function StormProtectionPage() {
                     <div className="flex flex-wrap items-center gap-2">
                       <SeverityBadge severity={selectedIncident.severity} />
                       <IncidentStatusBadge status={selectedIncident.status} />
+                      <SourceBadge
+                        classification={
+                          selectedIncident.sourceClassification ||
+                          (selectedIncident.risk as { sourceClassification?: string } | null)
+                            ?.sourceClassification
+                        }
+                        confidence={
+                          selectedIncident.sourceConfidence ??
+                          (selectedIncident.risk as { sourceConfidence?: number } | null)
+                            ?.sourceConfidence
+                        }
+                      />
                     </div>
                     <p className="text-sm text-muted-foreground">
                       {selectedIncident.interface} ·{' '}
                       {selectedIncident.hostname || selectedIncident.deviceId}
                     </p>
+                    {selectedIncident.sourceAttribution ? (
+                      <div className="rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-xs text-muted-foreground space-y-1">
+                        <p>
+                          <span className="font-semibold text-foreground">Selection: </span>
+                          {String(
+                            (selectedIncident.sourceAttribution as { reasonSelected?: string })
+                              .reasonSelected ||
+                              (selectedIncident.sourceAttribution as { reason?: string }).reason ||
+                              '—',
+                          )}
+                        </p>
+                        {(selectedIncident.affectedInterfaces?.length || 0) > 0 ? (
+                          <p>
+                            <span className="font-semibold text-foreground">Affected: </span>
+                            {selectedIncident.affectedInterfaces!.join(', ')}
+                          </p>
+                        ) : null}
+                      </div>
+                    ) : null}
                     <JsonSection
                       title="Interface Snapshot"
                       open={Boolean(expandedSections.interface)}

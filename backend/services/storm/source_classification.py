@@ -2,7 +2,13 @@
 Storm source confidence for risky interfaces.
 
 Classifies whether elevated storm metrics likely originate on the port,
-are being forwarded through it, or are received from upstream.
+are being forwarded through it, or are received as flood victims.
+
+Cisco / switch counter convention (In = RX, Out = TX):
+- RX (InBroadcast)  = traffic entering the switch from the attached device
+                      → most likely originating host on an access port
+- TX (OutBroadcast) = traffic leaving the switch toward the attached device
+                      → flooded receiver / victim of a broadcast storm
 """
 
 from __future__ import annotations
@@ -12,8 +18,10 @@ from typing import Any, Optional
 from services.storm.history import rate_per_second
 
 LIKELY_SOURCE = "LIKELY_SOURCE"
+POSSIBLE_SOURCE = "POSSIBLE_SOURCE"
 LIKELY_FORWARDER = "LIKELY_FORWARDER"
 LIKELY_RECEIVER = "LIKELY_RECEIVER"
+NORMAL = "NORMAL"
 UNKNOWN = "UNKNOWN"
 
 
@@ -63,15 +71,28 @@ def classify_storm_source(
     previous: Optional[dict[str, Any]],
     interface_context: Optional[dict[str, Any]] = None,
     risk_score: float = 0.0,
+    min_risk_for_analysis: float = 25.0,
+    dominance_ratio: float = 1.25,
+    dominant_share: float = 0.6,
 ) -> dict[str, Any]:
     """
     Return ``sourceClassification``, ``sourceConfidence`` (0–100), and rationale.
+
+    ``dominance_ratio`` / ``dominant_share`` remain configurable so Cisco
+    In/Out assumptions stay inside this classifier only.
     """
-    if risk_score < 25 or not current:
+    if not current:
         return {
             "sourceClassification": UNKNOWN,
             "sourceConfidence": 0.0,
-            "sourceRationale": "Risk below analysis threshold or missing statistics.",
+            "sourceRationale": "Missing statistics.",
+        }
+
+    if risk_score < float(min_risk_for_analysis):
+        return {
+            "sourceClassification": NORMAL,
+            "sourceConfidence": 0.0,
+            "sourceRationale": "Risk below analysis threshold — treated as normal.",
         }
 
     topo = _topology_flags(interface_context)
@@ -98,28 +119,47 @@ def classify_storm_source(
 
     if total <= 0:
         return {
-            "sourceClassification": UNKNOWN,
+            "sourceClassification": NORMAL,
             "sourceConfidence": 0.0,
             "sourceRationale": "No directional storm traffic rates available.",
+            "sourceMetrics": {
+                "rxBroadcastRate": rx_bcast,
+                "txBroadcastRate": tx_bcast,
+                "rxMulticastRate": rx_mcast,
+                "txMulticastRate": tx_mcast,
+                "rxRatio": 0.0,
+                "txRatio": 0.0,
+            },
         }
 
     rx_ratio = rx_storm / total
     tx_ratio = tx_storm / total
     trunk_like = topo["is_trunk"] or topo["is_uplink"] or topo["is_infrastructure"]
+    both_elevated = (
+        rx_storm > 0
+        and tx_storm > 0
+        and min(rx_ratio, tx_ratio) >= 0.35
+    )
 
     classification = UNKNOWN
     rationale_parts: list[str] = []
 
     if topo["is_access"]:
-        if tx_ratio >= 0.6 and tx_storm >= rx_storm * 1.25:
+        # Access: RX-dominant ingress = originating host; TX-dominant egress = victim.
+        if rx_ratio >= dominant_share and rx_storm >= tx_storm * dominance_ratio:
             classification = LIKELY_SOURCE
             rationale_parts.append(
-                "Access port with dominant TX broadcast/multicast — likely originating storm."
+                "Access port with dominant RX broadcast/multicast — likely originating storm."
             )
-        elif rx_ratio >= 0.6 and rx_storm >= tx_storm * 1.25:
+        elif tx_ratio >= dominant_share and tx_storm >= rx_storm * dominance_ratio:
             classification = LIKELY_RECEIVER
             rationale_parts.append(
-                "Access port with dominant RX broadcast/multicast — likely receiving forwarded storm."
+                "Access port with dominant TX broadcast/multicast — likely receiving forwarded storm."
+            )
+        elif both_elevated:
+            classification = POSSIBLE_SOURCE
+            rationale_parts.append(
+                "Access port with elevated RX and TX storm traffic — possible source."
             )
         else:
             classification = UNKNOWN
@@ -127,20 +167,20 @@ def classify_storm_source(
                 "Access port with mixed RX/TX storm traffic — direction inconclusive."
             )
     elif trunk_like:
-        if rx_storm > 0 and tx_storm > 0 and min(rx_ratio, tx_ratio) >= 0.35:
+        if both_elevated:
             classification = LIKELY_FORWARDER
             rationale_parts.append(
                 "Trunk/uplink with significant RX and TX storm traffic — likely forwarding."
-            )
-        elif tx_ratio >= 0.65:
-            classification = LIKELY_SOURCE
-            rationale_parts.append(
-                "Trunk/uplink with dominant TX storm traffic — possible local source."
             )
         elif rx_ratio >= 0.65:
             classification = LIKELY_RECEIVER
             rationale_parts.append(
                 "Trunk/uplink with dominant RX storm traffic — storm arriving from upstream."
+            )
+        elif tx_ratio >= 0.65:
+            classification = LIKELY_FORWARDER
+            rationale_parts.append(
+                "Trunk/uplink with dominant TX storm traffic — flooding downstream (forwarder)."
             )
         else:
             classification = LIKELY_FORWARDER
@@ -148,12 +188,15 @@ def classify_storm_source(
                 "Trunk/uplink role with bidirectional storm metrics — treated as forwarder."
             )
     else:
-        if tx_ratio >= 0.55:
+        if rx_ratio >= 0.55 and rx_storm >= tx_storm * dominance_ratio:
             classification = LIKELY_SOURCE
-            rationale_parts.append("Dominant TX storm traffic on unknown port role.")
-        elif rx_ratio >= 0.55:
-            classification = LIKELY_RECEIVER
             rationale_parts.append("Dominant RX storm traffic on unknown port role.")
+        elif tx_ratio >= 0.55 and tx_storm >= rx_storm * dominance_ratio:
+            classification = LIKELY_RECEIVER
+            rationale_parts.append("Dominant TX storm traffic on unknown port role.")
+        elif both_elevated:
+            classification = POSSIBLE_SOURCE
+            rationale_parts.append("Elevated RX and TX on unknown port role — possible source.")
         else:
             classification = UNKNOWN
             rationale_parts.append("Mixed directional storm traffic.")
@@ -163,11 +206,13 @@ def classify_storm_source(
 
     # Confidence from ratio separation, signal strength, and topology clarity.
     separation = abs(rx_ratio - tx_ratio)
-    signal = min(100.0, (total / 100.0) * 10.0)  # caps contribution from rate magnitude
+    signal = min(100.0, (total / 100.0) * 10.0)
     base = 35.0 + separation * 55.0
     if classification == LIKELY_FORWARDER and trunk_like:
         base += 10.0
-    if classification == UNKNOWN:
+    if classification == POSSIBLE_SOURCE:
+        base *= 0.75
+    if classification in (UNKNOWN, NORMAL):
         base *= 0.45
     confidence = round(min(100.0, max(0.0, base + signal * 0.15)), 2)
 
@@ -182,5 +227,6 @@ def classify_storm_source(
             "txMulticastRate": tx_mcast,
             "rxRatio": round(rx_ratio, 4),
             "txRatio": round(tx_ratio, 4),
+            "broadcastDominance": "RX" if rx_ratio >= tx_ratio else "TX",
         },
     }

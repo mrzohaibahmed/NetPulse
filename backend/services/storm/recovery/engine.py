@@ -91,6 +91,7 @@ def execute_recovery(
     verification_passed = False
     verification_output = ""
     retry_count = incident.get("recoveryRetryCount", 0)
+    device: dict[str, Any] | None = None
 
     append_timeline_event(
         incident_id,
@@ -175,14 +176,36 @@ def execute_recovery(
             )
 
             # Automatic (SYSTEM) verified recovery only — never block the workflow.
+            # Alert creation and email delivery are independent operations.
             if str(operator).upper() == "SYSTEM":
+                refreshed = get_incident(incident_id) or incident
+                alert_id = None
+                try:
+                    from services.alert_service import (  # noqa: PLC0415
+                        create_storm_recovery_alert,
+                    )
+
+                    alert_id = create_storm_recovery_alert(
+                        refreshed,
+                        device=device,
+                        recovered_at=now,
+                    )
+                except Exception as alert_exc:  # noqa: BLE001
+                    logger.warning(
+                        "Storm recovery alert failed | incident=%s | %s",
+                        incident_id,
+                        alert_exc,
+                    )
+
                 try:
                     from services.email_service import (  # noqa: PLC0415
                         send_storm_recovery_notification,
                     )
+                    from services.alert_service import (  # noqa: PLC0415
+                        mark_alert_email_sent,
+                    )
 
-                    refreshed = get_incident(incident_id) or incident
-                    send_storm_recovery_notification(
+                    email_sent = send_storm_recovery_notification(
                         refreshed,
                         verification_result={
                             "success": True,
@@ -196,6 +219,8 @@ def execute_recovery(
                         operator=operator,
                         recovered_at=now,
                     )
+                    if alert_id:
+                        mark_alert_email_sent(alert_id, bool(email_sent))
                 except Exception as mail_exc:  # noqa: BLE001
                     logger.warning(
                         "Storm recovery email failed | incident=%s | %s",
@@ -270,13 +295,34 @@ def execute_recovery(
         )
 
         if str(operator).upper() == "SYSTEM":
+            refreshed = get_incident(incident_id) or incident
+            alert_id = None
+            try:
+                from services.alert_service import (  # noqa: PLC0415
+                    create_storm_recovery_failure_alert,
+                )
+
+                alert_id = create_storm_recovery_failure_alert(
+                    refreshed,
+                    device=device,
+                    action_status=history_status,
+                )
+            except Exception as alert_exc:  # noqa: BLE001
+                logger.warning(
+                    "Storm recovery failure alert failed | incident=%s | %s",
+                    incident_id,
+                    alert_exc,
+                )
+
             try:
                 from services.email_service import (  # noqa: PLC0415
                     send_storm_recovery_failure,
                 )
+                from services.alert_service import (  # noqa: PLC0415
+                    mark_alert_email_sent,
+                )
 
-                refreshed = get_incident(incident_id) or incident
-                send_storm_recovery_failure(
+                email_sent = send_storm_recovery_failure(
                     refreshed,
                     verification_result={
                         "success": False,
@@ -287,6 +333,8 @@ def execute_recovery(
                     operator=operator,
                     action_status=history_status,
                 )
+                if alert_id:
+                    mark_alert_email_sent(alert_id, bool(email_sent))
             except Exception as mail_exc:  # noqa: BLE001
                 logger.warning(
                     "Storm recovery failure email failed | incident=%s | %s",

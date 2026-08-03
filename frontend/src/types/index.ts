@@ -145,9 +145,20 @@ export interface AlertItem {
   hostname: string
   ipAddress: string
   deviceType?: string
+  deviceName?: string | null
   status: string
   message: string
+  title?: string | null
   scanType: string
+  alertType?: string | null
+  category?: string | null
+  severity?: string | null
+  interface?: string | null
+  incidentId?: string | null
+  riskScore?: number | null
+  action?: string | null
+  generatedBy?: string | null
+  recoveryDuration?: string | null
   emailSent: boolean
   acknowledged: boolean
   dismissed: boolean
@@ -475,8 +486,10 @@ export interface RiskContributor {
 
 export type StormSourceClassification =
   | 'LIKELY_SOURCE'
+  | 'POSSIBLE_SOURCE'
   | 'LIKELY_FORWARDER'
   | 'LIKELY_RECEIVER'
+  | 'NORMAL'
   | 'UNKNOWN'
 
 export interface RiskResult {
@@ -543,6 +556,9 @@ export interface SafetyResult {
   cpuPercent?: number | null
   memoryPercent?: number | null
   status: SafetyStatus | string
+  sourceClassification?: StormSourceClassification | string | null
+  sourceConfidence?: number | null
+  sourceRationale?: string | null
   timestamp?: string | null
 }
 
@@ -589,6 +605,11 @@ export interface StormIncident {
   confirmation?: Record<string, unknown> | null
   safety?: Record<string, unknown> | null
   diagnosticsMeta?: Record<string, unknown>
+  sourceAttribution?: Record<string, unknown> | null
+  sourceClassification?: StormSourceClassification | string | null
+  sourceConfidence?: number | null
+  affectedInterfaces?: string[]
+  relatedInterfaces?: string[]
   timeline: StormIncidentTimelineEvent[]
   createdAt?: string | null
   updatedAt?: string | null

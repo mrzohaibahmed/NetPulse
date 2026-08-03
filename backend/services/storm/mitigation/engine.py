@@ -239,14 +239,32 @@ def execute_mitigation(
         )
 
         # Automatic (SYSTEM) verified shutdown only — never block the workflow.
+        # Alert creation and email delivery are independent operations.
         if strategy_name == "SHUTDOWN" and str(operator).upper() == "SYSTEM":
+            refreshed = get_incident(incident_id) or incident
+            alert_id = None
+            try:
+                from services.alert_service import (  # noqa: PLC0415
+                    create_storm_shutdown_alert,
+                )
+
+                alert_id = create_storm_shutdown_alert(refreshed, device=device)
+            except Exception as alert_exc:  # noqa: BLE001
+                logger.warning(
+                    "Storm shutdown alert failed | incident=%s | %s",
+                    incident_id,
+                    alert_exc,
+                )
+
             try:
                 from services.email_service import (  # noqa: PLC0415
                     send_storm_shutdown_notification,
                 )
+                from services.alert_service import (  # noqa: PLC0415
+                    mark_alert_email_sent,
+                )
 
-                refreshed = get_incident(incident_id) or incident
-                send_storm_shutdown_notification(
+                email_sent = send_storm_shutdown_notification(
                     refreshed,
                     verification_result={
                         "success": True,
@@ -259,6 +277,8 @@ def execute_mitigation(
                     ),
                     operator=operator,
                 )
+                if alert_id:
+                    mark_alert_email_sent(alert_id, bool(email_sent))
             except Exception as mail_exc:  # noqa: BLE001
                 logger.warning(
                     "Storm shutdown email failed | incident=%s | %s",
@@ -329,13 +349,34 @@ def execute_mitigation(
         safe_error = "Mitigation verification failed" if verification_passed is False else "Mitigation execution failed"
 
         if strategy_name == "SHUTDOWN" and str(operator).upper() == "SYSTEM":
+            refreshed = get_incident(incident_id) or incident
+            alert_id = None
+            try:
+                from services.alert_service import (  # noqa: PLC0415
+                    create_storm_shutdown_failure_alert,
+                )
+
+                alert_id = create_storm_shutdown_failure_alert(
+                    refreshed,
+                    device=device,
+                    action_status=new_status,
+                )
+            except Exception as alert_exc:  # noqa: BLE001
+                logger.warning(
+                    "Storm shutdown failure alert failed | incident=%s | %s",
+                    incident_id,
+                    alert_exc,
+                )
+
             try:
                 from services.email_service import (  # noqa: PLC0415
                     send_storm_mitigation_failure,
                 )
+                from services.alert_service import (  # noqa: PLC0415
+                    mark_alert_email_sent,
+                )
 
-                refreshed = get_incident(incident_id) or incident
-                send_storm_mitigation_failure(
+                email_sent = send_storm_mitigation_failure(
                     refreshed,
                     verification_result={
                         "success": False,
@@ -346,6 +387,8 @@ def execute_mitigation(
                     operator=operator,
                     action_status=new_status,
                 )
+                if alert_id:
+                    mark_alert_email_sent(alert_id, bool(email_sent))
             except Exception as mail_exc:  # noqa: BLE001
                 logger.warning(
                     "Storm mitigation failure email failed | incident=%s | %s",

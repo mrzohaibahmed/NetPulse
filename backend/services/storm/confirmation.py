@@ -236,6 +236,55 @@ class ConfirmationEngine:
                 self._store(device_id, name, result, hostname, ip_address)
             return result
 
+        # ── Source attribution gate (receivers / non-selected origins) ─
+        # Keep telemetry scoring intact; only block progression toward CONFIRMED.
+        try:
+            from services.storm.storm_source_selector import (  # noqa: PLC0415
+                confirmation_allowed_for_source,
+            )
+
+            source_risk = latest_risk
+            if source_risk is None and risk_rows:
+                source_risk = risk_rows[0]
+            allowed, block_reason, _selection = confirmation_allowed_for_source(
+                device_id,
+                name,
+                risk_doc=source_risk,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Source attribution gate failed | %s | %s — allowing confirmation path",
+                name,
+                exc,
+            )
+            allowed, block_reason = True, ""
+
+        if not allowed:
+            result = ConfirmationResult(
+                confirmed=False,
+                state=STATE_NOT_CONFIRMED,
+                current_risk=round(current_risk, 2),
+                highest_risk=round(current_risk, 2),
+                average_risk=round(current_risk, 2),
+                consecutive_high_samples=0,
+                required_samples=required,
+                reason=block_reason or "Blocked by storm source attribution",
+                timestamp=now,
+                device_id=device_key,
+                interface=name,
+                reset=True,
+                reset_reason=block_reason or "source_attribution",
+            )
+            logger.info(
+                "Confirmation Blocked | %s | Reason | %s",
+                name,
+                block_reason,
+            )
+            self._log(result, started)
+            if persist:
+                self._store(device_id, name, result, hostname, ip_address)
+            return result
+
         # ── Advance streak from trailing high-risk samples ─────────────
         trailing = count_trailing_high(risk_rows or [], threshold)
         if not trailing and current_risk >= threshold:

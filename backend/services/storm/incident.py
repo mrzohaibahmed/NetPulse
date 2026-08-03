@@ -240,6 +240,38 @@ def create_incident_from_diagnostics(
         "updatedAt": now,
     }
 
+    # Source attribution + related flood victims (optional telemetry)
+    source_attr = diagnostics.get("sourceAttribution") or incident_metadata.get(
+        "sourceAttribution"
+    )
+    if source_attr:
+        document["sourceAttribution"] = source_attr
+        document["sourceClassification"] = (
+            source_attr.get("interfaceSourceClassification")
+            or (risk or {}).get("sourceClassification")
+            or (source_attr.get("bestCandidate") or {}).get("sourceClassification")
+        )
+        document["sourceConfidence"] = (
+            source_attr.get("interfaceSourceConfidence")
+            or (risk or {}).get("sourceConfidence")
+            or source_attr.get("sourceConfidence")
+        )
+    elif risk.get("sourceClassification"):
+        document["sourceClassification"] = risk.get("sourceClassification")
+        document["sourceConfidence"] = risk.get("sourceConfidence")
+
+    affected = diagnostics.get("affectedInterfaces")
+    if affected is None:
+        affected = incident_metadata.get("affectedInterfaces")
+    if affected is not None:
+        document["affectedInterfaces"] = list(affected)
+
+    related = diagnostics.get("relatedInterfaces")
+    if related is None:
+        related = incident_metadata.get("relatedInterfaces")
+    if related is not None:
+        document["relatedInterfaces"] = list(related)
+
     if not persist:
         logger.info("Incident Created (in-memory) | %s | %s", incident_id, interface)
         return document
