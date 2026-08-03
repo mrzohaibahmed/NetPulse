@@ -18,6 +18,7 @@ from services.storm.lock_service import LockService
 SAFETY_COLLECTION = "storm_safety_history"
 CONFIRM_COLLECTION = "storm_confirmation_history"
 RISK_COLLECTION = "storm_risk_history"
+MITIGATION_COLLECTION = "storm_mitigation_history"
 
 
 def _db():
@@ -51,7 +52,7 @@ class SafetyContext:
     memory_percent: Optional[float] = None
     mitigation_running: bool = False
     mitigation_attempts: int = 0
-    last_safe_at: Optional[datetime] = None
+    last_mitigation_at: Optional[datetime] = None
     cooldown_remaining_seconds: int = 0
     extras: dict[str, Any] = field(default_factory=dict)
 
@@ -80,12 +81,20 @@ def load_latest_risk(device_id, interface: str) -> Optional[dict]:
     )
 
 
-def load_last_safe_timestamp(device_id, interface: str) -> Optional[datetime]:
-    row = _db()[SAFETY_COLLECTION].find_one(
+def load_last_successful_mitigation_timestamp(
+    device_id, interface: str
+) -> Optional[datetime]:
+    """
+    Timestamp of the latest successful mitigation for this device/interface.
+
+    Used for pre-mitigation cooldown (RULE_8). A safety pass alone must not
+    start the timer — only an executed SUCCESS in storm_mitigation_history.
+    """
+    row = _db()[MITIGATION_COLLECTION].find_one(
         {
             "deviceId": _as_oid(device_id),
             "interface": interface,
-            "safe": True,
+            "status": "SUCCESS",
         },
         sort=[("timestamp", -1)],
     )
@@ -95,6 +104,10 @@ def load_last_safe_timestamp(device_id, interface: str) -> Optional[datetime]:
     if isinstance(ts, datetime) and ts.tzinfo is None:
         return ts.replace(tzinfo=timezone.utc)
     return ts
+
+
+# Backward-compatible alias (cooldown used to key off last safe safety row).
+load_last_safe_timestamp = load_last_successful_mitigation_timestamp
 
 
 def is_mitigation_running(device_id, interface: str) -> bool:
@@ -195,11 +208,11 @@ def build_safety_context(
     iface = load_interface(device_id, name)
     confirmation = load_latest_confirmation(device_id, name)
     risk = load_latest_risk(device_id, name)
-    last_safe = load_last_safe_timestamp(device_id, name)
+    last_mitigation = load_last_successful_mitigation_timestamp(device_id, name)
 
     cooldown_remaining = 0
-    if last_safe and cfg.cooldown_minutes > 0:
-        expires = last_safe + timedelta(minutes=int(cfg.cooldown_minutes))
+    if last_mitigation and cfg.cooldown_minutes > 0:
+        expires = last_mitigation + timedelta(minutes=int(cfg.cooldown_minutes))
         now = datetime.now(timezone.utc)
         if expires.tzinfo is None:
             expires = expires.replace(tzinfo=timezone.utc)
@@ -249,7 +262,7 @@ def build_safety_context(
         memory_percent=mem_f,
         mitigation_running=is_mitigation_running(device_id, name),
         mitigation_attempts=count_mitigation_attempts(device_id, name),
-        last_safe_at=last_safe,
+        last_mitigation_at=last_mitigation,
         cooldown_remaining_seconds=cooldown_remaining,
         extras={
             "automation_global": cfg.automation_enabled,
