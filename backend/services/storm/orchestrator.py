@@ -110,7 +110,7 @@ def _validate_live_storm_gates(
         return False, "Storm is not currently confirmed — fresh confirmation required"
 
     settings = get_settings()
-    risk_threshold = float(settings.get("reMitigationThreshold", 75.0))
+    risk_threshold = float(settings.get("reMitigationThreshold", 25.0))
     risk = _latest_risk(device_id, interface)
     try:
         score = float((risk or {}).get("riskScore") or 0.0)

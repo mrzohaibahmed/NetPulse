@@ -150,7 +150,7 @@ def evaluate_recovery_safety(
     """
     settings = get_settings()
     cooldown_minutes = int(settings.get("cooldownMinutes", 5))
-    risk_threshold = float(settings.get("reMitigationThreshold", 75.0))
+    risk_threshold = float(settings.get("reMitigationThreshold", 25.0))
 
     checks: dict[str, Optional[bool]] = {
         "stormCleared": None,          # R1

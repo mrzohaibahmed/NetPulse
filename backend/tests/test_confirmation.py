@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import unittest
 from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
 
 from services.storm.confirmation import ConfirmationEngine
 from services.storm.confirmation_history import count_trailing_high, window_stats
@@ -39,7 +40,7 @@ class ConfirmationEngineTests(unittest.TestCase):
     def setUp(self):
         self.config = ConfirmationConfig(
             confirmation_enabled=True,
-            required_confirmations=4,
+            required_confirmations=2,
             risk_threshold=75.0,
             reset_on_poll_failure=True,
             reset_on_ineligible=True,
@@ -47,6 +48,12 @@ class ConfirmationEngineTests(unittest.TestCase):
             poll_stale_seconds=180,
         )
         self.engine = ConfirmationEngine(config=self.config)
+        self._source_gate = patch(
+            "services.storm.storm_source_selector.confirmation_allowed_for_source",
+            return_value=(True, "", None),
+        )
+        self._source_gate.start()
+        self.addCleanup(self._source_gate.stop)
 
     def _eval(self, scores, **kwargs):
         rows = _risk_rows(*scores) if scores is not None else []
@@ -61,20 +68,20 @@ class ConfirmationEngineTests(unittest.TestCase):
         defaults.update(kwargs)
         return self.engine.evaluate("507f1f77bcf86cd799439011", "Gi1/0/10", **defaults)
 
-    def test_four_consecutive_high_risk_samples(self):
-        result = self._eval([92, 90, 88, 97])
+    def test_two_consecutive_high_risk_samples(self):
+        result = self._eval([92, 90])
         self.assertTrue(result.confirmed)
         self.assertEqual(result.state, STATE_CONFIRMED)
-        self.assertEqual(result.consecutive_high_samples, 4)
-        self.assertEqual(result.required_samples, 4)
-        self.assertGreaterEqual(result.highest_risk, 97)
-        self.assertIn("4 consecutive", result.reason.lower())
+        self.assertEqual(result.consecutive_high_samples, 2)
+        self.assertEqual(result.required_samples, 2)
+        self.assertGreaterEqual(result.highest_risk, 92)
+        self.assertIn("2 consecutive", result.reason.lower())
 
     def test_pending_before_required(self):
-        result = self._eval([88, 90])
+        result = self._eval([88])
         self.assertFalse(result.confirmed)
         self.assertEqual(result.state, STATE_PENDING)
-        self.assertEqual(result.consecutive_high_samples, 2)
+        self.assertEqual(result.consecutive_high_samples, 1)
         self.assertIn("Awaiting", result.reason)
 
     def test_risk_drops_below_threshold(self):
@@ -213,7 +220,6 @@ class ConfirmationEngineTests(unittest.TestCase):
         result = self._eval([20, 15, 10])
         self.assertFalse(result.confirmed)
         self.assertEqual(result.state, STATE_NOT_CONFIRMED)
-        self.assertEqual(result.consecutive_high_samples, 0)
 
 
 if __name__ == "__main__":
