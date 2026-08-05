@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import {
   Area,
@@ -9,13 +9,25 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import { Activity, CheckCircle2, FileJson, RefreshCw, Shield, ShieldCheck } from 'lucide-react'
+import {
+  Activity,
+  CheckCircle2,
+  ChevronDown,
+  ChevronUp,
+  ExternalLink,
+  FileJson,
+  Network,
+  RefreshCw,
+  Shield,
+  ShieldCheck,
+} from 'lucide-react'
 import { PortClassificationBadges } from '@/components/interfaces/InterfaceStatusBadge'
 import { EmptyState } from '@/components/shared/EmptyState'
 import { ErrorState } from '@/components/shared/ErrorState'
 import { TableSkeleton } from '@/components/shared/LoadingState'
 import { PageHeader } from '@/components/shared/PageHeader'
 import { PaginationControls } from '@/components/shared/PaginationControls'
+import { StatusBadge } from '@/components/shared/StatusBadge'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -30,9 +42,11 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useAuth } from '@/auth/AuthContext'
 import { getStormIncident } from '@/api'
+import { useClientPagination } from '@/hooks/useClientPagination'
 import {
   useConfirmationMutations,
   useConfirmationQuery,
+  useDevicesQuery,
   useEligibilityMutations,
   useEligibilityQuery,
   useInterfaceRiskQuery,
@@ -63,7 +77,30 @@ import type {
 } from '@/types'
 import { formatDateTime, formatRelative } from '@/utils/format'
 
-const DEFAULT_LIMIT = 25
+const FETCH_LIMIT = 500
+const DEFAULT_SWITCHES_PER_PAGE = 10
+const DEFAULT_SECTION_ROWS_PER_PAGE = 10
+const COLLAPSE_KEY = 'netpulse.stormProtection.collapsedDevices'
+
+type SwitchStormSectionData = {
+  deviceId: string
+  hostname: string
+  ipAddress: string
+  vendor: string
+  status: string
+  monitor: boolean
+  eligibility: EligibilityResult[]
+  risk: RiskResult[]
+  confirmation: ConfirmationResult[]
+  safety: SafetyResult[]
+  incidents: StormIncident[]
+  mitigation: MitigationLog[]
+  recovery: RecoveryLog[]
+}
+
+function isManagedSwitch(deviceType: string | null | undefined): boolean {
+  return (deviceType || '').trim().toLowerCase() === 'switch'
+}
 
 function EligibilityBadge({ eligible }: { eligible: boolean }) {
   return (
@@ -221,10 +258,7 @@ function ConfirmationProgressBar({
         {Array.from({ length: total }).map((_, index) => (
           <div
             key={index}
-            className={cn(
-              'h-2 flex-1 rounded-sm',
-              index < filled ? tone : 'bg-secondary',
-            )}
+            className={cn('h-2 flex-1 rounded-sm', index < filled ? tone : 'bg-secondary')}
           />
         ))}
       </div>
@@ -367,7 +401,6 @@ function RecoveryStatusBadge({ status }: { status: string }) {
   )
 }
 
-/** Human labels for Recovery Safety Engine check keys (R1–R8). */
 const RECOVERY_CHECK_LABELS: Record<string, string> = {
   stormCleared: 'Storm Cleared',
   riskBelowThreshold: 'Risk Below Threshold',
@@ -389,7 +422,7 @@ function RecoveryChecksList({
   const entries = Object.entries(checks || {})
   if (entries.length === 0) {
     return (
-      <p className="text-xs text-muted-foreground italic">No recovery safety checks recorded.</p>
+      <p className="text-xs italic text-muted-foreground">No recovery safety checks recorded.</p>
     )
   }
   return (
@@ -423,7 +456,6 @@ function RecoveryChecksList({
     </div>
   )
 }
-
 
 function JsonSection({
   title,
@@ -490,6 +522,82 @@ function classificationIface(row: EligibilityResult): Pick<
   }
 }
 
+function MetricCell({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md border border-border/50 px-2.5 py-1.5">
+      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</p>
+      <p className="mono text-sm font-medium">{value}</p>
+    </div>
+  )
+}
+
+function Kpi({
+  label,
+  value,
+  tone = 'default',
+}: {
+  label: string
+  value: string
+  tone?: 'default' | 'success' | 'danger' | 'warning'
+}) {
+  const className =
+    tone === 'success'
+      ? 'border-success/30 bg-success/10 text-success'
+      : tone === 'danger'
+        ? 'border-danger/30 bg-danger/10 text-danger'
+        : tone === 'warning'
+          ? 'border-warning/30 bg-warning/10 text-warning'
+          : 'border-border/60 bg-secondary/30 text-foreground'
+  return (
+    <div className={`rounded-lg border px-2.5 py-2 ${className}`}>
+      <p className="text-[10px] uppercase tracking-wide opacity-80">{label}</p>
+      <p className="mono mt-1 text-sm font-semibold">{value}</p>
+    </div>
+  )
+}
+
+function Subsection({
+  title,
+  description,
+  children,
+}: {
+  title: string
+  description?: string
+  children: ReactNode
+}) {
+  return (
+    <div className="space-y-3 border-t border-border/60 px-4 py-4">
+      <div>
+        <h4 className="text-sm font-semibold tracking-tight">{title}</h4>
+        {description ? (
+          <p className="text-xs text-muted-foreground">{description}</p>
+        ) : null}
+      </div>
+      {children}
+    </div>
+  )
+}
+
+function matchesText(haystack: Array<string | null | undefined>, needle: string): boolean {
+  if (!needle) return true
+  const q = needle.toLowerCase()
+  return haystack.some((part) => String(part || '').toLowerCase().includes(q))
+}
+
+function summarizeSwitch(section: SwitchStormSectionData) {
+  return {
+    eligible: section.eligibility.filter((r) => r.eligible).length,
+    critical: section.risk.filter((r) => String(r.severity).toUpperCase() === 'CRITICAL').length,
+    confirmed: section.confirmation.filter((r) => String(r.state).toUpperCase() === 'CONFIRMED')
+      .length,
+    safe: section.safety.filter((r) => String(r.status).toUpperCase() === 'SAFE').length,
+    openIncidents: section.incidents.filter((r) => {
+      const s = String(r.status).toUpperCase()
+      return s !== 'RESOLVED' && s !== 'CLOSED'
+    }).length,
+  }
+}
+
 export function StormProtectionPage() {
   const { isAdmin } = useAuth()
   const [searchParams] = useSearchParams()
@@ -499,58 +607,39 @@ export function StormProtectionPage() {
   const safetyMutations = useSafetyMutations()
   const orchestratorMutations = useOrchestratorMutations()
   const stormConfig = useStormConfigQuery()
-
-  const [query, setQuery] = useState('')
-  const [debouncedQuery, setDebouncedQuery] = useState('')
-  const [eligibleFilter, setEligibleFilter] = useState('all')
-  const [page, setPage] = useState(1)
-  const [limit, setLimit] = useState(DEFAULT_LIMIT)
-
-  const [riskQuery, setRiskQuery] = useState('')
-  const [debouncedRiskQuery, setDebouncedRiskQuery] = useState('')
-  const [severityFilter, setSeverityFilter] = useState('all')
-  const [riskPage, setRiskPage] = useState(1)
-  const [riskLimit, setRiskLimit] = useState(DEFAULT_LIMIT)
-  const [selectedRisk, setSelectedRisk] = useState<RiskResult | null>(null)
-
-  const [confirmQuery, setConfirmQuery] = useState('')
-  const [debouncedConfirmQuery, setDebouncedConfirmQuery] = useState('')
-  const [confirmStateFilter, setConfirmStateFilter] = useState('all')
-  const [confirmPage, setConfirmPage] = useState(1)
-  const [confirmLimit, setConfirmLimit] = useState(DEFAULT_LIMIT)
-
-  const [safetyQueryText, setSafetyQueryText] = useState('')
-  const [debouncedSafetyQuery, setDebouncedSafetyQuery] = useState('')
-  const [safetyStatusFilter, setSafetyStatusFilter] = useState('all')
-  const [safetyPage, setSafetyPage] = useState(1)
-  const [safetyLimit, setSafetyLimit] = useState(DEFAULT_LIMIT)
-  const [selectedSafety, setSelectedSafety] = useState<SafetyResult | null>(null)
-
-  const [incidentQuery, setIncidentQuery] = useState('')
-  const [debouncedIncidentQuery, setDebouncedIncidentQuery] = useState('')
-  const [incidentStatusFilter, setIncidentStatusFilter] = useState('all')
-  const [incidentPage, setIncidentPage] = useState(1)
-  const [incidentLimit, setIncidentLimit] = useState(DEFAULT_LIMIT)
-  const [selectedIncident, setSelectedIncident] = useState<StormIncident | null>(null)
-  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({})
-
-  // Mitigation Engine Hooks and States
-  const [mitQuery, setMitQuery] = useState('')
-  const [debouncedMitQuery, setDebouncedMitQuery] = useState('')
-  const [mitPage, setMitPage] = useState(1)
-  const [mitLimit, setMitLimit] = useState(DEFAULT_LIMIT)
-  const [selectedMitigation, setSelectedMitigation] = useState<MitigationLog | null>(null)
-
-  const [recQuery, setRecQuery] = useState('')
-  const [debouncedRecQuery, setDebouncedRecQuery] = useState('')
-  const [recPage, setRecPage] = useState(1)
-  const [recLimit, setRecLimit] = useState(DEFAULT_LIMIT)
-  const [selectedRecovery, setSelectedRecovery] = useState<RecoveryLog | null>(null)
-
   const settingsQuery = useSettingsQuery()
   const settingsMutation = useSettingsMutation()
   const mitigationMutations = useMitigationMutations()
   const recoveryMutations = useRecoveryMutations()
+
+  const [query, setQuery] = useState('')
+  const [debouncedQuery, setDebouncedQuery] = useState('')
+  const [switchFilter, setSwitchFilter] = useState('all')
+  const [severityFilter, setSeverityFilter] = useState('all')
+  const [eligibleFilter, setEligibleFilter] = useState('all')
+  const [confirmStateFilter, setConfirmStateFilter] = useState('all')
+  const [safetyStatusFilter, setSafetyStatusFilter] = useState('all')
+  const [incidentStatusFilter, setIncidentStatusFilter] = useState('all')
+
+  const [selectedRisk, setSelectedRisk] = useState<RiskResult | null>(null)
+  const [selectedSafety, setSelectedSafety] = useState<SafetyResult | null>(null)
+  const [selectedIncident, setSelectedIncident] = useState<StormIncident | null>(null)
+  const [selectedMitigation, setSelectedMitigation] = useState<MitigationLog | null>(null)
+  const [selectedRecovery, setSelectedRecovery] = useState<RecoveryLog | null>(null)
+  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({})
+
+  const [collapsedDeviceIds, setCollapsedDeviceIds] = useState<Set<string>>(() => {
+    try {
+      const raw = sessionStorage.getItem(COLLAPSE_KEY)
+      if (!raw) return new Set<string>()
+      const parsed = JSON.parse(raw)
+      return Array.isArray(parsed)
+        ? new Set(parsed.filter((v) => typeof v === 'string'))
+        : new Set<string>()
+    } catch {
+      return new Set<string>()
+    }
+  })
 
   useEffect(() => {
     const timer = window.setTimeout(() => setDebouncedQuery(query), 300)
@@ -558,114 +647,23 @@ export function StormProtectionPage() {
   }, [query])
 
   useEffect(() => {
-    const timer = window.setTimeout(() => setDebouncedRiskQuery(riskQuery), 300)
-    return () => window.clearTimeout(timer)
-  }, [riskQuery])
+    sessionStorage.setItem(COLLAPSE_KEY, JSON.stringify([...collapsedDeviceIds]))
+  }, [collapsedDeviceIds])
 
-  useEffect(() => {
-    const timer = window.setTimeout(() => setDebouncedConfirmQuery(confirmQuery), 300)
-    return () => window.clearTimeout(timer)
-  }, [confirmQuery])
+  const devicesQuery = useDevicesQuery({ page: 1, limit: FETCH_LIMIT })
+  const devices = devicesQuery.data?.data ?? []
+  const switchDevices = useMemo(
+    () => devices.filter((device) => isManagedSwitch(device.deviceType)),
+    [devices],
+  )
 
-  useEffect(() => {
-    const timer = window.setTimeout(() => setDebouncedSafetyQuery(safetyQueryText), 300)
-    return () => window.clearTimeout(timer)
-  }, [safetyQueryText])
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => setDebouncedIncidentQuery(incidentQuery), 300)
-    return () => window.clearTimeout(timer)
-  }, [incidentQuery])
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => setDebouncedMitQuery(mitQuery), 300)
-    return () => window.clearTimeout(timer)
-  }, [mitQuery])
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => setDebouncedRecQuery(recQuery), 300)
-    return () => window.clearTimeout(timer)
-  }, [recQuery])
-
-  useEffect(() => {
-    setPage(1)
-  }, [debouncedQuery, eligibleFilter, limit])
-
-  useEffect(() => {
-    setRiskPage(1)
-  }, [debouncedRiskQuery, severityFilter, riskLimit])
-
-  useEffect(() => {
-    setConfirmPage(1)
-  }, [debouncedConfirmQuery, confirmStateFilter, confirmLimit])
-
-  useEffect(() => {
-    setRecPage(1)
-  }, [debouncedRecQuery, recLimit])
-
-  useEffect(() => {
-    setSafetyPage(1)
-  }, [debouncedSafetyQuery, safetyStatusFilter, safetyLimit])
-
-  useEffect(() => {
-    setIncidentPage(1)
-  }, [debouncedIncidentQuery, incidentStatusFilter, incidentLimit])
-
-  useEffect(() => {
-    setMitPage(1)
-  }, [debouncedMitQuery, mitLimit])
-
-  const eligibilityQuery = useEligibilityQuery({
-    page,
-    limit,
-    q: debouncedQuery,
-    eligible:
-      eligibleFilter === 'eligible'
-        ? true
-        : eligibleFilter === 'ineligible'
-          ? false
-          : undefined,
-  })
-
-  const riskListQuery = useRiskQuery({
-    page: riskPage,
-    limit: riskLimit,
-    q: debouncedRiskQuery,
-    severity: severityFilter === 'all' ? undefined : severityFilter,
-  })
-
-  const confirmationQuery = useConfirmationQuery({
-    page: confirmPage,
-    limit: confirmLimit,
-    q: debouncedConfirmQuery,
-    state: confirmStateFilter === 'all' ? undefined : confirmStateFilter,
-  })
-
-  const safetyListQuery = useSafetyQuery({
-    page: safetyPage,
-    limit: safetyLimit,
-    q: debouncedSafetyQuery,
-    safetyStatus: safetyStatusFilter === 'all' ? undefined : safetyStatusFilter,
-  })
-
-  const incidentsQuery = useStormIncidentsQuery({
-    page: incidentPage,
-    limit: incidentLimit,
-    q: debouncedIncidentQuery,
-    status: incidentStatusFilter === 'all' ? undefined : incidentStatusFilter,
-  })
-
-  const mitigationHistoryQuery = useMitigationHistoryQuery({
-    page: mitPage,
-    limit: mitLimit,
-    q: debouncedMitQuery,
-  })
-
-  const recoveryHistoryQuery = useRecoveryHistoryQuery({
-    page: recPage,
-    limit: recLimit,
-    q: debouncedRecQuery,
-  })
+  const eligibilityQuery = useEligibilityQuery({ page: 1, limit: FETCH_LIMIT })
+  const riskListQuery = useRiskQuery({ page: 1, limit: FETCH_LIMIT })
+  const confirmationQuery = useConfirmationQuery({ page: 1, limit: FETCH_LIMIT })
+  const safetyListQuery = useSafetyQuery({ page: 1, limit: FETCH_LIMIT })
+  const incidentsQuery = useStormIncidentsQuery({ page: 1, limit: FETCH_LIMIT })
+  const mitigationHistoryQuery = useMitigationHistoryQuery({ page: 1, limit: FETCH_LIMIT })
+  const recoveryHistoryQuery = useRecoveryHistoryQuery({ page: 1, limit: FETCH_LIMIT })
 
   const selectedHistoryQuery = useInterfaceRiskQuery(
     selectedRisk?.deviceId || '',
@@ -673,30 +671,18 @@ export function StormProtectionPage() {
     Boolean(selectedRisk),
   )
 
-  const rows = eligibilityQuery.data?.data ?? []
-  const total = eligibilityQuery.data?.total ?? eligibilityQuery.data?.count ?? 0
-  const totalPages = eligibilityQuery.data?.totalPages ?? 1
-
-  const riskRows = riskListQuery.data?.data ?? []
-  const riskTotal = riskListQuery.data?.total ?? riskListQuery.data?.count ?? 0
-  const riskTotalPages = riskListQuery.data?.totalPages ?? 1
-
-  const confirmRows = confirmationQuery.data?.data ?? []
-  const confirmTotal =
-    confirmationQuery.data?.total ?? confirmationQuery.data?.count ?? 0
-  const confirmTotalPages = confirmationQuery.data?.totalPages ?? 1
   const requiredConfirmations =
     stormConfig.data?.confirmation?.requiredConfirmations ?? 2
 
+  const eligibilityRows = eligibilityQuery.data?.data ?? []
+  const riskRows = riskListQuery.data?.data ?? []
+  const confirmRows = confirmationQuery.data?.data ?? []
   const safetyRows = safetyListQuery.data?.data ?? []
-  const safetyTotal = safetyListQuery.data?.total ?? safetyListQuery.data?.count ?? 0
-  const safetyTotalPages = safetyListQuery.data?.totalPages ?? 1
-
   const incidentRows = incidentsQuery.data?.data ?? []
-  const incidentTotal = incidentsQuery.data?.total ?? incidentsQuery.data?.count ?? 0
-  const incidentTotalPages = incidentsQuery.data?.totalPages ?? 1
+  const mitigationRows = mitigationHistoryQuery.data?.data ?? []
+  const recoveryRows = recoveryHistoryQuery.data?.data ?? []
 
-  // Deep-link from Alerts page: /storm?incident=<incidentId>
+  // Deep-link from Alerts: /storm?incident=<incidentId>
   useEffect(() => {
     const incidentParam = (searchParams.get('incident') || '').trim()
     if (!incidentParam) return
@@ -706,6 +692,13 @@ export function StormProtectionPage() {
     if (fromList) {
       setSelectedIncident(fromList)
       setExpandedSections({})
+      setCollapsedDeviceIds((prev) => {
+        if (!fromList.deviceId || !prev.has(fromList.deviceId)) return prev
+        const next = new Set(prev)
+        next.delete(fromList.deviceId)
+        return next
+      })
+      if (fromList.deviceId) setSwitchFilter(fromList.deviceId)
       return
     }
 
@@ -715,6 +708,15 @@ export function StormProtectionPage() {
         if (cancelled || !res?.data) return
         setSelectedIncident(res.data)
         setExpandedSections({})
+        if (res.data.deviceId) {
+          setSwitchFilter(res.data.deviceId)
+          setCollapsedDeviceIds((prev) => {
+            if (!prev.has(res.data.deviceId)) return prev
+            const next = new Set(prev)
+            next.delete(res.data.deviceId)
+            return next
+          })
+        }
       })
       .catch(() => {
         /* ignore missing incident */
@@ -724,54 +726,274 @@ export function StormProtectionPage() {
     }
   }, [searchParams, incidentRows, selectedIncident?.incidentId])
 
-  const eligibleCount = useMemo(() => rows.filter((r) => r.eligible).length, [rows])
-  const ineligibleCount = rows.length - eligibleCount
+  const filteredEligibility = useMemo(() => {
+    return eligibilityRows.filter((row) => {
+      if (eligibleFilter === 'eligible' && !row.eligible) return false
+      if (eligibleFilter === 'ineligible' && row.eligible) return false
+      return matchesText(
+        [row.interface, row.hostname, row.ipAddress, row.reason, row.failedRule, row.deviceId],
+        debouncedQuery,
+      )
+    })
+  }, [eligibilityRows, eligibleFilter, debouncedQuery])
 
-  const confirmedCount = useMemo(
-    () => confirmRows.filter((r) => String(r.state).toUpperCase() === 'CONFIRMED').length,
-    [confirmRows],
-  )
-  const pendingCount = useMemo(
-    () => confirmRows.filter((r) => String(r.state).toUpperCase() === 'PENDING').length,
-    [confirmRows],
-  )
+  const filteredRisk = useMemo(() => {
+    return riskRows.filter((row) => {
+      if (
+        severityFilter !== 'all' &&
+        String(row.severity).toUpperCase() !== severityFilter.toUpperCase()
+      ) {
+        return false
+      }
+      return matchesText(
+        [
+          row.interface,
+          row.hostname,
+          row.ipAddress,
+          row.severity,
+          row.sourceClassification,
+          row.deviceId,
+        ],
+        debouncedQuery,
+      )
+    })
+  }, [riskRows, severityFilter, debouncedQuery])
 
-  const safeCount = useMemo(
-    () => safetyRows.filter((r) => String(r.status).toUpperCase() === 'SAFE').length,
-    [safetyRows],
-  )
-  const unsafeCount = useMemo(
-    () => safetyRows.filter((r) => String(r.status).toUpperCase() === 'UNSAFE').length,
-    [safetyRows],
-  )
-  const waitingCount = useMemo(
-    () => safetyRows.filter((r) => String(r.status).toUpperCase() === 'WAITING').length,
-    [safetyRows],
-  )
+  const filteredConfirm = useMemo(() => {
+    return confirmRows.filter((row) => {
+      if (
+        confirmStateFilter !== 'all' &&
+        String(row.state).toUpperCase() !== confirmStateFilter.toUpperCase()
+      ) {
+        return false
+      }
+      return matchesText(
+        [row.interface, row.hostname, row.ipAddress, row.reason, row.state, row.deviceId],
+        debouncedQuery,
+      )
+    })
+  }, [confirmRows, confirmStateFilter, debouncedQuery])
 
-  const criticalCount = useMemo(
-    () => riskRows.filter((r) => String(r.severity).toUpperCase() === 'CRITICAL').length,
-    [riskRows],
-  )
-  const avgRisk = useMemo(() => {
-    if (!riskRows.length) return 0
-    return riskRows.reduce((sum, r) => sum + (r.riskScore || 0), 0) / riskRows.length
-  }, [riskRows])
-  const maxRisk = useMemo(
-    () => riskRows.reduce((max, r) => Math.max(max, r.riskScore || 0), 0),
-    [riskRows],
-  )
+  const filteredSafety = useMemo(() => {
+    return safetyRows.filter((row) => {
+      if (
+        safetyStatusFilter !== 'all' &&
+        String(row.status).toUpperCase() !== safetyStatusFilter.toUpperCase()
+      ) {
+        return false
+      }
+      return matchesText(
+        [row.interface, row.hostname, row.ipAddress, row.reason, row.failedRule, row.deviceId],
+        debouncedQuery,
+      )
+    })
+  }, [safetyRows, safetyStatusFilter, debouncedQuery])
+
+  const filteredIncidents = useMemo(() => {
+    return incidentRows.filter((row) => {
+      if (
+        incidentStatusFilter !== 'all' &&
+        String(row.status).toUpperCase() !== incidentStatusFilter.toUpperCase()
+      ) {
+        return false
+      }
+      return matchesText(
+        [
+          row.incidentId,
+          row.interface,
+          row.hostname,
+          row.ipAddress,
+          row.status,
+          row.severity,
+          row.deviceId,
+        ],
+        debouncedQuery,
+      )
+    })
+  }, [incidentRows, incidentStatusFilter, debouncedQuery])
+
+  const filteredMitigation = useMemo(() => {
+    return mitigationRows.filter((row) =>
+      matchesText(
+        [row.incidentId, row.interface, row.deviceId, row.strategy, row.status, row.operator],
+        debouncedQuery,
+      ),
+    )
+  }, [mitigationRows, debouncedQuery])
+
+  const filteredRecovery = useMemo(() => {
+    return recoveryRows.filter((row) =>
+      matchesText(
+        [row.incidentId, row.interface, row.deviceId, row.recoveryStatus],
+        debouncedQuery,
+      ),
+    )
+  }, [recoveryRows, debouncedQuery])
+
+  const rowFiltersActive =
+    Boolean(debouncedQuery.trim()) ||
+    severityFilter !== 'all' ||
+    eligibleFilter !== 'all' ||
+    confirmStateFilter !== 'all' ||
+    safetyStatusFilter !== 'all' ||
+    incidentStatusFilter !== 'all'
+
+  const hasActiveFilters = rowFiltersActive || switchFilter !== 'all'
+
+  const allGroupedSwitches = useMemo<SwitchStormSectionData[]>(() => {
+    const groups = new Map<string, SwitchStormSectionData>()
+
+    for (const device of switchDevices) {
+      groups.set(device._id, {
+        deviceId: device._id,
+        hostname: device.hostname || 'Unknown switch',
+        ipAddress: device.ipAddress || '—',
+        vendor: device.credentials?.sshVendor || 'Unknown',
+        status: device.status || 'Unknown',
+        monitor: device.monitor ?? true,
+        eligibility: [],
+        risk: [],
+        confirmation: [],
+        safety: [],
+        incidents: [],
+        mitigation: [],
+        recovery: [],
+      })
+    }
+
+    const ensure = (
+      deviceId: string,
+      hint?: { hostname?: string | null; ipAddress?: string | null },
+    ) => {
+      if (!deviceId || groups.has(deviceId)) return groups.get(deviceId)
+      const device = switchDevices.find((d) => d._id === deviceId)
+      if (!device) return undefined
+      const section: SwitchStormSectionData = {
+        deviceId,
+        hostname: hint?.hostname || device.hostname || 'Unknown switch',
+        ipAddress: hint?.ipAddress || device.ipAddress || '—',
+        vendor: device.credentials?.sshVendor || 'Unknown',
+        status: device.status || 'Unknown',
+        monitor: device.monitor ?? true,
+        eligibility: [],
+        risk: [],
+        confirmation: [],
+        safety: [],
+        incidents: [],
+        mitigation: [],
+        recovery: [],
+      }
+      groups.set(deviceId, section)
+      return section
+    }
+
+    for (const row of filteredEligibility) {
+      ensure(row.deviceId, row)?.eligibility.push(row)
+    }
+    for (const row of filteredRisk) {
+      ensure(row.deviceId, row)?.risk.push(row)
+    }
+    for (const row of filteredConfirm) {
+      ensure(row.deviceId, row)?.confirmation.push(row)
+    }
+    for (const row of filteredSafety) {
+      ensure(row.deviceId, row)?.safety.push(row)
+    }
+    for (const row of filteredIncidents) {
+      ensure(row.deviceId, row)?.incidents.push(row)
+    }
+    for (const row of filteredMitigation) {
+      if (row.deviceId) ensure(row.deviceId)?.mitigation.push(row)
+    }
+    for (const row of filteredRecovery) {
+      if (row.deviceId) ensure(row.deviceId)?.recovery.push(row)
+    }
+
+    return [...groups.values()].sort((a, b) => a.hostname.localeCompare(b.hostname))
+  }, [
+    switchDevices,
+    filteredEligibility,
+    filteredRisk,
+    filteredConfirm,
+    filteredSafety,
+    filteredIncidents,
+    filteredMitigation,
+    filteredRecovery,
+  ])
+
+  const groupedSwitches = useMemo(() => {
+    return allGroupedSwitches.filter((section) => {
+      if (switchFilter !== 'all' && section.deviceId !== switchFilter) return false
+      if (!rowFiltersActive) return true
+      return (
+        section.eligibility.length > 0 ||
+        section.risk.length > 0 ||
+        section.confirmation.length > 0 ||
+        section.safety.length > 0 ||
+        section.incidents.length > 0 ||
+        section.mitigation.length > 0 ||
+        section.recovery.length > 0
+      )
+    })
+  }, [allGroupedSwitches, switchFilter, rowFiltersActive])
+
+  const switchChips = useMemo(() => {
+    return allGroupedSwitches.map((device) => {
+      const summary = summarizeSwitch(device)
+      return {
+        deviceId: device.deviceId,
+        hostname: device.hostname,
+        ipAddress: device.ipAddress,
+        critical: summary.critical,
+        confirmed: summary.confirmed,
+        openIncidents: summary.openIncidents,
+      }
+    })
+  }, [allGroupedSwitches])
+
+  const switchPagination = useClientPagination(groupedSwitches, DEFAULT_SWITCHES_PER_PAGE)
+  const pagedSwitches = switchPagination.pageItems
+
+  useEffect(() => {
+    switchPagination.reset()
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reset when filter set changes
+  }, [
+    debouncedQuery,
+    switchFilter,
+    severityFilter,
+    eligibleFilter,
+    confirmStateFilter,
+    safetyStatusFilter,
+    incidentStatusFilter,
+  ])
+
+  const fleetKpis = useMemo(() => {
+    return {
+      switches: allGroupedSwitches.length,
+      eligible: filteredEligibility.filter((r) => r.eligible).length,
+      critical: filteredRisk.filter((r) => String(r.severity).toUpperCase() === 'CRITICAL').length,
+      confirmed: filteredConfirm.filter((r) => String(r.state).toUpperCase() === 'CONFIRMED')
+        .length,
+      safe: filteredSafety.filter((r) => String(r.status).toUpperCase() === 'SAFE').length,
+      incidents: filteredIncidents.length,
+    }
+  }, [
+    allGroupedSwitches.length,
+    filteredEligibility,
+    filteredRisk,
+    filteredConfirm,
+    filteredSafety,
+    filteredIncidents,
+  ])
 
   const trendData = useMemo(() => {
     const history = selectedHistoryQuery.data?.history ?? []
-    return [...history]
-      .reverse()
-      .map((point) => ({
-        time: formatDateTime(point.timestamp) || '',
-        label: formatRelative(point.timestamp) || '',
-        riskScore: point.riskScore,
-        severity: point.severity,
-      }))
+    return [...history].reverse().map((point) => ({
+      time: formatDateTime(point.timestamp) || '',
+      label: formatRelative(point.timestamp) || '',
+      riskScore: point.riskScore,
+      severity: point.severity,
+    }))
   }, [selectedHistoryQuery.data?.history])
 
   const isBusy =
@@ -786,6 +1008,7 @@ export function StormProtectionPage() {
     recoveryMutations.retry.isPending
 
   const refreshAll = () => {
+    void devicesQuery.refetch()
     void eligibilityQuery.refetch()
     void riskListQuery.refetch()
     void confirmationQuery.refetch()
@@ -796,15 +1019,42 @@ export function StormProtectionPage() {
     if (selectedRisk) void selectedHistoryQuery.refetch()
   }
 
+  const toggleDevice = (deviceId: string) => {
+    setCollapsedDeviceIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(deviceId)) next.delete(deviceId)
+      else next.add(deviceId)
+      return next
+    })
+  }
+
   const toggleSection = (key: string) => {
     setExpandedSections((prev) => ({ ...prev, [key]: !prev[key] }))
   }
+
+  const isLoading =
+    devicesQuery.isLoading ||
+    eligibilityQuery.isLoading ||
+    riskListQuery.isLoading ||
+    confirmationQuery.isLoading ||
+    safetyListQuery.isLoading ||
+    incidentsQuery.isLoading
+
+  const isError =
+    devicesQuery.isError ||
+    eligibilityQuery.isError ||
+    riskListQuery.isError ||
+    confirmationQuery.isError ||
+    safetyListQuery.isError ||
+    incidentsQuery.isError
+
+  const noSwitchesConfigured = !devicesQuery.isLoading && switchDevices.length === 0
 
   return (
     <div className="space-y-8">
       <PageHeader
         title="Storm Protection"
-        description="Eligibility → risk → confirmation → safety → diagnostics → incident prepare. No interface shutdown is performed here."
+        description="Per-switch eligibility → risk → confirmation → safety → diagnostics → mitigation → recovery."
         actions={
           <div className="flex flex-wrap items-center gap-2">
             {isAdmin ? (
@@ -826,16 +1076,13 @@ export function StormProtectionPage() {
                   onClick={() => riskMutations.calculateAll.mutate()}
                 >
                   <Activity className="mr-2 h-4 w-4" />
-                  {riskMutations.calculateAll.isPending
-                    ? 'Scoring…'
-                    : 'Calculate risk'}
+                  {riskMutations.calculateAll.isPending ? 'Scoring…' : 'Calculate risk'}
                 </Button>
                 <Button
                   type="button"
                   variant="secondary"
                   disabled={
-                    isBusy ||
-                    stormConfig.data?.confirmation?.confirmationEnabled === false
+                    isBusy || stormConfig.data?.confirmation?.confirmationEnabled === false
                   }
                   onClick={() => confirmationMutations.evaluateAll.mutate()}
                 >
@@ -846,15 +1093,12 @@ export function StormProtectionPage() {
                 </Button>
                 <Button
                   type="button"
-                  disabled={
-                    isBusy || stormConfig.data?.safety?.safetyEnabled === false
-                  }
+                  variant="secondary"
+                  disabled={isBusy || stormConfig.data?.safety?.safetyEnabled === false}
                   onClick={() => safetyMutations.evaluateAll.mutate()}
                 >
                   <ShieldCheck className="mr-2 h-4 w-4" />
-                  {safetyMutations.evaluateAll.isPending
-                    ? 'Checking…'
-                    : 'Evaluate safety'}
+                  {safetyMutations.evaluateAll.isPending ? 'Checking…' : 'Evaluate safety'}
                 </Button>
                 <Button
                   type="button"
@@ -876,143 +1120,513 @@ export function StormProtectionPage() {
         }
       />
 
-      {/* ── Risk Score ─────────────────────────────────────────────── */}
-      <section className="space-y-4">
-        <div>
-          <h2 className="text-lg font-semibold tracking-tight">Risk Score</h2>
-          <p className="text-sm text-muted-foreground">
-            Rate-based storm probability for eligible access ports. Scores use
-            analyzer contributions — not raw counters.
-          </p>
-        </div>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">Switches</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-2xl font-bold">{fleetKpis.switches}</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">Eligible</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-2xl font-bold text-success">{fleetKpis.eligible}</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">Critical risk</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-2xl font-bold text-danger">{fleetKpis.critical}</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">Confirmed</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-2xl font-bold text-success">{fleetKpis.confirmed}</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">Safe</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-2xl font-bold text-success">{fleetKpis.safe}</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">Incidents</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-2xl font-bold">{fleetKpis.incidents}</p>
+          </CardContent>
+        </Card>
+      </div>
 
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                Interfaces scored
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-2xl font-bold">{riskTotal}</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                Avg risk (page)
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className={cn('text-2xl font-bold', severityTone(
-                avgRisk >= 75 ? 'CRITICAL' : avgRisk >= 50 ? 'HIGH' : avgRisk >= 25 ? 'MEDIUM' : 'LOW',
-              ).text)}>
-                {avgRisk.toFixed(1)}
+      <Card className="border-primary/20 bg-secondary/10">
+        <CardContent className="flex flex-wrap items-center justify-between gap-4 p-4">
+          <div className="space-y-1">
+            <p className="text-sm font-semibold">Automation</p>
+            <p className="text-xs text-muted-foreground">
+              Mitigation:{' '}
+              <span className="font-semibold uppercase text-primary">
+                {settingsQuery.data?.mitigationMode || 'manual'}
+              </span>
+              {' · '}
+              Auto recovery:{' '}
+              <span className="font-semibold uppercase text-primary">
+                {settingsQuery.data?.autoRecovery ? 'enabled' : 'disabled'}
+              </span>
+            </p>
+          </div>
+          {isAdmin ? (
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant={
+                  settingsQuery.data?.mitigationMode === 'automatic' ? 'default' : 'outline'
+                }
+                disabled={settingsMutation.isPending}
+                onClick={() => settingsMutation.mutate({ mitigationMode: 'automatic' })}
+              >
+                Automatic mitigation
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={settingsQuery.data?.mitigationMode === 'manual' ? 'default' : 'outline'}
+                disabled={settingsMutation.isPending}
+                onClick={() => settingsMutation.mutate({ mitigationMode: 'manual' })}
+              >
+                Manual mitigation
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={settingsQuery.data?.autoRecovery ? 'default' : 'outline'}
+                disabled={settingsMutation.isPending}
+                onClick={() => settingsMutation.mutate({ autoRecovery: true })}
+              >
+                Enable recovery
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={!settingsQuery.data?.autoRecovery ? 'default' : 'outline'}
+                disabled={settingsMutation.isPending}
+                onClick={() => settingsMutation.mutate({ autoRecovery: false })}
+              >
+                Disable recovery
+              </Button>
+            </div>
+          ) : (
+            <Badge variant="outline" className="uppercase">
+              Admin configurable only
+            </Badge>
+          )}
+        </CardContent>
+      </Card>
+
+      <div className="flex flex-wrap gap-3">
+        <Input
+          type="search"
+          className="max-w-sm"
+          placeholder="Search interface, host, incident…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+        <Select value={severityFilter} onValueChange={setSeverityFilter}>
+          <SelectTrigger className="w-[160px]">
+            <SelectValue placeholder="Severity" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All severities</SelectItem>
+            <SelectItem value="LOW">Low</SelectItem>
+            <SelectItem value="MEDIUM">Medium</SelectItem>
+            <SelectItem value="HIGH">High</SelectItem>
+            <SelectItem value="CRITICAL">Critical</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={eligibleFilter} onValueChange={setEligibleFilter}>
+          <SelectTrigger className="w-[160px]">
+            <SelectValue placeholder="Eligibility" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All eligibility</SelectItem>
+            <SelectItem value="eligible">Eligible</SelectItem>
+            <SelectItem value="ineligible">Not eligible</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={confirmStateFilter} onValueChange={setConfirmStateFilter}>
+          <SelectTrigger className="w-[180px]">
+            <SelectValue placeholder="Confirmation" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All confirmation</SelectItem>
+            <SelectItem value="NOT_CONFIRMED">Not confirmed</SelectItem>
+            <SelectItem value="PENDING">Pending</SelectItem>
+            <SelectItem value="CONFIRMED">Confirmed</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={safetyStatusFilter} onValueChange={setSafetyStatusFilter}>
+          <SelectTrigger className="w-[150px]">
+            <SelectValue placeholder="Safety" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All safety</SelectItem>
+            <SelectItem value="SAFE">Safe</SelectItem>
+            <SelectItem value="WAITING">Waiting</SelectItem>
+            <SelectItem value="UNSAFE">Unsafe</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={incidentStatusFilter} onValueChange={setIncidentStatusFilter}>
+          <SelectTrigger className="w-[200px]">
+            <SelectValue placeholder="Incidents" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All incidents</SelectItem>
+            <SelectItem value="OPEN">Open</SelectItem>
+            <SelectItem value="READY_FOR_MITIGATION">Ready for mitigation</SelectItem>
+            <SelectItem value="PREPARED">Prepared</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+
+      {noSwitchesConfigured ? (
+        <EmptyState
+          icon={Network}
+          title="No managed switches"
+          description="Add a managed switch from Device Inventory to view per-switch storm protection details."
+        />
+      ) : isLoading ? (
+        <TableSkeleton rows={8} />
+      ) : isError ? (
+        <ErrorState
+          title="Unable to load storm protection data"
+          message="One or more storm datasets failed to load."
+          onRetry={refreshAll}
+        />
+      ) : groupedSwitches.length === 0 ? (
+        <EmptyState
+          icon={Shield}
+          title={hasActiveFilters ? 'No matching switch storm data' : 'No storm data yet'}
+          description={
+            hasActiveFilters
+              ? 'Adjust filters to see more switches.'
+              : 'Run eligibility and risk evaluation after interface discovery and stats collection.'
+          }
+        />
+      ) : (
+        <>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              size="sm"
+              variant={switchFilter === 'all' ? 'default' : 'secondary'}
+              onClick={() => setSwitchFilter('all')}
+            >
+              All switches ({switchChips.length})
+            </Button>
+            {switchChips.map((device) => {
+              const selected = switchFilter === device.deviceId
+              return (
+                <button
+                  key={device.deviceId}
+                  type="button"
+                  className={cn(
+                    'min-w-[180px] rounded-lg border px-3 py-2 text-left transition-colors',
+                    selected
+                      ? 'border-primary bg-primary/10'
+                      : 'border-border/70 bg-card hover:bg-muted/40',
+                  )}
+                  onClick={() =>
+                    setSwitchFilter((current) =>
+                      current === device.deviceId ? 'all' : device.deviceId,
+                    )
+                  }
+                >
+                  <p className="truncate text-sm font-semibold">{device.hostname}</p>
+                  <p className="mono truncate text-xs text-muted-foreground">
+                    {device.ipAddress}
+                  </p>
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    Crit {device.critical} · Conf {device.confirmed} · Inc{' '}
+                    {device.openIncidents}
+                  </p>
+                </button>
+              )
+            })}
+          </div>
+
+          {switchPagination.totalPages > 1 ||
+          switchPagination.total > switchPagination.limit ? (
+            <PaginationControls
+              page={switchPagination.page}
+              totalPages={Math.max(switchPagination.totalPages, 1)}
+              total={switchPagination.total}
+              limit={switchPagination.limit}
+              onPageChange={switchPagination.setPage}
+              onLimitChange={switchPagination.setLimit}
+              limitOptions={[5, 10, 25, 50]}
+              unitLabel="Switches"
+            />
+          ) : null}
+
+          <div className="space-y-4">
+            {pagedSwitches.map((device) => (
+              <SwitchStormSection
+                key={device.deviceId}
+                device={device}
+                collapsed={collapsedDeviceIds.has(device.deviceId)}
+                isAdmin={isAdmin}
+                requiredConfirmations={requiredConfirmations}
+                selectedRisk={
+                  selectedRisk?.deviceId === device.deviceId ? selectedRisk : null
+                }
+                selectedSafety={
+                  selectedSafety?.deviceId === device.deviceId ? selectedSafety : null
+                }
+                selectedIncident={
+                  selectedIncident?.deviceId === device.deviceId ? selectedIncident : null
+                }
+                selectedMitigation={
+                  selectedMitigation?.deviceId === device.deviceId
+                    ? selectedMitigation
+                    : null
+                }
+                selectedRecovery={
+                  selectedRecovery?.deviceId === device.deviceId ? selectedRecovery : null
+                }
+                expandedSections={expandedSections}
+                trendData={
+                  selectedRisk?.deviceId === device.deviceId ? trendData : []
+                }
+                trendLoading={
+                  selectedRisk?.deviceId === device.deviceId &&
+                  selectedHistoryQuery.isLoading
+                }
+                mitigationPending={mitigationMutations.execute.isPending}
+                rollbackPending={mitigationMutations.rollback.isPending}
+                recoveryPending={recoveryMutations.execute.isPending}
+                retryPending={recoveryMutations.retry.isPending}
+                onToggle={() => toggleDevice(device.deviceId)}
+                onSelectRisk={setSelectedRisk}
+                onSelectSafety={setSelectedSafety}
+                onSelectIncident={(row) => {
+                  setSelectedIncident(row)
+                  setExpandedSections({})
+                }}
+                onViewIncident={(row) => {
+                  setSelectedIncident(row)
+                  setExpandedSections({
+                    interface: true,
+                    switchport: true,
+                    mac: true,
+                    neighbor: true,
+                    timeline: true,
+                  })
+                }}
+                onSelectMitigation={setSelectedMitigation}
+                onSelectRecovery={setSelectedRecovery}
+                onToggleJsonSection={toggleSection}
+                onExportIncident={exportIncident}
+                onExecuteMitigation={(incidentId, strategy) =>
+                  mitigationMutations.execute.mutate({ incidentId, strategy })
+                }
+                onRollback={(incidentId) =>
+                  mitigationMutations.rollback.mutate({ incidentId })
+                }
+                onRetryRecovery={(incidentId) =>
+                  recoveryMutations.retry.mutate({ incidentId })
+                }
+                onForceRecovery={(incidentId) =>
+                  recoveryMutations.execute.mutate({ incidentId, force: true })
+                }
+              />
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+function SwitchStormSection({
+  device,
+  collapsed,
+  isAdmin,
+  requiredConfirmations,
+  selectedRisk,
+  selectedSafety,
+  selectedIncident,
+  selectedMitigation,
+  selectedRecovery,
+  expandedSections,
+  trendData,
+  trendLoading,
+  mitigationPending,
+  rollbackPending,
+  recoveryPending,
+  retryPending,
+  onToggle,
+  onSelectRisk,
+  onSelectSafety,
+  onSelectIncident,
+  onViewIncident,
+  onSelectMitigation,
+  onSelectRecovery,
+  onToggleJsonSection,
+  onExportIncident,
+  onExecuteMitigation,
+  onRollback,
+  onRetryRecovery,
+  onForceRecovery,
+}: {
+  device: SwitchStormSectionData
+  collapsed: boolean
+  isAdmin: boolean
+  requiredConfirmations: number
+  selectedRisk: RiskResult | null
+  selectedSafety: SafetyResult | null
+  selectedIncident: StormIncident | null
+  selectedMitigation: MitigationLog | null
+  selectedRecovery: RecoveryLog | null
+  expandedSections: Record<string, boolean>
+  trendData: Array<{ time: string; label: string; riskScore: number; severity: string }>
+  trendLoading: boolean
+  mitigationPending: boolean
+  rollbackPending: boolean
+  recoveryPending: boolean
+  retryPending: boolean
+  onToggle: () => void
+  onSelectRisk: (row: RiskResult) => void
+  onSelectSafety: (row: SafetyResult) => void
+  onSelectIncident: (row: StormIncident) => void
+  onViewIncident: (row: StormIncident) => void
+  onSelectMitigation: (row: MitigationLog) => void
+  onSelectRecovery: (row: RecoveryLog) => void
+  onToggleJsonSection: (key: string) => void
+  onExportIncident: (incident: StormIncident) => void
+  onExecuteMitigation: (incidentId: string, strategy: string) => void
+  onRollback: (incidentId: string) => void
+  onRetryRecovery: (incidentId: string) => void
+  onForceRecovery: (incidentId: string) => void
+}) {
+  const summary = summarizeSwitch(device)
+  const riskPagination = useClientPagination(device.risk, DEFAULT_SECTION_ROWS_PER_PAGE)
+  const eligibilityPagination = useClientPagination(device.eligibility, DEFAULT_SECTION_ROWS_PER_PAGE)
+  const confirmationPagination = useClientPagination(device.confirmation, DEFAULT_SECTION_ROWS_PER_PAGE)
+  const safetyPagination = useClientPagination(device.safety, DEFAULT_SECTION_ROWS_PER_PAGE)
+  const incidentsPagination = useClientPagination(device.incidents, DEFAULT_SECTION_ROWS_PER_PAGE)
+  const mitigationPagination = useClientPagination(device.mitigation, DEFAULT_SECTION_ROWS_PER_PAGE)
+  const recoveryPagination = useClientPagination(device.recovery, DEFAULT_SECTION_ROWS_PER_PAGE)
+
+  return (
+    <Card className="border-border/70 shadow-sm">
+      <div className="border-b border-border/60 bg-card">
+        <div className="space-y-3 p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded-md bg-primary/10 p-1 text-primary">
+                  <Network className="h-4 w-4" />
+                </span>
+                <h3 className="truncate text-base font-semibold">{device.hostname}</h3>
+                <Badge variant={device.monitor ? 'success' : 'muted'}>
+                  {device.monitor ? 'Monitored' : 'Not monitored'}
+                </Badge>
+                <StatusBadge status={device.status} />
+              </div>
+              <p className="mono mt-1 text-xs text-muted-foreground">
+                {device.ipAddress} · {device.vendor} · {device.risk.length} scored ports
               </p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                Peak risk (page)
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className={cn('text-2xl font-bold', severityTone(
-                maxRisk >= 75 ? 'CRITICAL' : maxRisk >= 50 ? 'HIGH' : maxRisk >= 25 ? 'MEDIUM' : 'LOW',
-              ).text)}>
-                {maxRisk.toFixed(1)}
-              </p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                Critical (page)
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-2xl font-bold text-danger">{criticalCount}</p>
-            </CardContent>
-          </Card>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" size="sm" variant="secondary" asChild>
+                <Link to={`/devices/${device.deviceId}`}>
+                  <ExternalLink className="h-3.5 w-3.5" />
+                  Device
+                </Link>
+              </Button>
+              <Button type="button" size="sm" variant="ghost" onClick={onToggle}>
+                {collapsed ? (
+                  <ChevronDown className="h-4 w-4" />
+                ) : (
+                  <ChevronUp className="h-4 w-4" />
+                )}
+                {collapsed ? 'Expand' : 'Collapse'}
+              </Button>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
+            <Kpi label="Eligible" value={String(summary.eligible)} tone="success" />
+            <Kpi
+              label="Critical risk"
+              value={String(summary.critical)}
+              tone={summary.critical > 0 ? 'danger' : 'default'}
+            />
+            <Kpi
+              label="Confirmed"
+              value={String(summary.confirmed)}
+              tone={summary.confirmed > 0 ? 'warning' : 'default'}
+            />
+            <Kpi label="Safe" value={String(summary.safe)} tone="success" />
+            <Kpi
+              label="Open incidents"
+              value={String(summary.openIncidents)}
+              tone={summary.openIncidents > 0 ? 'danger' : 'default'}
+            />
+          </div>
         </div>
+      </div>
 
-        <div className="flex flex-wrap gap-3">
-          <Input
-            type="search"
-            className="max-w-sm"
-            placeholder="Search interface, host, severity…"
-            value={riskQuery}
-            onChange={(e) => setRiskQuery(e.target.value)}
-          />
-          <Select value={severityFilter} onValueChange={setSeverityFilter}>
-            <SelectTrigger className="w-[180px]">
-              <SelectValue placeholder="Severity" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All severities</SelectItem>
-              <SelectItem value="LOW">Low</SelectItem>
-              <SelectItem value="MEDIUM">Medium</SelectItem>
-              <SelectItem value="HIGH">High</SelectItem>
-              <SelectItem value="CRITICAL">Critical</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-
-        {riskListQuery.isLoading ? (
-          <TableSkeleton rows={8} />
-        ) : riskListQuery.isError ? (
-          <ErrorState
-            title="Unable to load risk results"
-            message={
-              riskListQuery.error instanceof Error
-                ? riskListQuery.error.message
-                : 'Unexpected error'
-            }
-            onRetry={() => void riskListQuery.refetch()}
-          />
-        ) : riskRows.length === 0 ? (
-          <EmptyState
-            icon={Activity}
-            title="No risk scores yet"
-            description="Run eligibility, then calculate risk. The scheduler scores interfaces after each stats + eligibility cycle."
-          />
-        ) : (
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,1.6fr)_minmax(320px,1fr)]">
-            <Card>
-              <CardContent className="p-0">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Interface</TableHead>
-                      <TableHead>Risk</TableHead>
-                      <TableHead>Severity</TableHead>
-                      <TableHead>Source</TableHead>
-                      <TableHead>Broadcast</TableHead>
-                      <TableHead>Multicast</TableHead>
-                      <TableHead>Util</TableHead>
-                      <TableHead>Errors</TableHead>
-                      <TableHead>Confidence</TableHead>
-                      <TableHead>Last calculated</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {riskRows.map((row) => {
-                      const active =
-                        selectedRisk?.deviceId === row.deviceId &&
-                        selectedRisk?.interface === row.interface
-                      const tone = severityTone(row.severity)
-                      return (
-                        <TableRow
-                          key={`${row.deviceId}-${row.interface}-${row._id ?? ''}`}
-                          className={cn(
-                            'cursor-pointer',
-                            active && 'bg-primary/10',
-                          )}
-                          onClick={() => setSelectedRisk(row)}
-                        >
-                          <TableCell className="font-medium">
-                            <div>
+      {!collapsed ? (
+        <CardContent className="space-y-0 p-0">
+          {/* Risk */}
+          <Subsection
+            title="Risk Score"
+            description="Rate-based storm probability for eligible access ports on this switch."
+          >
+            {device.risk.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No risk scores for this switch yet.</p>
+            ) : (
+              <div className="grid gap-4 xl:grid-cols-[minmax(0,1.6fr)_minmax(280px,1fr)]">
+                <div className="space-y-3">
+                <div className="overflow-x-auto rounded-md border border-border/60">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Interface</TableHead>
+                        <TableHead>Risk</TableHead>
+                        <TableHead>Severity</TableHead>
+                        <TableHead>Source</TableHead>
+                        <TableHead>Broadcast</TableHead>
+                        <TableHead>Util</TableHead>
+                        <TableHead>Updated</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {riskPagination.pageItems.map((row) => {
+                        const active =
+                          selectedRisk?.deviceId === row.deviceId &&
+                          selectedRisk?.interface === row.interface
+                        const tone = severityTone(row.severity)
+                        return (
+                          <TableRow
+                            key={`${row.deviceId}-${row.interface}-${row._id ?? ''}`}
+                            className={cn('cursor-pointer', active && 'bg-primary/10')}
+                            onClick={() => onSelectRisk(row)}
+                          >
+                            <TableCell className="font-medium">
                               <Link
                                 to={`/interfaces/${row.deviceId}/${encodeURIComponent(row.interface)}`}
                                 className="text-primary hover:underline"
@@ -1020,504 +1634,348 @@ export function StormProtectionPage() {
                               >
                                 {row.interface}
                               </Link>
-                              <p className="text-xs text-muted-foreground">
-                                {row.hostname || row.ipAddress || row.deviceId}
-                              </p>
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex min-w-[88px] items-center gap-2">
-                              <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-secondary">
-                                <div
-                                  className={cn('h-full rounded-full', tone.bar)}
-                                  style={{
-                                    width: `${Math.min(100, Math.max(0, row.riskScore))}%`,
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex min-w-[88px] items-center gap-2">
+                                <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-secondary">
+                                  <div
+                                    className={cn('h-full rounded-full', tone.bar)}
+                                    style={{
+                                      width: `${Math.min(100, Math.max(0, row.riskScore))}%`,
+                                    }}
+                                  />
+                                </div>
+                                <span
+                                  className={cn(
+                                    'mono w-10 text-right text-xs font-semibold',
+                                    tone.text,
+                                  )}
+                                >
+                                  {row.riskScore.toFixed(0)}
+                                </span>
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <SeverityBadge severity={String(row.severity)} />
+                            </TableCell>
+                            <TableCell>
+                              <SourceBadge
+                                classification={row.sourceClassification}
+                                confidence={row.sourceConfidence}
+                              />
+                            </TableCell>
+                            <TableCell className="mono text-xs">
+                              {formatRate(row.broadcastRate)}
+                            </TableCell>
+                            <TableCell className="mono text-xs">
+                              {row.utilization == null
+                                ? '—'
+                                : `${Number(row.utilization).toFixed(1)}%`}
+                            </TableCell>
+                            <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
+                              {formatRelative(row.timestamp) || '—'}
+                            </TableCell>
+                          </TableRow>
+                        )
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+                {riskPagination.totalPages > 1 ? (
+                  <PaginationControls
+                    page={riskPagination.page}
+                    totalPages={Math.max(riskPagination.totalPages, 1)}
+                    total={riskPagination.total}
+                    limit={riskPagination.limit}
+                    onPageChange={riskPagination.setPage}
+                    onLimitChange={riskPagination.setLimit}
+                    limitOptions={[5, 10, 25, 50]}
+                    unitLabel="Risk rows"
+                  />
+                ) : null}
+                </div>
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm">
+                      {selectedRisk
+                        ? `${selectedRisk.interface} detail`
+                        : 'Select an interface'}
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    {!selectedRisk ? (
+                      <p className="text-sm text-muted-foreground">
+                        Click a row to inspect contributors and risk trend.
+                      </p>
+                    ) : (
+                      <>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span
+                            className={cn(
+                              'text-2xl font-bold',
+                              severityTone(selectedRisk.severity).text,
+                            )}
+                          >
+                            {selectedRisk.riskScore.toFixed(1)}
+                          </span>
+                          <SeverityBadge severity={String(selectedRisk.severity)} />
+                          <SourceBadge
+                            classification={selectedRisk.sourceClassification}
+                            confidence={selectedRisk.sourceConfidence}
+                          />
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 text-sm">
+                          <MetricCell
+                            label="Broadcast"
+                            value={formatRate(selectedRisk.broadcastRate)}
+                          />
+                          <MetricCell
+                            label="Multicast"
+                            value={formatRate(selectedRisk.multicastRate)}
+                          />
+                          <MetricCell
+                            label="Utilization"
+                            value={
+                              selectedRisk.utilization == null
+                                ? '—'
+                                : `${Number(selectedRisk.utilization).toFixed(1)}%`
+                            }
+                          />
+                          <MetricCell
+                            label="Errors"
+                            value={formatRate(selectedRisk.errorRate)}
+                          />
+                        </div>
+                        <div className="h-40">
+                          {trendLoading ? (
+                            <p className="text-sm text-muted-foreground">Loading history…</p>
+                          ) : trendData.length < 2 ? (
+                            <p className="text-sm text-muted-foreground">
+                              Not enough history points yet.
+                            </p>
+                          ) : (
+                            <ResponsiveContainer width="100%" height="100%">
+                              <AreaChart data={trendData}>
+                                <CartesianGrid
+                                  strokeDasharray="3 3"
+                                  className="stroke-border"
+                                />
+                                <XAxis dataKey="label" tick={{ fontSize: 10 }} />
+                                <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} />
+                                <Tooltip
+                                  contentStyle={{
+                                    background: 'hsl(var(--card))',
+                                    border: '1px solid hsl(var(--border))',
+                                    borderRadius: 8,
                                   }}
                                 />
-                              </div>
-                              <span className={cn('mono w-10 text-right text-xs font-semibold', tone.text)}>
-                                {row.riskScore.toFixed(0)}
-                              </span>
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <SeverityBadge severity={String(row.severity)} />
-                          </TableCell>
-                          <TableCell>
-                            <SourceBadge
-                              classification={row.sourceClassification}
-                              confidence={row.sourceConfidence}
-                            />
-                          </TableCell>
-                          <TableCell className="mono text-xs">
-                            {formatRate(row.broadcastRate)}
-                          </TableCell>
-                          <TableCell className="mono text-xs">
-                            {formatRate(row.multicastRate)}
-                          </TableCell>
-                          <TableCell className="mono text-xs">
-                            {row.utilization == null
-                              ? '—'
-                              : `${Number(row.utilization).toFixed(1)}%`}
-                          </TableCell>
-                          <TableCell className="mono text-xs">
-                            {formatRate(row.errorRate)}
-                          </TableCell>
-                          <TableCell>{Number(row.confidence).toFixed(0)}%</TableCell>
-                          <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
-                            <div title={formatDateTime(row.timestamp) || undefined}>
-                              {formatRelative(row.timestamp) || '—'}
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      )
-                    })}
-                  </TableBody>
-                </Table>
-              </CardContent>
-            </Card>
-
-            <div className="space-y-4">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-base">
-                    {selectedRisk
-                      ? `${selectedRisk.interface} detail`
-                      : 'Select an interface'}
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  {!selectedRisk ? (
-                    <p className="text-sm text-muted-foreground">
-                      Click a row to inspect contributors, rates, and risk trend.
-                    </p>
-                  ) : (
-                    <>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span
-                          className={cn(
-                            'text-3xl font-bold',
-                            severityTone(selectedRisk.severity).text,
-                          )}
-                        >
-                          {selectedRisk.riskScore.toFixed(1)}
-                        </span>
-                        <SeverityBadge severity={String(selectedRisk.severity)} />
-                        <EligibilityBadge eligible={selectedRisk.eligible} />
-                        <SourceBadge
-                          classification={selectedRisk.sourceClassification}
-                          confidence={selectedRisk.sourceConfidence}
-                        />
-                      </div>
-                      {selectedRisk.sourceRationale ? (
-                        <p className="text-xs text-muted-foreground">{selectedRisk.sourceRationale}</p>
-                      ) : null}
-
-                      <div className="grid grid-cols-2 gap-2 text-sm">
-                        <MetricCell label="Broadcast" value={formatRate(selectedRisk.broadcastRate)} />
-                        <MetricCell label="Multicast" value={formatRate(selectedRisk.multicastRate)} />
-                        <MetricCell
-                          label="Unknown unicast"
-                          value={formatRate(selectedRisk.unknownUnicastRate)}
-                        />
-                        <MetricCell
-                          label="Utilization"
-                          value={
-                            selectedRisk.utilization == null
-                              ? '—'
-                              : `${Number(selectedRisk.utilization).toFixed(1)}%`
-                          }
-                        />
-                        <MetricCell label="Errors" value={formatRate(selectedRisk.errorRate)} />
-                        <MetricCell label="Discards" value={formatRate(selectedRisk.discardRate)} />
-                        <MetricCell label="CRC" value={formatRate(selectedRisk.crcRate)} />
-                        <MetricCell
-                          label="Confidence"
-                          value={`${Number(selectedRisk.confidence).toFixed(0)}%`}
-                        />
-                      </div>
-
-                      <div>
-                        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                          Contributors
-                        </p>
-                        <div className="space-y-2">
-                          {(selectedRisk.contributors || []).length === 0 ? (
-                            <p className="text-sm text-muted-foreground">No active contributors</p>
-                          ) : (
-                            selectedRisk.contributors.map((c) => (
-                              <div
-                                key={c.metric}
-                                className="flex items-center justify-between gap-2 rounded-md border border-border/60 px-2.5 py-1.5 text-sm"
-                              >
-                                <span className="capitalize">
-                                  {c.metric.replaceAll('_', ' ')}
-                                </span>
-                                <span className="mono text-xs text-muted-foreground">
-                                  val {c.value ?? '—'} · score {c.score} · w{c.weight}
-                                </span>
-                              </div>
-                            ))
+                                <Area
+                                  type="monotone"
+                                  dataKey="riskScore"
+                                  stroke="hsl(var(--primary))"
+                                  fill="hsl(var(--primary) / 0.2)"
+                                  strokeWidth={2}
+                                />
+                              </AreaChart>
+                            </ResponsiveContainer>
                           )}
                         </div>
-                      </div>
+                      </>
+                    )}
+                  </CardContent>
+                </Card>
+              </div>
+            )}
+          </Subsection>
 
-                      <p className="text-xs text-muted-foreground">
-                        Last calculated{' '}
-                        {formatDateTime(selectedRisk.timestamp) || '—'}
-                      </p>
-                    </>
-                  )}
-                </CardContent>
-              </Card>
+          {/* Eligibility */}
+          <Subsection
+            title="Port Eligibility"
+            description="Which access ports on this switch may enter risk scoring."
+          >
+            {device.eligibility.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No eligibility results yet.</p>
+            ) : (
+              <div className="space-y-3">
+              <div className="overflow-x-auto rounded-md border border-border/60">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Interface</TableHead>
+                      <TableHead>Eligibility</TableHead>
+                      <TableHead>Reason</TableHead>
+                      <TableHead>Failed rule</TableHead>
+                      <TableHead>Classification</TableHead>
+                      <TableHead>Evaluated</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {eligibilityPagination.pageItems.map((row) => (
+                      <TableRow key={`${row.deviceId}-${row.interface}-${row._id ?? ''}`}>
+                        <TableCell className="font-medium">
+                          {row.deviceId && row.interface ? (
+                            <Link
+                              to={`/interfaces/${row.deviceId}/${encodeURIComponent(row.interface)}`}
+                              className="text-primary hover:underline"
+                            >
+                              {row.interface}
+                            </Link>
+                          ) : (
+                            row.interface
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <EligibilityBadge eligible={row.eligible} />
+                        </TableCell>
+                        <TableCell className="max-w-[200px] truncate text-sm">
+                          {row.reason}
+                        </TableCell>
+                        <TableCell>
+                          {row.failedRule ? (
+                            <Badge variant="outline" className="font-mono text-xs">
+                              {row.failedRule}
+                            </Badge>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex max-w-[280px] flex-wrap gap-1">
+                            <PortClassificationBadges
+                              iface={classificationIface(row)}
+                              includeMode
+                            />
+                          </div>
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
+                          {formatRelative(row.timestamp) || '—'}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+              {eligibilityPagination.totalPages > 1 ? (
+                <PaginationControls
+                  page={eligibilityPagination.page}
+                  totalPages={Math.max(eligibilityPagination.totalPages, 1)}
+                  total={eligibilityPagination.total}
+                  limit={eligibilityPagination.limit}
+                  onPageChange={eligibilityPagination.setPage}
+                  onLimitChange={eligibilityPagination.setLimit}
+                  limitOptions={[5, 10, 25, 50]}
+                  unitLabel="Eligibility rows"
+                />
+              ) : null}
+              </div>
+            )}
+          </Subsection>
 
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-base">Risk trend</CardTitle>
-                </CardHeader>
-                <CardContent className="h-56">
-                  {!selectedRisk ? (
-                    <p className="text-sm text-muted-foreground">
-                      Select an interface to load history.
-                    </p>
-                  ) : selectedHistoryQuery.isLoading ? (
-                    <p className="text-sm text-muted-foreground">Loading history…</p>
-                  ) : trendData.length < 2 ? (
-                    <p className="text-sm text-muted-foreground">
-                      Not enough history points yet. Scores append on each calculation cycle.
-                    </p>
-                  ) : (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={trendData}>
-                        <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-                        <XAxis dataKey="label" tick={{ fontSize: 10 }} />
-                        <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} />
-                        <Tooltip
-                          contentStyle={{
-                            background: 'hsl(var(--card))',
-                            border: '1px solid hsl(var(--border))',
-                            borderRadius: 8,
-                          }}
-                        />
-                        <Area
-                          type="monotone"
-                          dataKey="riskScore"
-                          stroke="hsl(var(--primary))"
-                          fill="hsl(var(--primary) / 0.2)"
-                          strokeWidth={2}
-                        />
-                      </AreaChart>
-                    </ResponsiveContainer>
-                  )}
-                </CardContent>
-              </Card>
-            </div>
-          </div>
-        )}
-
-        {riskTotalPages > 1 || riskTotal > riskLimit ? (
-          <PaginationControls
-            page={riskPage}
-            totalPages={Math.max(riskTotalPages, 1)}
-            total={riskTotal}
-            limit={riskLimit}
-            onPageChange={setRiskPage}
-            onLimitChange={setRiskLimit}
-          />
-        ) : null}
-      </section>
-
-      {/* ── Confirmation ───────────────────────────────────────────── */}
-      <section className="space-y-4">
-        <div>
-          <h2 className="text-lg font-semibold tracking-tight">Confirmation</h2>
-          <p className="text-sm text-muted-foreground">
-            Tracks whether high risk persists across{' '}
-            <span className="font-medium text-foreground">
-              {requiredConfirmations}
-            </span>{' '}
-            consecutive polling cycles before a storm is confirmed. No
-            mitigation is performed here.
-          </p>
-        </div>
-
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                Required polls
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-2xl font-bold">{requiredConfirmations}</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                Tracked interfaces
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-2xl font-bold">{confirmTotal}</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                Pending (page)
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-2xl font-bold text-warning">{pendingCount}</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                Confirmed (page)
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-2xl font-bold text-success">{confirmedCount}</p>
-            </CardContent>
-          </Card>
-        </div>
-
-        <div className="flex flex-wrap gap-3">
-          <Input
-            type="search"
-            className="max-w-sm"
-            placeholder="Search interface, host, reason…"
-            value={confirmQuery}
-            onChange={(e) => setConfirmQuery(e.target.value)}
-          />
-          <Select value={confirmStateFilter} onValueChange={setConfirmStateFilter}>
-            <SelectTrigger className="w-[200px]">
-              <SelectValue placeholder="State" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All states</SelectItem>
-              <SelectItem value="NOT_CONFIRMED">Not confirmed</SelectItem>
-              <SelectItem value="PENDING">Pending</SelectItem>
-              <SelectItem value="CONFIRMED">Confirmed</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-
-        {confirmationQuery.isLoading ? (
-          <TableSkeleton rows={8} />
-        ) : confirmationQuery.isError ? (
-          <ErrorState
-            title="Unable to load confirmation results"
-            message={
-              confirmationQuery.error instanceof Error
-                ? confirmationQuery.error.message
-                : 'Unexpected error'
-            }
-            onRetry={() => void confirmationQuery.refetch()}
-          />
-        ) : confirmRows.length === 0 ? (
-          <EmptyState
-            icon={CheckCircle2}
-            title="No confirmation results"
-            description={`Calculate risk first, then evaluate confirmation. A storm is confirmed after ${requiredConfirmations} consecutive high-risk polls.`}
-          />
-        ) : (
-          <Card>
-            <CardContent className="p-0">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Interface</TableHead>
-                    <TableHead>State</TableHead>
-                    <TableHead>Current risk</TableHead>
-                    <TableHead>Highest</TableHead>
-                    <TableHead>Average</TableHead>
-                    <TableHead>Progress</TableHead>
-                    <TableHead>Reason</TableHead>
-                    <TableHead>Last updated</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {confirmRows.map((row: ConfirmationResult) => (
-                    <TableRow
-                      key={`${row.deviceId}-${row.interface}-${row._id ?? ''}`}
-                    >
-                      <TableCell className="font-medium">
-                        <div>
+          {/* Confirmation */}
+          <Subsection
+            title="Confirmation"
+            description={`High risk must persist across ${requiredConfirmations} consecutive polls.`}
+          >
+            {device.confirmation.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No confirmation results yet.</p>
+            ) : (
+              <div className="space-y-3">
+              <div className="overflow-x-auto rounded-md border border-border/60">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Interface</TableHead>
+                      <TableHead>State</TableHead>
+                      <TableHead>Current</TableHead>
+                      <TableHead>Progress</TableHead>
+                      <TableHead>Reason</TableHead>
+                      <TableHead>Updated</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {confirmationPagination.pageItems.map((row) => (
+                      <TableRow key={`${row.deviceId}-${row.interface}-${row._id ?? ''}`}>
+                        <TableCell className="font-medium">
                           <Link
                             to={`/interfaces/${row.deviceId}/${encodeURIComponent(row.interface)}`}
                             className="text-primary hover:underline"
                           >
                             {row.interface}
                           </Link>
-                          <p className="text-xs text-muted-foreground">
-                            {row.hostname || row.ipAddress || row.deviceId}
-                          </p>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <ConfirmationStateBadge state={String(row.state)} />
-                      </TableCell>
-                      <TableCell className="mono text-sm">
-                        {Number(row.currentRisk).toFixed(1)}
-                      </TableCell>
-                      <TableCell className="mono text-sm">
-                        {Number(row.highestRisk).toFixed(1)}
-                      </TableCell>
-                      <TableCell className="mono text-sm">
-                        {Number(row.averageRisk).toFixed(1)}
-                      </TableCell>
-                      <TableCell>
-                        <ConfirmationProgressBar
-                          consecutive={row.consecutiveHighSamples}
-                          required={
-                            row.requiredSamples || requiredConfirmations
-                          }
-                          state={String(row.state)}
-                        />
-                      </TableCell>
-                      <TableCell className="max-w-[260px] truncate text-sm text-muted-foreground">
-                        {row.reason}
-                      </TableCell>
-                      <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
-                        <div title={formatDateTime(row.timestamp) || undefined}>
+                        </TableCell>
+                        <TableCell>
+                          <ConfirmationStateBadge state={String(row.state)} />
+                        </TableCell>
+                        <TableCell className="mono text-sm">
+                          {Number(row.currentRisk).toFixed(1)}
+                        </TableCell>
+                        <TableCell>
+                          <ConfirmationProgressBar
+                            consecutive={row.consecutiveHighSamples}
+                            required={row.requiredSamples || requiredConfirmations}
+                            state={String(row.state)}
+                          />
+                        </TableCell>
+                        <TableCell className="max-w-[220px] truncate text-sm text-muted-foreground">
+                          {row.reason}
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
                           {formatRelative(row.timestamp) || '—'}
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
-        )}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+              {confirmationPagination.totalPages > 1 ? (
+                <PaginationControls
+                  page={confirmationPagination.page}
+                  totalPages={Math.max(confirmationPagination.totalPages, 1)}
+                  total={confirmationPagination.total}
+                  limit={confirmationPagination.limit}
+                  onPageChange={confirmationPagination.setPage}
+                  onLimitChange={confirmationPagination.setLimit}
+                  limitOptions={[5, 10, 25, 50]}
+                  unitLabel="Confirmation rows"
+                />
+              ) : null}
+              </div>
+            )}
+          </Subsection>
 
-        {confirmTotalPages > 1 || confirmTotal > confirmLimit ? (
-          <PaginationControls
-            page={confirmPage}
-            totalPages={Math.max(confirmTotalPages, 1)}
-            total={confirmTotal}
-            limit={confirmLimit}
-            onPageChange={setConfirmPage}
-            onLimitChange={setConfirmLimit}
-          />
-        ) : null}
-      </section>
-
-      {/* ── Safety ─────────────────────────────────────────────────── */}
-      <section className="space-y-4">
-        <div>
-          <h2 className="text-lg font-semibold tracking-tight">Mitigation Safety</h2>
-          <p className="text-sm text-muted-foreground">
-            Final pre-mitigation gate for confirmed storms. Validates device,
-            SSH, automation, locks, cooldown, and health — never executes mitigation.
-          </p>
-        </div>
-
-        <div className="grid gap-3 sm:grid-cols-3">
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                Safe (page)
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-2xl font-bold text-success">{safeCount}</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                Waiting (page)
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-2xl font-bold text-warning">{waitingCount}</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                Unsafe (page)
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-2xl font-bold text-danger">{unsafeCount}</p>
-            </CardContent>
-          </Card>
-        </div>
-
-        <div className="flex flex-wrap gap-3">
-          <Input
-            type="search"
-            className="max-w-sm"
-            placeholder="Search interface, host, reason, rule…"
-            value={safetyQueryText}
-            onChange={(e) => setSafetyQueryText(e.target.value)}
-          />
-          <Select value={safetyStatusFilter} onValueChange={setSafetyStatusFilter}>
-            <SelectTrigger className="w-[180px]">
-              <SelectValue placeholder="Status" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All statuses</SelectItem>
-              <SelectItem value="SAFE">Safe</SelectItem>
-              <SelectItem value="WAITING">Waiting</SelectItem>
-              <SelectItem value="UNSAFE">Unsafe</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-
-        {safetyListQuery.isLoading ? (
-          <TableSkeleton rows={8} />
-        ) : safetyListQuery.isError ? (
-          <ErrorState
-            title="Unable to load safety results"
-            message={
-              safetyListQuery.error instanceof Error
-                ? safetyListQuery.error.message
-                : 'Unexpected error'
-            }
-            onRetry={() => void safetyListQuery.refetch()}
-          />
-        ) : safetyRows.length === 0 ? (
-          <EmptyState
-            icon={ShieldCheck}
-            title="No safety results"
-            description="Confirm a storm first, then evaluate safety. The scheduler runs safety after confirmation."
-          />
-        ) : (
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,1.55fr)_minmax(300px,1fr)]">
-            <Card>
-              <CardContent className="p-0">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Interface</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Reason</TableHead>
-                      <TableHead>Failed rule</TableHead>
-                      <TableHead>Confidence</TableHead>
-                      <TableHead>Cooldown</TableHead>
-                      <TableHead>Attempts</TableHead>
-                      <TableHead>Updated</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {safetyRows.map((row) => {
-                      const active =
-                        selectedSafety?.deviceId === row.deviceId &&
-                        selectedSafety?.interface === row.interface
-                      return (
-                        <TableRow
-                          key={`${row.deviceId}-${row.interface}-${row._id ?? ''}`}
-                          className={cn('cursor-pointer', active && 'bg-primary/10')}
-                          onClick={() => setSelectedSafety(row)}
-                        >
-                          <TableCell className="font-medium">
-                            <div>
+          {/* Safety */}
+          <Subsection
+            title="Mitigation Safety"
+            description="Final pre-mitigation gate for confirmed storms on this switch."
+          >
+            {device.safety.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No safety results yet.</p>
+            ) : (
+              <div className="grid gap-4 xl:grid-cols-[minmax(0,1.55fr)_minmax(260px,1fr)]">
+                <div className="space-y-3">
+                <div className="overflow-x-auto rounded-md border border-border/60">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Interface</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Reason</TableHead>
+                        <TableHead>Cooldown</TableHead>
+                        <TableHead>Updated</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {safetyPagination.pageItems.map((row) => {
+                        const active =
+                          selectedSafety?.deviceId === row.deviceId &&
+                          selectedSafety?.interface === row.interface
+                        return (
+                          <TableRow
+                            key={`${row.deviceId}-${row.interface}-${row._id ?? ''}`}
+                            className={cn('cursor-pointer', active && 'bg-primary/10')}
+                            onClick={() => onSelectSafety(row)}
+                          >
+                            <TableCell className="font-medium">
                               <Link
                                 to={`/interfaces/${row.deviceId}/${encodeURIComponent(row.interface)}`}
                                 className="text-primary hover:underline"
@@ -1525,954 +1983,519 @@ export function StormProtectionPage() {
                               >
                                 {row.interface}
                               </Link>
-                              <p className="text-xs text-muted-foreground">
-                                {row.hostname || row.ipAddress || row.deviceId}
-                              </p>
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <SafetyStatusBadge status={String(row.status)} />
-                          </TableCell>
-                          <TableCell className="max-w-[200px] truncate text-sm">
-                            {row.reason}
-                          </TableCell>
-                          <TableCell>
-                            {row.failedRule ? (
-                              <Badge variant="outline" className="font-mono text-xs">
-                                {row.failedRule}
-                              </Badge>
-                            ) : (
-                              <span className="text-muted-foreground">—</span>
-                            )}
-                          </TableCell>
-                          <TableCell>{Number(row.confidence).toFixed(0)}%</TableCell>
-                          <TableCell className="mono text-xs">
-                            {formatCooldown(row.cooldownRemainingSeconds)}
-                          </TableCell>
-                          <TableCell className="mono text-xs">
-                            {row.mitigationAttempts ?? 0}
-                          </TableCell>
-                          <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
-                            {formatRelative(row.timestamp) || '—'}
-                          </TableCell>
-                        </TableRow>
-                      )
-                    })}
-                  </TableBody>
-                </Table>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">
-                  {selectedSafety
-                    ? `${selectedSafety.interface} checks`
-                    : 'Select an interface'}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                {!selectedSafety ? (
-                  <p className="text-sm text-muted-foreground">
-                    Click a row to inspect check results, health, and automation.
-                  </p>
-                ) : (
-                  <>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <SafetyStatusBadge status={String(selectedSafety.status)} />
-                      <span className="text-sm text-muted-foreground">
-                        Confidence {Number(selectedSafety.confidence).toFixed(0)}%
-                      </span>
-                    </div>
-                    <div className="grid grid-cols-2 gap-2 text-sm">
-                      <div className="rounded-md border border-border/50 px-2.5 py-1.5">
-                        <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                          CPU
-                        </p>
-                        <p className="mono font-medium">
-                          {selectedSafety.cpuPercent == null
-                            ? '—'
-                            : `${Number(selectedSafety.cpuPercent).toFixed(1)}%`}
-                        </p>
-                      </div>
-                      <div className="rounded-md border border-border/50 px-2.5 py-1.5">
-                        <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                          Memory
-                        </p>
-                        <p className="mono font-medium">
-                          {selectedSafety.memoryPercent == null
-                            ? '—'
-                            : `${Number(selectedSafety.memoryPercent).toFixed(1)}%`}
-                        </p>
-                      </div>
-                      <div className="rounded-md border border-border/50 px-2.5 py-1.5">
-                        <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                          Cooldown
-                        </p>
-                        <p className="mono font-medium">
-                          {formatCooldown(selectedSafety.cooldownRemainingSeconds)}
-                        </p>
-                      </div>
-                      <div className="rounded-md border border-border/50 px-2.5 py-1.5">
-                        <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                          Attempts
-                        </p>
-                        <p className="mono font-medium">
-                          {selectedSafety.mitigationAttempts ?? 0}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="space-y-1.5">
-                      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                        Check results
-                      </p>
-                      {Object.entries(selectedSafety.checks || {}).map(([key, value]) => {
-                        const hazardKeys = new Set([
-                          'maintenanceMode',
-                          'deviceLocked',
-                          'interfaceLocked',
-                          'mitigationRunning',
-                        ])
-                        const ok = hazardKeys.has(key) ? !value : Boolean(value)
-                        return (
-                          <div
-                            key={key}
-                            className="flex items-center justify-between rounded-md border border-border/50 px-2.5 py-1 text-sm"
-                          >
-                            <span className="text-muted-foreground">{key}</span>
-                            <Badge
-                              variant={ok ? 'success' : 'danger'}
-                              className="capitalize"
-                            >
-                              {String(value)}
-                            </Badge>
-                          </div>
+                            </TableCell>
+                            <TableCell>
+                              <SafetyStatusBadge status={String(row.status)} />
+                            </TableCell>
+                            <TableCell className="max-w-[180px] truncate text-sm">
+                              {row.reason}
+                            </TableCell>
+                            <TableCell className="mono text-xs">
+                              {formatCooldown(row.cooldownRemainingSeconds)}
+                            </TableCell>
+                            <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
+                              {formatRelative(row.timestamp) || '—'}
+                            </TableCell>
+                          </TableRow>
                         )
                       })}
-                    </div>
-                  </>
-                )}
-              </CardContent>
-            </Card>
-          </div>
-        )}
-
-        {safetyTotalPages > 1 || safetyTotal > safetyLimit ? (
-          <PaginationControls
-            page={safetyPage}
-            totalPages={Math.max(safetyTotalPages, 1)}
-            total={safetyTotal}
-            limit={safetyLimit}
-            onPageChange={setSafetyPage}
-            onLimitChange={setSafetyLimit}
-          />
-        ) : null}
-      </section>
-
-      {/* ── Storm Incidents ────────────────────────────────────────── */}
-      <section className="space-y-4">
-        <div>
-          <h2 className="text-lg font-semibold tracking-tight">Storm Incidents</h2>
-          <p className="text-sm text-muted-foreground">
-            Immutable pre-mitigation evidence packages. Diagnostics are captured
-            before every prepare — shutdown is not executed here.
-          </p>
-        </div>
-
-        <div className="flex flex-wrap gap-3">
-          <Input
-            type="search"
-            className="max-w-sm"
-            placeholder="Search incident, interface, host…"
-            value={incidentQuery}
-            onChange={(e) => setIncidentQuery(e.target.value)}
-          />
-          <Select value={incidentStatusFilter} onValueChange={setIncidentStatusFilter}>
-            <SelectTrigger className="w-[220px]">
-              <SelectValue placeholder="Status" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All statuses</SelectItem>
-              <SelectItem value="OPEN">Open</SelectItem>
-              <SelectItem value="READY_FOR_MITIGATION">Ready for mitigation</SelectItem>
-              <SelectItem value="PREPARED">Prepared</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-
-        {incidentsQuery.isLoading ? (
-          <TableSkeleton rows={6} />
-        ) : incidentsQuery.isError ? (
-          <ErrorState
-            title="Unable to load storm incidents"
-            message={
-              incidentsQuery.error instanceof Error
-                ? incidentsQuery.error.message
-                : 'Unexpected error'
-            }
-            onRetry={() => void incidentsQuery.refetch()}
-          />
-        ) : incidentRows.length === 0 ? (
-          <EmptyState
-            icon={FileJson}
-            title="No storm incidents"
-            description="When safety passes, the orchestrator captures diagnostics and creates one incident per storm."
-          />
-        ) : (
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,1.55fr)_minmax(320px,1fr)]">
-            <Card>
-              <CardContent className="p-0">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Incident ID</TableHead>
-                      <TableHead>Device</TableHead>
-                      <TableHead>Interface</TableHead>
-                      <TableHead>Type</TableHead>
-                      <TableHead>Severity</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Risk</TableHead>
-                      <TableHead>Confirm</TableHead>
-                      <TableHead>Safety</TableHead>
-                      <TableHead>Created</TableHead>
-                      <TableHead>Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {incidentRows.map((row) => {
-                      const active = selectedIncident?.incidentId === row.incidentId
-                      return (
-                        <TableRow
-                          key={row.incidentId}
-                          className={cn('cursor-pointer', active && 'bg-primary/10')}
-                          onClick={() => {
-                            setSelectedIncident(row)
-                            setExpandedSections({})
-                          }}
-                        >
-                          <TableCell className="mono text-xs font-medium">
-                            {row.incidentId}
-                          </TableCell>
-                          <TableCell>
-                            <div className="min-w-0">
-                              <p className="truncate text-sm font-medium">
-                                {row.hostname || '—'}
-                              </p>
-                              <p className="truncate text-xs text-muted-foreground">
-                                {row.ipAddress || row.deviceId}
-                              </p>
-                            </div>
-                          </TableCell>
-                          <TableCell className="font-medium">{row.interface}</TableCell>
-                          <TableCell>
-                            <IncidentTypeBadge incidentType={row.incidentType || row.type} />
-                          </TableCell>
-                          <TableCell>
-                            <SeverityBadge severity={row.severity} />
-                          </TableCell>
-                          <TableCell>
-                            <IncidentStatusBadge status={row.status} />
-                          </TableCell>
-                          <TableCell className="mono text-xs">
-                            {row.trigger?.risk == null ? '—' : Number(row.trigger.risk).toFixed(0)}
-                          </TableCell>
-                          <TableCell>
-                            {row.trigger?.confirmation ? (
-                              <Badge variant="success">Yes</Badge>
-                            ) : (
-                              <Badge variant="muted">No</Badge>
-                            )}
-                          </TableCell>
-                          <TableCell>
-                            {row.trigger?.safety ? (
-                              <Badge variant="success">Yes</Badge>
-                            ) : (
-                              <Badge variant="danger">No</Badge>
-                            )}
-                          </TableCell>
-                          <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
-                            {formatRelative(row.createdAt) || '—'}
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex flex-wrap gap-1">
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="outline"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  setSelectedIncident(row)
-                                  setExpandedSections({
-                                    interface: true,
-                                    switchport: true,
-                                    mac: true,
-                                    neighbor: true,
-                                    timeline: true,
-                                  })
-                                }}
+                    </TableBody>
+                  </Table>
+                </div>
+                {safetyPagination.totalPages > 1 ? (
+                  <PaginationControls
+                    page={safetyPagination.page}
+                    totalPages={Math.max(safetyPagination.totalPages, 1)}
+                    total={safetyPagination.total}
+                    limit={safetyPagination.limit}
+                    onPageChange={safetyPagination.setPage}
+                    onLimitChange={safetyPagination.setLimit}
+                    limitOptions={[5, 10, 25, 50]}
+                    unitLabel="Safety rows"
+                  />
+                ) : null}
+                </div>
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm">
+                      {selectedSafety
+                        ? `${selectedSafety.interface} checks`
+                        : 'Select an interface'}
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-2">
+                    {!selectedSafety ? (
+                      <p className="text-sm text-muted-foreground">
+                        Click a row to inspect check results.
+                      </p>
+                    ) : (
+                      <>
+                        <SafetyStatusBadge status={String(selectedSafety.status)} />
+                        <div className="space-y-1.5">
+                          {Object.entries(selectedSafety.checks || {}).map(([key, value]) => {
+                            const hazardKeys = new Set([
+                              'maintenanceMode',
+                              'deviceLocked',
+                              'interfaceLocked',
+                              'mitigationRunning',
+                            ])
+                            const ok = hazardKeys.has(key) ? !value : Boolean(value)
+                            return (
+                              <div
+                                key={key}
+                                className="flex items-center justify-between rounded-md border border-border/50 px-2.5 py-1 text-sm"
                               >
-                                View
-                              </Button>
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="outline"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  setSelectedIncident(row)
-                                  setExpandedSections({
-                                    interface: true,
-                                    switchport: true,
-                                    mac: true,
-                                  })
-                                }}
-                              >
-                                Diagnostics
-                              </Button>
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="secondary"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  exportIncident(row)
-                                }}
-                              >
-                                Export
-                              </Button>
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      )
-                    })}
-                  </TableBody>
-                </Table>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">
-                  {selectedIncident
-                    ? selectedIncident.incidentId
-                    : 'Select an incident'}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                {!selectedIncident ? (
-                  <p className="text-sm text-muted-foreground">
-                    Click a row to inspect evidence snapshots and timeline.
-                  </p>
-                ) : (
-                  <>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <SeverityBadge severity={selectedIncident.severity} />
-                      <IncidentStatusBadge status={selectedIncident.status} />
-                      <SourceBadge
-                        classification={
-                          selectedIncident.sourceClassification ||
-                          (selectedIncident.risk as { sourceClassification?: string } | null)
-                            ?.sourceClassification
-                        }
-                        confidence={
-                          selectedIncident.sourceConfidence ??
-                          (selectedIncident.risk as { sourceConfidence?: number } | null)
-                            ?.sourceConfidence
-                        }
-                      />
-                    </div>
-                    <p className="text-sm text-muted-foreground">
-                      {selectedIncident.interface} ·{' '}
-                      {selectedIncident.hostname || selectedIncident.deviceId}
-                    </p>
-                    {selectedIncident.sourceAttribution ? (
-                      <div className="rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-xs text-muted-foreground space-y-1">
-                        <p>
-                          <span className="font-semibold text-foreground">Selection: </span>
-                          {String(
-                            (selectedIncident.sourceAttribution as { reasonSelected?: string })
-                              .reasonSelected ||
-                              (selectedIncident.sourceAttribution as { reason?: string }).reason ||
-                              '—',
-                          )}
-                        </p>
-                        {(selectedIncident.affectedInterfaces?.length || 0) > 0 ? (
-                          <p>
-                            <span className="font-semibold text-foreground">Affected: </span>
-                            {selectedIncident.affectedInterfaces!.join(', ')}
-                          </p>
-                        ) : null}
-                      </div>
-                    ) : null}
-                    <JsonSection
-                      title="Interface Snapshot"
-                      open={Boolean(expandedSections.interface)}
-                      onToggle={() => toggleSection('interface')}
-                      data={selectedIncident.interfaceSnapshot}
-                    />
-                    <JsonSection
-                      title="Switchport Snapshot"
-                      open={Boolean(expandedSections.switchport)}
-                      onToggle={() => toggleSection('switchport')}
-                      data={selectedIncident.switchportSnapshot}
-                    />
-                    <JsonSection
-                      title="MAC Table"
-                      open={Boolean(expandedSections.mac)}
-                      onToggle={() => toggleSection('mac')}
-                      data={selectedIncident.macTable}
-                    />
-                    <JsonSection
-                      title="Neighbor"
-                      open={Boolean(expandedSections.neighbor)}
-                      onToggle={() => toggleSection('neighbor')}
-                      data={selectedIncident.neighbor}
-                    />
-                    <JsonSection
-                      title="Timeline"
-                      open={Boolean(expandedSections.timeline)}
-                      onToggle={() => toggleSection('timeline')}
-                      data={selectedIncident.timeline}
-                    />
-                    {isAdmin && (
-                      <div className="border-t border-border/50 pt-3 mt-3 space-y-2">
-                        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                          Mitigation Controls
-                        </p>
-                        {['READY_FOR_MITIGATION', 'PREPARED', 'OPEN', 'MITIGATION_FAILED'].includes(selectedIncident.status) && (
-                          <Button
-                            type="button"
-                            className="w-full bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                            disabled={mitigationMutations.execute.isPending}
-                            onClick={() =>
-                              mitigationMutations.execute.mutate({
-                                incidentId: selectedIncident.incidentId || '',
-                                strategy: 'SHUTDOWN',
-                              })
-                            }
-                          >
-                            {mitigationMutations.execute.isPending ? 'Executing Shutdown…' : 'Execute Shutdown'}
-                          </Button>
-                        )}
-                        {selectedIncident.status === 'MITIGATED' && (
-                          <div className="flex gap-2">
-                            <Button
-                              type="button"
-                              variant="outline"
-                              className="flex-1 border-destructive text-destructive hover:bg-destructive/10"
-                              disabled={mitigationMutations.rollback.isPending}
-                              onClick={() =>
-                                mitigationMutations.rollback.mutate({
-                                  incidentId: selectedIncident.incidentId || '',
-                                })
-                              }
-                            >
-                              {mitigationMutations.rollback.isPending ? 'Rolling back…' : 'Rollback'}
-                            </Button>
-                            <Button
-                              type="button"
-                              variant="secondary"
-                              className="flex-1"
-                              disabled={mitigationMutations.execute.isPending}
-                              onClick={() =>
-                                mitigationMutations.execute.mutate({
-                                  incidentId: selectedIncident.incidentId || '',
-                                  strategy: 'NO_SHUTDOWN',
-                                })
-                              }
-                            >
-                              {mitigationMutations.execute.isPending ? 'Recovering…' : 'Recover Port'}
-                            </Button>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                    {isAdmin && ['MITIGATED', 'RECOVERY_FAILED', 'MITIGATION_FAILED'].includes(selectedIncident.status) && (
-                      <div className="border-t border-border/50 pt-3 mt-3 space-y-2">
-                        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                          Recovery Controls
-                        </p>
-                        <div className="flex gap-2">
-                          <Button
-                            type="button"
-                            variant="secondary"
-                            className="flex-1"
-                            disabled={recoveryMutations.retry.isPending}
-                            onClick={() =>
-                              recoveryMutations.retry.mutate({
-                                incidentId: selectedIncident.incidentId || '',
-                              })
-                            }
-                          >
-                            {recoveryMutations.retry.isPending ? 'Retrying…' : 'Retry Recovery'}
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            className="flex-1 border-primary text-primary hover:bg-primary/10"
-                            disabled={recoveryMutations.execute.isPending}
-                            onClick={() =>
-                              recoveryMutations.execute.mutate({
-                                incidentId: selectedIncident.incidentId || '',
-                                force: true,
-                              })
-                            }
-                          >
-                            {recoveryMutations.execute.isPending ? 'Recovering…' : 'Force Recovery'}
-                          </Button>
+                                <span className="text-muted-foreground">{key}</span>
+                                <Badge
+                                  variant={ok ? 'success' : 'danger'}
+                                  className="capitalize"
+                                >
+                                  {String(value)}
+                                </Badge>
+                              </div>
+                            )
+                          })}
                         </div>
-                      </div>
+                      </>
                     )}
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="w-full"
-                      onClick={() => exportIncident(selectedIncident)}
-                    >
-                      <FileJson className="mr-2 h-4 w-4" />
-                      Export Incident
-                    </Button>
-                  </>
-                )}
-              </CardContent>
-            </Card>
-          </div>
-        )}
-
-        {incidentTotalPages > 1 || incidentTotal > incidentLimit ? (
-          <PaginationControls
-            page={incidentPage}
-            totalPages={Math.max(incidentTotalPages, 1)}
-            total={incidentTotal}
-            limit={incidentLimit}
-            onPageChange={setIncidentPage}
-            onLimitChange={setIncidentLimit}
-          />
-        ) : null}
-      </section>
-
-      {/* ── Mitigation History ──────────────────────────────────────── */}
-      <section className="space-y-4">
-        <div>
-          <h2 className="text-lg font-semibold tracking-tight">Mitigation Orchestrator & Execution</h2>
-          <p className="text-sm text-muted-foreground">
-            Execute manual or automatic port shutdown mitigations and rollback recovery.
-          </p>
-        </div>
-
-        {/* Runtime Mitigation Mode Configuration */}
-        <Card className="border-primary/20 bg-secondary/10">
-          <CardContent className="flex flex-wrap items-center justify-between gap-4 p-4">
-            <div className="space-y-1">
-              <p className="text-sm font-semibold">Mitigation Automation Mode</p>
-              <p className="text-xs text-muted-foreground">
-                Current active mode:{' '}
-                <span className="font-semibold text-primary uppercase">
-                  {settingsQuery.data?.mitigationMode || 'manual'}
-                </span>
-              </p>
-            </div>
-            {isAdmin ? (
-              <div className="flex gap-2">
-                <Button
-                  type="button"
-                  size="sm"
-                  variant={settingsQuery.data?.mitigationMode === 'automatic' ? 'default' : 'outline'}
-                  disabled={settingsMutation.isPending}
-                  onClick={() => settingsMutation.mutate({ mitigationMode: 'automatic' })}
-                >
-                  Automatic Mode
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant={settingsQuery.data?.mitigationMode === 'manual' ? 'default' : 'outline'}
-                  disabled={settingsMutation.isPending}
-                  onClick={() => settingsMutation.mutate({ mitigationMode: 'manual' })}
-                >
-                  Manual Approval
-                </Button>
+                  </CardContent>
+                </Card>
               </div>
-            ) : (
-              <Badge variant="outline" className="uppercase">
-                Admin Configurable Only
-              </Badge>
             )}
-          </CardContent>
-        </Card>
+          </Subsection>
 
-        <div className="flex flex-wrap gap-3">
-          <Input
-            type="search"
-            className="max-w-sm"
-            placeholder="Search mitigation log by incident..."
-            value={mitQuery}
-            onChange={(e) => setMitQuery(e.target.value)}
-          />
-        </div>
-
-        {mitigationHistoryQuery.isLoading ? (
-          <TableSkeleton rows={6} />
-        ) : mitigationHistoryQuery.isError ? (
-          <ErrorState
-            title="Unable to load mitigation history"
-            message={
-              mitigationHistoryQuery.error instanceof Error
-                ? mitigationHistoryQuery.error.message
-                : 'Unexpected error'
-            }
-            onRetry={() => void mitigationHistoryQuery.refetch()}
-          />
-        ) : (mitigationHistoryQuery.data?.data ?? []).length === 0 ? (
-          <EmptyState
-            icon={Activity}
-            title="No mitigation logs found"
-            description="Run a port mitigation strategy manually from the Storm Incidents panel, or enable Automatic Mode for automated executions."
-          />
-        ) : (
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,1.55fr)_minmax(320px,1fr)]">
-            <Card>
-              <CardContent className="p-0">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Incident ID</TableHead>
-                      <TableHead>Type</TableHead>
-                      <TableHead>Interface</TableHead>
-                      <TableHead>Device</TableHead>
-                      <TableHead>Strategy</TableHead>
-                      <TableHead>Execution Status</TableHead>
-                      <TableHead>Rollback Status</TableHead>
-                      <TableHead>Operator</TableHead>
-                      <TableHead>Execution Time</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {(mitigationHistoryQuery.data?.data ?? []).map((row) => {
-                      const active = selectedMitigation?._id === row._id
-                      return (
-                        <TableRow
-                          key={row._id || row.incidentId}
-                          className={cn('cursor-pointer', active && 'bg-primary/10')}
-                          onClick={() => setSelectedMitigation(row)}
-                        >
-                          <TableCell className="mono text-xs font-medium">
-                            {row.incidentId}
-                          </TableCell>
-                          <TableCell>
-                            {row.emergency ? (
-                              <Badge variant="danger" className="font-semibold uppercase tracking-wide">
-                                EMERGENCY
-                              </Badge>
-                            ) : (
-                              <Badge variant="secondary" className="font-semibold uppercase tracking-wide">
-                                STORM
-                              </Badge>
-                            )}
-                          </TableCell>
-                          <TableCell className="font-medium">{row.interface}</TableCell>
-                          <TableCell>
-                            <span className="truncate text-xs font-mono text-muted-foreground block max-w-[120px]">
-                              {row.deviceId}
-                            </span>
-                          </TableCell>
-                          <TableCell className="text-xs uppercase font-semibold text-sky-400">
-                            {row.strategy}
-                          </TableCell>
-                          <TableCell>
-                            <MitigationStatusBadge status={row.status} />
-                          </TableCell>
-                          <TableCell>
-                            {row.rollbackPerformed ? (
-                              <Badge variant="warning">Performed</Badge>
-                            ) : (
-                              <span className="text-muted-foreground text-xs">—</span>
-                            )}
-                          </TableCell>
-                          <TableCell className="text-sm font-mono text-muted-foreground">
-                            {row.operator}
-                          </TableCell>
-                          <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
-                            {formatRelative(row.timestamp) || '—'}
-                          </TableCell>
-                        </TableRow>
-                      )
-                    })}
-                  </TableBody>
-                </Table>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">
-                  {selectedMitigation
-                    ? `Mitigation for ${selectedMitigation.incidentId}`
-                    : 'Select a log row'}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                {!selectedMitigation ? (
-                  <p className="text-sm text-muted-foreground">
-                    Click a row to inspect execution command logs and verification outputs.
-                  </p>
-                ) : (
-                  <>
-                    <div className="space-y-1">
-                      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                        Mitigation Context
-                      </p>
-                      <div className="text-sm space-y-1">
-                        <p>Interface: <span className="font-semibold text-primary">{selectedMitigation.interface}</span></p>
-                        <p>Operator: <span className="font-mono text-muted-foreground">{selectedMitigation.operator}</span></p>
-                        {selectedMitigation.emergency ? (
-                          <p>
-                            Type:{' '}
-                            <Badge variant="danger" className="font-semibold uppercase tracking-wide">
-                              EMERGENCY
-                            </Badge>
-                          </p>
-                        ) : null}
-                        {selectedMitigation.reason ? (
-                          <p>Reason: <span className="text-muted-foreground">{selectedMitigation.reason}</span></p>
-                        ) : null}
-                        {selectedMitigation.executionTimeMs != null ? (
-                          <p>
-                            Duration:{' '}
-                            <span className="font-mono text-muted-foreground">
-                              {selectedMitigation.executionTimeMs} ms
-                            </span>
-                          </p>
-                        ) : null}
-                        <p>Status: <MitigationStatusBadge status={selectedMitigation.status} /></p>
-                        <p>Rollback Triggered: <span className="font-semibold">{selectedMitigation.rollbackPerformed ? 'Yes' : 'No'}</span></p>
-                      </div>
-                    </div>
-
-                    <div className="space-y-1">
-                      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                        Executed Command Log (Sanitized)
-                      </p>
-                      <div className="rounded-md bg-zinc-950 p-3 font-mono text-xs text-green-400 overflow-auto max-h-48 border border-border">
-                        {selectedMitigation.commandsExecuted.map((cmd, idx) => (
-                          <div key={idx} className="leading-relaxed">
-                            <span className="text-zinc-600 mr-2">$</span>
-                            {cmd}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="space-y-1">
-                      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                        Verification / Output Detail
-                      </p>
-                      <pre className="rounded-md bg-zinc-950/80 p-3 font-mono text-xs text-zinc-300 overflow-auto max-h-48 border border-border">
-                        {JSON.stringify(selectedMitigation.verificationResult, null, 2)}
-                      </pre>
-                    </div>
-                  </>
-                )}
-              </CardContent>
-            </Card>
-          </div>
-        )}
-
-        {(mitigationHistoryQuery.data?.totalPages ?? 1) > 1 ||
-        (mitigationHistoryQuery.data?.total ?? 0) > mitLimit ? (
-          <PaginationControls
-            page={mitPage}
-            totalPages={Math.max(mitigationHistoryQuery.data?.totalPages ?? 1, 1)}
-            total={mitigationHistoryQuery.data?.total ?? 0}
-            limit={mitLimit}
-            onPageChange={setMitPage}
-            onLimitChange={setMitLimit}
-          />
-        ) : null}
-      </section>
-
-      {/* ── Recovery Lifecycle & History ────────────────────────────── */}
-      <section className="space-y-4">
-        <div>
-          <h2 className="text-lg font-semibold tracking-tight">Enterprise Recovery Engine</h2>
-          <p className="text-sm text-muted-foreground">
-            Automatic recovery and traffic stabilization checking for mitigated interfaces.
-            Recovery uses a dedicated Recovery Safety Engine (not Mitigation Safety).
-          </p>
-        </div>
-
-        {/* Runtime Auto Recovery Settings Toggle */}
-        <Card className="border-primary/20 bg-secondary/10">
-          <CardContent className="flex flex-wrap items-center justify-between gap-4 p-4">
-            <div className="space-y-1">
-              <p className="text-sm font-semibold">Auto Recovery Automation</p>
-              <p className="text-xs text-muted-foreground">
-                Automatic port recovery is currently{' '}
-                <span className="font-semibold text-primary uppercase">
-                  {settingsQuery.data?.autoRecovery ? 'enabled' : 'disabled'}
-                </span>
-                .
-              </p>
-            </div>
-            {isAdmin ? (
-              <div className="flex flex-wrap items-center gap-4">
-                <div className="flex gap-2">
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant={settingsQuery.data?.autoRecovery ? 'default' : 'outline'}
-                    disabled={settingsMutation.isPending}
-                    onClick={() => settingsMutation.mutate({ autoRecovery: true })}
-                  >
-                    Enable Auto Recovery
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant={!settingsQuery.data?.autoRecovery ? 'default' : 'outline'}
-                    disabled={settingsMutation.isPending}
-                    onClick={() => settingsMutation.mutate({ autoRecovery: false })}
-                  >
-                    Disable Auto Recovery
-                  </Button>
-                </div>
-                <div className="text-xs text-muted-foreground border-l border-border/80 pl-4 space-y-0.5">
-                  <p>Cooldown: <span className="font-semibold">{settingsQuery.data?.cooldownMinutes || 5} min</span></p>
-                  <p>Stabilization: <span className="font-semibold">{settingsQuery.data?.stabilizationSeconds || 60} sec</span></p>
-                  <p>Max Retries: <span className="font-semibold">{settingsQuery.data?.maximumRecoveryAttempts || 3}</span></p>
-                </div>
-              </div>
+          {/* Incidents */}
+          <Subsection
+            title="Storm Incidents"
+            description="Pre-mitigation evidence packages for this switch."
+          >
+            {device.incidents.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No storm incidents for this switch.</p>
             ) : (
-              <Badge variant="outline" className="uppercase">
-                Admin Configurable Only
-              </Badge>
-            )}
-          </CardContent>
-        </Card>
-
-        <div className="flex flex-wrap gap-3">
-          <Input
-            type="search"
-            className="max-w-sm"
-            placeholder="Search recovery log by incident..."
-            value={recQuery}
-            onChange={(e) => setRecQuery(e.target.value)}
-          />
-        </div>
-
-        {recoveryHistoryQuery.isLoading ? (
-          <TableSkeleton rows={6} />
-        ) : recoveryHistoryQuery.isError ? (
-          <ErrorState
-            title="Unable to load recovery history"
-            message={
-              recoveryHistoryQuery.error instanceof Error
-                ? recoveryHistoryQuery.error.message
-                : 'Unexpected error'
-            }
-            onRetry={() => void recoveryHistoryQuery.refetch()}
-          />
-        ) : (recoveryHistoryQuery.data?.data ?? []).length === 0 ? (
-          <EmptyState
-            icon={Activity}
-            title="No recovery logs found"
-            description="Ports in MITIGATED status trigger recovery when Recovery Safety (R1–R8) passes — cooldown, storm cleared, risk low, device/SSH reachable, interface still admin-down."
-          />
-        ) : (
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,1.55fr)_minmax(320px,1fr)]">
-            <Card>
-              <CardContent className="p-0">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Incident ID</TableHead>
-                      <TableHead>Interface</TableHead>
-                      <TableHead>Device ID</TableHead>
-                      <TableHead>Recovery Status</TableHead>
-                      <TableHead>Attempts</TableHead>
-                      <TableHead>Timestamp</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {(recoveryHistoryQuery.data?.data ?? []).map((row) => {
-                      const active = selectedRecovery?._id === row._id
-                      return (
-                        <TableRow
-                          key={row._id || row.incidentId}
-                          className={cn('cursor-pointer', active && 'bg-primary/10')}
-                          onClick={() => setSelectedRecovery(row)}
-                        >
-                          <TableCell className="mono text-xs font-medium">
-                            {row.incidentId}
-                          </TableCell>
-                          <TableCell className="font-medium">{row.interface}</TableCell>
-                          <TableCell>
-                            <span className="truncate text-xs font-mono text-muted-foreground block max-w-[120px]">
-                              {row.deviceId}
-                            </span>
-                          </TableCell>
-                          <TableCell>
-                            <RecoveryStatusBadge status={row.recoveryStatus} />
-                          </TableCell>
-                          <TableCell className="text-sm">
-                            {row.retryCount} attempts
-                          </TableCell>
-                          <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
-                            {formatRelative(row.timestamp) || '—'}
-                          </TableCell>
-                        </TableRow>
-                      )
-                    })}
-                  </TableBody>
-                </Table>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">
-                  {selectedRecovery
-                    ? `Recovery details for ${selectedRecovery.incidentId}`
-                    : 'Select a recovery log row'}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {!selectedRecovery ? (
-                  <p className="text-sm text-muted-foreground">
-                    Click a row to inspect recovery verification outputs and traffic metrics.
-                  </p>
-                ) : (
-                  <>
-                    <div className="space-y-1">
-                      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                        Recovery Context
+              <div className="grid gap-4 xl:grid-cols-[minmax(0,1.55fr)_minmax(280px,1fr)]">
+                <div className="space-y-3">
+                <div className="overflow-x-auto rounded-md border border-border/60">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Incident</TableHead>
+                        <TableHead>Interface</TableHead>
+                        <TableHead>Type</TableHead>
+                        <TableHead>Severity</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Created</TableHead>
+                        <TableHead>Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {incidentsPagination.pageItems.map((row) => {
+                        const active = selectedIncident?.incidentId === row.incidentId
+                        return (
+                          <TableRow
+                            key={row.incidentId}
+                            className={cn('cursor-pointer', active && 'bg-primary/10')}
+                            onClick={() => onSelectIncident(row)}
+                          >
+                            <TableCell className="mono text-xs font-medium">
+                              {row.incidentId}
+                            </TableCell>
+                            <TableCell className="font-medium">{row.interface}</TableCell>
+                            <TableCell>
+                              <IncidentTypeBadge
+                                incidentType={row.incidentType || row.type}
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <SeverityBadge severity={row.severity} />
+                            </TableCell>
+                            <TableCell>
+                              <IncidentStatusBadge status={row.status} />
+                            </TableCell>
+                            <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
+                              {formatRelative(row.createdAt) || '—'}
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex flex-wrap gap-1">
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    onViewIncident(row)
+                                  }}
+                                >
+                                  View
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="secondary"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    onExportIncident(row)
+                                  }}
+                                >
+                                  Export
+                                </Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        )
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+                {incidentsPagination.totalPages > 1 ? (
+                  <PaginationControls
+                    page={incidentsPagination.page}
+                    totalPages={Math.max(incidentsPagination.totalPages, 1)}
+                    total={incidentsPagination.total}
+                    limit={incidentsPagination.limit}
+                    onPageChange={incidentsPagination.setPage}
+                    onLimitChange={incidentsPagination.setLimit}
+                    limitOptions={[5, 10, 25, 50]}
+                    unitLabel="Incident rows"
+                  />
+                ) : null}
+                </div>
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm">
+                      {selectedIncident
+                        ? selectedIncident.incidentId
+                        : 'Select an incident'}
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    {!selectedIncident ? (
+                      <p className="text-sm text-muted-foreground">
+                        Click a row to inspect evidence snapshots.
                       </p>
-                      <div className="text-sm space-y-1">
-                        <p>Interface: <span className="font-semibold text-primary">{selectedRecovery.interface}</span></p>
-                        <p>Attempts Run: <span className="font-semibold">{selectedRecovery.retryCount}</span></p>
-                        <p>Status: <RecoveryStatusBadge status={selectedRecovery.recoveryStatus} /></p>
-                        {(selectedRecovery.engine ||
-                          selectedRecovery.verificationResult?.engine) && (
-                          <p>
-                            Engine:{' '}
-                            <span className="font-semibold">
-                              {selectedRecovery.engine ||
-                                selectedRecovery.verificationResult?.engine}
-                            </span>
-                          </p>
-                        )}
-                      </div>
-                    </div>
-
-                    {(selectedRecovery.checks &&
-                      Object.keys(selectedRecovery.checks).length > 0) ||
-                    (selectedRecovery.verificationResult?.checks &&
-                      Object.keys(selectedRecovery.verificationResult.checks).length >
-                        0) ? (
-                      <div className="space-y-1.5">
-                        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                          Recovery Safety Checks
+                    ) : (
+                      <>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <SeverityBadge severity={selectedIncident.severity} />
+                          <IncidentStatusBadge status={selectedIncident.status} />
+                        </div>
+                        <p className="text-sm text-muted-foreground">
+                          {selectedIncident.interface}
                         </p>
+                        <JsonSection
+                          title="Interface Snapshot"
+                          open={Boolean(expandedSections.interface)}
+                          onToggle={() => onToggleJsonSection('interface')}
+                          data={selectedIncident.interfaceSnapshot}
+                        />
+                        <JsonSection
+                          title="Switchport Snapshot"
+                          open={Boolean(expandedSections.switchport)}
+                          onToggle={() => onToggleJsonSection('switchport')}
+                          data={selectedIncident.switchportSnapshot}
+                        />
+                        <JsonSection
+                          title="MAC Table"
+                          open={Boolean(expandedSections.mac)}
+                          onToggle={() => onToggleJsonSection('mac')}
+                          data={selectedIncident.macTable}
+                        />
+                        <JsonSection
+                          title="Neighbor"
+                          open={Boolean(expandedSections.neighbor)}
+                          onToggle={() => onToggleJsonSection('neighbor')}
+                          data={selectedIncident.neighbor}
+                        />
+                        <JsonSection
+                          title="Timeline"
+                          open={Boolean(expandedSections.timeline)}
+                          onToggle={() => onToggleJsonSection('timeline')}
+                          data={selectedIncident.timeline}
+                        />
+                        {isAdmin ? (
+                          <div className="space-y-2 border-t border-border/50 pt-3">
+                            {[
+                              'READY_FOR_MITIGATION',
+                              'PREPARED',
+                              'OPEN',
+                              'MITIGATION_FAILED',
+                            ].includes(selectedIncident.status) ? (
+                              <Button
+                                type="button"
+                                className="w-full bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                disabled={mitigationPending}
+                                onClick={() =>
+                                  onExecuteMitigation(
+                                    selectedIncident.incidentId || '',
+                                    'SHUTDOWN',
+                                  )
+                                }
+                              >
+                                {mitigationPending
+                                  ? 'Executing Shutdown…'
+                                  : 'Execute Shutdown'}
+                              </Button>
+                            ) : null}
+                            {selectedIncident.status === 'MITIGATED' ? (
+                              <div className="flex gap-2">
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  className="flex-1 border-destructive text-destructive hover:bg-destructive/10"
+                                  disabled={rollbackPending}
+                                  onClick={() =>
+                                    onRollback(selectedIncident.incidentId || '')
+                                  }
+                                >
+                                  {rollbackPending ? 'Rolling back…' : 'Rollback'}
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="secondary"
+                                  className="flex-1"
+                                  disabled={mitigationPending}
+                                  onClick={() =>
+                                    onExecuteMitigation(
+                                      selectedIncident.incidentId || '',
+                                      'NO_SHUTDOWN',
+                                    )
+                                  }
+                                >
+                                  {mitigationPending ? 'Recovering…' : 'Recover Port'}
+                                </Button>
+                              </div>
+                            ) : null}
+                            {[
+                              'MITIGATED',
+                              'RECOVERY_FAILED',
+                              'MITIGATION_FAILED',
+                            ].includes(selectedIncident.status) ? (
+                              <div className="flex gap-2">
+                                <Button
+                                  type="button"
+                                  variant="secondary"
+                                  className="flex-1"
+                                  disabled={retryPending}
+                                  onClick={() =>
+                                    onRetryRecovery(selectedIncident.incidentId || '')
+                                  }
+                                >
+                                  {retryPending ? 'Retrying…' : 'Retry Recovery'}
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  className="flex-1"
+                                  disabled={recoveryPending}
+                                  onClick={() =>
+                                    onForceRecovery(selectedIncident.incidentId || '')
+                                  }
+                                >
+                                  {recoveryPending ? 'Recovering…' : 'Force Recovery'}
+                                </Button>
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : null}
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="w-full"
+                          onClick={() => onExportIncident(selectedIncident)}
+                        >
+                          <FileJson className="mr-2 h-4 w-4" />
+                          Export Incident
+                        </Button>
+                      </>
+                    )}
+                  </CardContent>
+                </Card>
+              </div>
+            )}
+          </Subsection>
+
+          {/* Mitigation history */}
+          <Subsection
+            title="Mitigation History"
+            description="Shutdown and rollback execution logs for this switch."
+          >
+            {device.mitigation.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No mitigation logs yet.</p>
+            ) : (
+              <div className="grid gap-4 xl:grid-cols-[minmax(0,1.55fr)_minmax(260px,1fr)]">
+                <div className="space-y-3">
+                <div className="overflow-x-auto rounded-md border border-border/60">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Incident</TableHead>
+                        <TableHead>Interface</TableHead>
+                        <TableHead>Strategy</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Operator</TableHead>
+                        <TableHead>Time</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {mitigationPagination.pageItems.map((row) => {
+                        const active = selectedMitigation?._id === row._id
+                        return (
+                          <TableRow
+                            key={row._id || row.incidentId}
+                            className={cn('cursor-pointer', active && 'bg-primary/10')}
+                            onClick={() => onSelectMitigation(row)}
+                          >
+                            <TableCell className="mono text-xs font-medium">
+                              {row.incidentId}
+                            </TableCell>
+                            <TableCell className="font-medium">{row.interface}</TableCell>
+                            <TableCell className="text-xs font-semibold uppercase text-sky-400">
+                              {row.strategy}
+                            </TableCell>
+                            <TableCell>
+                              <MitigationStatusBadge status={row.status} />
+                            </TableCell>
+                            <TableCell className="font-mono text-sm text-muted-foreground">
+                              {row.operator}
+                            </TableCell>
+                            <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
+                              {formatRelative(row.timestamp) || '—'}
+                            </TableCell>
+                          </TableRow>
+                        )
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+                {mitigationPagination.totalPages > 1 ? (
+                  <PaginationControls
+                    page={mitigationPagination.page}
+                    totalPages={Math.max(mitigationPagination.totalPages, 1)}
+                    total={mitigationPagination.total}
+                    limit={mitigationPagination.limit}
+                    onPageChange={mitigationPagination.setPage}
+                    onLimitChange={mitigationPagination.setLimit}
+                    limitOptions={[5, 10, 25, 50]}
+                    unitLabel="Mitigation rows"
+                  />
+                ) : null}
+                </div>
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm">
+                      {selectedMitigation
+                        ? `Mitigation ${selectedMitigation.incidentId}`
+                        : 'Select a log'}
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-2">
+                    {!selectedMitigation ? (
+                      <p className="text-sm text-muted-foreground">
+                        Click a row for command and verification detail.
+                      </p>
+                    ) : (
+                      <>
+                        <p className="text-sm">
+                          Interface:{' '}
+                          <span className="font-semibold text-primary">
+                            {selectedMitigation.interface}
+                          </span>
+                        </p>
+                        <MitigationStatusBadge status={selectedMitigation.status} />
+                        <div className="max-h-40 overflow-auto rounded-md border border-border bg-zinc-950 p-3 font-mono text-xs text-green-400">
+                          {(selectedMitigation.commandsExecuted || []).map((cmd, idx) => (
+                            <div key={idx} className="leading-relaxed">
+                              <span className="mr-2 text-zinc-600">$</span>
+                              {cmd}
+                            </div>
+                          ))}
+                        </div>
+                        <pre className="max-h-32 overflow-auto rounded-md border border-border bg-zinc-950/80 p-3 font-mono text-xs text-zinc-300">
+                          {JSON.stringify(selectedMitigation.verificationResult, null, 2)}
+                        </pre>
+                      </>
+                    )}
+                  </CardContent>
+                </Card>
+              </div>
+            )}
+          </Subsection>
+
+          {/* Recovery history */}
+          <Subsection
+            title="Recovery History"
+            description="Recovery Safety (R1–R8) outcomes and stabilization for this switch."
+          >
+            {device.recovery.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No recovery logs yet.</p>
+            ) : (
+              <div className="grid gap-4 xl:grid-cols-[minmax(0,1.55fr)_minmax(260px,1fr)]">
+                <div className="space-y-3">
+                <div className="overflow-x-auto rounded-md border border-border/60">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Incident</TableHead>
+                        <TableHead>Interface</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Attempts</TableHead>
+                        <TableHead>Time</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {recoveryPagination.pageItems.map((row) => {
+                        const active = selectedRecovery?._id === row._id
+                        return (
+                          <TableRow
+                            key={row._id || row.incidentId}
+                            className={cn('cursor-pointer', active && 'bg-primary/10')}
+                            onClick={() => onSelectRecovery(row)}
+                          >
+                            <TableCell className="mono text-xs font-medium">
+                              {row.incidentId}
+                            </TableCell>
+                            <TableCell className="font-medium">{row.interface}</TableCell>
+                            <TableCell>
+                              <RecoveryStatusBadge status={row.recoveryStatus} />
+                            </TableCell>
+                            <TableCell className="text-sm">{row.retryCount} attempts</TableCell>
+                            <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
+                              {formatRelative(row.timestamp) || '—'}
+                            </TableCell>
+                          </TableRow>
+                        )
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+                {recoveryPagination.totalPages > 1 ? (
+                  <PaginationControls
+                    page={recoveryPagination.page}
+                    totalPages={Math.max(recoveryPagination.totalPages, 1)}
+                    total={recoveryPagination.total}
+                    limit={recoveryPagination.limit}
+                    onPageChange={recoveryPagination.setPage}
+                    onLimitChange={recoveryPagination.setLimit}
+                    limitOptions={[5, 10, 25, 50]}
+                    unitLabel="Recovery rows"
+                  />
+                ) : null}
+                </div>
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm">
+                      {selectedRecovery
+                        ? `Recovery ${selectedRecovery.incidentId}`
+                        : 'Select a log'}
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    {!selectedRecovery ? (
+                      <p className="text-sm text-muted-foreground">
+                        Click a row for recovery verification detail.
+                      </p>
+                    ) : (
+                      <>
+                        <RecoveryStatusBadge status={selectedRecovery.recoveryStatus} />
                         <RecoveryChecksList
                           checks={
                             selectedRecovery.checks &&
@@ -2485,242 +2508,20 @@ export function StormProtectionPage() {
                             selectedRecovery.verificationResult?.failedRule
                           }
                         />
-                      </div>
-                    ) : null}
-
-                    <div className="space-y-1">
-                      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                        Verification Output / CLI Log
-                      </p>
-                      {selectedRecovery.verificationResult?.output ? (
-                        <pre className="rounded-md bg-zinc-950 p-3 font-mono text-xs text-zinc-300 overflow-auto max-h-48 border border-border">
-                          {selectedRecovery.verificationResult.output}
-                        </pre>
-                      ) : selectedRecovery.verificationResult?.error ? (
-                        <div className="rounded-md bg-destructive/10 p-3 text-xs text-destructive border border-destructive/20 font-mono">
-                          {selectedRecovery.verificationResult.error}
-                        </div>
-                      ) : (
-                        <div className="text-xs text-muted-foreground italic">No output captured.</div>
-                      )}
-                    </div>
-
-                    {selectedRecovery.verificationResult?.stats && (
-                      <div className="space-y-2">
-                        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                          Post-Recovery Traffic Statistics
-                        </p>
-                        <div className="grid grid-cols-2 gap-2 text-xs border border-border/80 rounded-md p-3 bg-secondary/5">
-                          <p>Admin Status: <span className="font-semibold">{selectedRecovery.verificationResult.stats.adminStatus || '—'}</span></p>
-                          <p>Oper Status: <span className="font-semibold">{selectedRecovery.verificationResult.stats.operStatus || '—'}</span></p>
-                          <p>Broadcast Rate: <span className="font-mono text-muted-foreground">{selectedRecovery.verificationResult.stats.broadcastRate || 0} pps</span></p>
-                          <p>Multicast Rate: <span className="font-mono text-muted-foreground">{selectedRecovery.verificationResult.stats.multicastRate || 0} pps</span></p>
-                          <p>Utilization: <span className="font-mono text-muted-foreground">{(selectedRecovery.verificationResult.stats.utilization || 0.0).toFixed(2)}%</span></p>
-                          <p>Errors: <span className="font-mono text-muted-foreground">In: {selectedRecovery.verificationResult.stats.inputErrors || 0} / Out: {selectedRecovery.verificationResult.stats.outputErrors || 0}</span></p>
-                          <p>CRC: <span className="font-mono text-muted-foreground">{selectedRecovery.verificationResult.stats.crc || 0}</span></p>
-                          <p>Discards: <span className="font-mono text-muted-foreground">{selectedRecovery.verificationResult.stats.discards || 0}</span></p>
-                        </div>
-                      </div>
+                        {selectedRecovery.verificationResult?.output ? (
+                          <pre className="max-h-32 overflow-auto rounded-md border border-border bg-zinc-950 p-3 font-mono text-xs text-zinc-300">
+                            {selectedRecovery.verificationResult.output}
+                          </pre>
+                        ) : null}
+                      </>
                     )}
-                  </>
-                )}
-              </CardContent>
-            </Card>
-          </div>
-        )}
-
-        {(recoveryHistoryQuery.data?.totalPages ?? 1) > 1 ||
-        (recoveryHistoryQuery.data?.total ?? 0) > recLimit ? (
-          <PaginationControls
-            page={recPage}
-            totalPages={Math.max(recoveryHistoryQuery.data?.totalPages ?? 1, 1)}
-            total={recoveryHistoryQuery.data?.total ?? 0}
-            limit={recLimit}
-            onPageChange={setRecPage}
-            onLimitChange={setRecLimit}
-          />
-        ) : null}
-      </section>
-
-      {/* ── Port Eligibility ───────────────────────────────────────── */}
-      <section className="space-y-4">
-        <div>
-          <h2 className="text-lg font-semibold tracking-tight">Port Eligibility</h2>
-          <p className="text-sm text-muted-foreground">
-            Deterministic gate that decides which access ports may enter risk scoring
-            and future storm engines.
-          </p>
-        </div>
-
-        <div className="grid gap-3 sm:grid-cols-3">
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                Latest evaluations
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-2xl font-bold">{total}</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                Eligible (page)
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-2xl font-bold text-success">{eligibleCount}</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                Not eligible (page)
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-2xl font-bold text-danger">{ineligibleCount}</p>
-            </CardContent>
-          </Card>
-        </div>
-
-        <div className="flex flex-wrap gap-3">
-          <Input
-            type="search"
-            className="max-w-sm"
-            placeholder="Search interface, host, reason, rule…"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
-          <Select value={eligibleFilter} onValueChange={setEligibleFilter}>
-            <SelectTrigger className="w-[180px]">
-              <SelectValue placeholder="Eligibility" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All statuses</SelectItem>
-              <SelectItem value="eligible">Eligible</SelectItem>
-              <SelectItem value="ineligible">Not eligible</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-
-        {eligibilityQuery.isLoading ? (
-          <TableSkeleton rows={8} />
-        ) : eligibilityQuery.isError ? (
-          <ErrorState
-            title="Unable to load eligibility results"
-            message={
-              eligibilityQuery.error instanceof Error
-                ? eligibilityQuery.error.message
-                : 'Unexpected error'
-            }
-            onRetry={() => void eligibilityQuery.refetch()}
-          />
-        ) : rows.length === 0 ? (
-          <EmptyState
-            icon={Shield}
-            title="No eligibility results"
-            description="Run interface discovery and stats collection, then evaluate ports. The scheduler also evaluates after each stats cycle."
-          />
-        ) : (
-          <Card>
-            <CardContent className="p-0">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Interface</TableHead>
-                    <TableHead>Device</TableHead>
-                    <TableHead>Eligibility</TableHead>
-                    <TableHead>Reason</TableHead>
-                    <TableHead>Failed rule</TableHead>
-                    <TableHead>Confidence</TableHead>
-                    <TableHead>Classification</TableHead>
-                    <TableHead>Evaluated</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {rows.map((row) => (
-                    <TableRow key={`${row.deviceId}-${row.interface}-${row._id ?? ''}`}>
-                      <TableCell className="font-medium">
-                        {row.deviceId && row.interface ? (
-                          <Link
-                            to={`/interfaces/${row.deviceId}/${encodeURIComponent(row.interface)}`}
-                            className="text-primary hover:underline"
-                          >
-                            {row.interface}
-                          </Link>
-                        ) : (
-                          row.interface
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-medium">
-                            {row.hostname || '—'}
-                          </p>
-                          <p className="truncate text-xs text-muted-foreground">
-                            {row.ipAddress || row.deviceId}
-                          </p>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <EligibilityBadge eligible={row.eligible} />
-                      </TableCell>
-                      <TableCell className="max-w-[200px] truncate text-sm">
-                        {row.reason}
-                      </TableCell>
-                      <TableCell>
-                        {row.failedRule ? (
-                          <Badge variant="outline" className="font-mono text-xs">
-                            {row.failedRule}
-                          </Badge>
-                        ) : (
-                          <span className="text-muted-foreground">—</span>
-                        )}
-                      </TableCell>
-                      <TableCell>{row.confidence}%</TableCell>
-                      <TableCell>
-                        <div className="flex max-w-[280px] flex-wrap gap-1">
-                          <PortClassificationBadges
-                            iface={classificationIface(row)}
-                            includeMode
-                          />
-                        </div>
-                      </TableCell>
-                      <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
-                        <div title={formatDateTime(row.timestamp) || undefined}>
-                          {formatRelative(row.timestamp) || '—'}
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
-        )}
-
-        {totalPages > 1 || total > limit ? (
-          <PaginationControls
-            page={page}
-            totalPages={Math.max(totalPages, 1)}
-            total={total}
-            limit={limit}
-            onPageChange={setPage}
-            onLimitChange={setLimit}
-          />
-        ) : null}
-      </section>
-    </div>
-  )
-}
-
-function MetricCell({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-md border border-border/50 px-2.5 py-1.5">
-      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</p>
-      <p className="mono text-sm font-medium">{value}</p>
-    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            )}
+          </Subsection>
+        </CardContent>
+      ) : null}
+    </Card>
   )
 }
