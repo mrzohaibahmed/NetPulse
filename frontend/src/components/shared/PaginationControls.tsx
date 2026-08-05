@@ -15,6 +15,8 @@ interface PaginationControlsProps {
   onPageChange: (page: number) => void
   onLimitChange: (limit: number) => void
   limitOptions?: number[]
+  /** Label for the page-size selector (default: Rows). */
+  unitLabel?: string
 }
 
 export function PaginationControls({
@@ -25,6 +27,7 @@ export function PaginationControls({
   onPageChange,
   onLimitChange,
   limitOptions = [10, 25, 50, 100],
+  unitLabel = 'Rows',
 }: PaginationControlsProps) {
   const from = total === 0 ? 0 : (page - 1) * limit + 1
   const to = Math.min(page * limit, total)
@@ -36,7 +39,7 @@ export function PaginationControls({
       </p>
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <span>Rows</span>
+          <span>{unitLabel}</span>
           <Select value={String(limit)} onValueChange={(v) => onLimitChange(Number(v))}>
             <SelectTrigger className="h-8 w-[72px]">
               <SelectValue />

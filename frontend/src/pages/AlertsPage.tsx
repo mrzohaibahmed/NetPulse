@@ -1,15 +1,17 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Check, CloudLightning, Search, X } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { useAuth } from '@/auth/AuthContext'
 import { useAlertMutations, useAlertsQuery } from '@/hooks/queries'
+import { useClientPagination } from '@/hooks/useClientPagination'
 import { formatDateTime } from '@/utils/format'
 import type { AlertItem } from '@/types'
 import { EmptyState } from '@/components/shared/EmptyState'
 import { ErrorState } from '@/components/shared/ErrorState'
 import { TableSkeleton } from '@/components/shared/LoadingState'
 import { PageHeader } from '@/components/shared/PageHeader'
+import { PaginationControls } from '@/components/shared/PaginationControls'
 import { StatusBadge } from '@/components/shared/StatusBadge'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -79,6 +81,13 @@ export function AlertsPage() {
     )
   }, [alerts, query])
 
+  const pagination = useClientPagination(filtered, 25)
+
+  useEffect(() => {
+    pagination.reset()
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reset on filter/status change
+  }, [query, status])
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -124,26 +133,39 @@ export function AlertsPage() {
       ) : filtered.length === 0 ? (
         <EmptyState title="No alerts" description="Nothing matches the current filters." />
       ) : (
-        <div className="relative space-y-0 pl-4 before:absolute before:bottom-4 before:left-[21px] before:top-4 before:w-px before:bg-border">
-          {filtered.map((alert, index) => (
-            <AlertTimelineItem
-              key={alert._id}
-              alert={alert}
-              index={index}
-              canAct={isOperator}
-              onAck={() => acknowledge.mutate(alert._id)}
-              onDismiss={() => dismiss.mutate(alert._id)}
-              busy={acknowledge.isPending || dismiss.isPending}
-              onOpenStorm={
-                isStormAlert(alert) && alert.incidentId
-                  ? () => navigate(`/storm?incident=${encodeURIComponent(alert.incidentId!)}`)
-                  : isStormAlert(alert)
-                    ? () => navigate('/storm')
-                    : undefined
-              }
+        <>
+          <div className="relative space-y-0 pl-4 before:absolute before:bottom-4 before:left-[21px] before:top-4 before:w-px before:bg-border">
+            {pagination.pageItems.map((alert, index) => (
+              <AlertTimelineItem
+                key={alert._id}
+                alert={alert}
+                index={index}
+                canAct={isOperator}
+                onAck={() => acknowledge.mutate(alert._id)}
+                onDismiss={() => dismiss.mutate(alert._id)}
+                busy={acknowledge.isPending || dismiss.isPending}
+                onOpenStorm={
+                  isStormAlert(alert) && alert.incidentId
+                    ? () => navigate(`/storm?incident=${encodeURIComponent(alert.incidentId!)}`)
+                    : isStormAlert(alert)
+                      ? () => navigate('/storm')
+                      : undefined
+                }
+              />
+            ))}
+          </div>
+          {pagination.totalPages > 1 || pagination.total > pagination.limit ? (
+            <PaginationControls
+              page={pagination.page}
+              totalPages={Math.max(pagination.totalPages, 1)}
+              total={pagination.total}
+              limit={pagination.limit}
+              onPageChange={pagination.setPage}
+              onLimitChange={pagination.setLimit}
+              limitOptions={[10, 25, 50, 100]}
             />
-          ))}
-        </div>
+          ) : null}
+        </>
       )}
     </div>
   )

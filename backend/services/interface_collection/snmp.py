@@ -22,6 +22,8 @@ logger = get_monitor_logger("interface.snmp")
 # ---------------------------------------------------------------------------
 
 OID_IF_DESCR = "1.3.6.1.2.1.2.2.1.2"
+OID_IF_ADMIN_STATUS = "1.3.6.1.2.1.2.2.1.7"
+OID_IF_OPER_STATUS = "1.3.6.1.2.1.2.2.1.8"
 OID_IF_SPEED = "1.3.6.1.2.1.2.2.1.5"
 OID_IF_IN_OCTETS = "1.3.6.1.2.1.2.2.1.10"
 OID_IF_IN_UCAST = "1.3.6.1.2.1.2.2.1.11"
@@ -141,7 +143,7 @@ class SNMPInterfaceCollector:
         Each dict keys:
           name, if_index, rx_bytes, tx_bytes, rx_packets, tx_packets,
           broadcast_packets, multicast_packets, input_errors, output_errors,
-          discards, speed_bps
+          discards, speed_bps, admin_status, oper_status
         """
         creds = self.credentials
         logger.info(
@@ -178,6 +180,8 @@ class SNMPInterfaceCollector:
         oid_keys = {
             "descr": OID_IF_DESCR,
             "name": OID_IF_NAME,
+            "admin_status": OID_IF_ADMIN_STATUS,
+            "oper_status": OID_IF_OPER_STATUS,
             "speed": OID_IF_SPEED,
             "high_speed": OID_IF_HIGH_SPEED,
             "in_octets": OID_IF_IN_OCTETS,
@@ -207,9 +211,10 @@ class SNMPInterfaceCollector:
                 tables[key] = await self._walk_oid(oid)
             except SNMPCollectorError as exc:
                 # HC / IF-X columns are optional on older gear.
+                # Admin/oper status soft-fail so counter collection still proceeds.
                 if key.startswith("hc_") or key in {
                     "name", "high_speed", "in_mcast", "in_bcast",
-                    "out_mcast", "out_bcast",
+                    "out_mcast", "out_bcast", "admin_status", "oper_status",
                 }:
                     logger.debug(
                         "[SNMP] Optional OID unavailable | host=%s oid=%s | %s",
@@ -417,6 +422,11 @@ class SNMPInterfaceCollector:
                 if speed_bps >= 4294967295:
                     speed_bps = 0
 
+            admin_raw = tables.get("admin_status", {}).get(if_index)
+            oper_raw = tables.get("oper_status", {}).get(if_index)
+            admin_status = _snmp_status_to_text(admin_raw, kind="admin")
+            oper_status = _snmp_status_to_text(oper_raw, kind="oper")
+
             rows.append({
                 "name": name.strip(),
                 "if_index": if_index,
@@ -436,6 +446,8 @@ class SNMPInterfaceCollector:
                 "output_errors": out_errors,
                 "discards": discards,
                 "speed_bps": speed_bps or None,
+                "admin_status": admin_status,
+                "oper_status": oper_status,
             })
 
         logger.info(
@@ -444,6 +456,46 @@ class SNMPInterfaceCollector:
             self.credentials.host,
         )
         return rows
+
+
+def _snmp_status_to_text(value: Any, *, kind: str) -> str | None:
+    """
+    Map IF-MIB ifAdminStatus / ifOperStatus integers to inventory text.
+
+    Returns None when the OID value is absent so callers skip the field
+    instead of overwriting inventory with null/unknown.
+    """
+    if value is None:
+        return None
+    try:
+        code = int(value)
+    except (TypeError, ValueError):
+        text = str(value).strip().lower()
+        if not text:
+            return None
+        if text in ("up", "1"):
+            return "up"
+        if text in ("down", "2"):
+            return "down"
+        return None
+
+    if kind == "admin":
+        # 1=up, 2=down, 3=testing
+        if code == 1:
+            return "up"
+        if code == 2:
+            return "down"
+        if code == 3:
+            return "testing"
+        return None
+
+    # oper: 1=up, 2=down, 3=testing, 4=unknown, 5=dormant,
+    # 6=notPresent, 7=lowerLayerDown — only 1 is link-up for eligibility.
+    if code == 1:
+        return "up"
+    if code in (2, 3, 4, 5, 6, 7):
+        return "down"
+    return None
 
 
 def _oid_index(oid_str: str, base_oid: str) -> int | None:

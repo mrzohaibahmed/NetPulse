@@ -177,6 +177,30 @@ export function DevicesPage() {
         header: 'Type',
       },
       {
+        id: 'vendor',
+        header: 'Vendor',
+        cell: ({ row }) => (
+          <span className="text-muted-foreground">{row.original.credentials?.sshVendor || '—'}</span>
+        ),
+      },
+      {
+        id: 'monitor',
+        header: 'Monitor',
+        cell: ({ row }) => (
+          <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <Checkbox
+              checked={row.original.monitor}
+              disabled={!isAdmin}
+              onCheckedChange={() =>
+                isAdmin &&
+                update.mutate({ id: row.original._id, payload: { monitor: !row.original.monitor } })
+              }
+            />
+            {row.original.monitor ? 'Enabled' : 'Disabled'}
+          </label>
+        ),
+      },
+      {
         accessorKey: 'status',
         header: 'Status',
         cell: ({ row }) => <StatusBadge status={row.original.status} />,
@@ -197,17 +221,6 @@ export function DevicesPage() {
         cell: ({ row }) => (
           <div className="flex flex-wrap items-center gap-2">
             {row.original.critical ? <Badge variant="danger">Critical</Badge> : null}
-            <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <Checkbox
-                checked={row.original.monitor}
-                disabled={!isAdmin}
-                onCheckedChange={() =>
-                  isAdmin &&
-                  update.mutate({ id: row.original._id, payload: { monitor: !row.original.monitor } })
-                }
-              />
-              Monitor
-            </label>
             <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
               <Checkbox
                 checked={row.original.critical}
@@ -414,7 +427,7 @@ export function DevicesPage() {
                         <TableCell
                           key={cell.id}
                           onClick={(e) => {
-                            if (cell.column.id === 'actions' || cell.column.id === 'flags') {
+                            if (cell.column.id === 'actions' || cell.column.id === 'flags' || cell.column.id === 'monitor') {
                               e.stopPropagation()
                             }
                           }}

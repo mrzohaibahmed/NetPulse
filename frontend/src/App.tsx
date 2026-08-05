@@ -26,7 +26,7 @@ const DevicesPage = lazy(() =>
   import('@/pages/DevicesPage').then((m) => ({ default: m.DevicesPage })),
 )
 const InterfacesPage = lazy(() =>
-  import('@/pages/InterfacesPage').then((m) => ({ default: m.InterfacesPage })),
+  import('@/pages/InterfacesEnterprisePage').then((m) => ({ default: m.InterfacesEnterprisePage })),
 )
 const InterfaceDetailPage = lazy(() =>
   import('@/pages/InterfaceDetailPage').then((m) => ({ default: m.InterfaceDetailPage })),

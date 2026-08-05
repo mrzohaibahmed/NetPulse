@@ -7,8 +7,11 @@ Strategy
 --------
 1. Prefer SNMP (IF-MIB / IF-X-MIB) when reachable.
 2. Fall back to SSH counters when SNMP is unavailable or fails.
-3. Always **insert** into ``interface_stats`` (append-only history).
-4. Compute utilization from the previous sample + link speed.
+3. Refresh ``adminStatus`` / ``operStatus`` (and negotiated speed) on the
+   existing ``interfaces`` inventory via targeted ``$set`` updates — discovery
+   remains the owner of VLAN / classification / neighbor metadata.
+4. Always **insert** into ``interface_stats`` (append-only history).
+5. Compute utilization from the previous sample + link speed.
 
 Designed for thousands of interfaces:
 - Per-device thread pool with a bounded worker count
@@ -122,6 +125,18 @@ def collect_device_interface_stats(device: dict) -> dict:
         previous = _load_previous_stats(device_id)
         inventory_speeds = _load_inventory_speeds(device_id)
         now = datetime.now(timezone.utc)
+
+        # Keep inventory link state fresh between discovery cycles.
+        # Failures here must never block stats persistence or the storm chain.
+        try:
+            _refresh_inventory_operational_state(device_id, raw_rows)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "[IFACE-STATS] Operational status refresh failed | host=%s | %s",
+                ip_address,
+                exc,
+            )
+
         documents = []
 
         for raw in raw_rows:
@@ -474,6 +489,149 @@ def _load_inventory_speeds(device_id: ObjectId) -> dict[str, int]:
     except Exception as exc:  # noqa: BLE001
         logger.debug("[IFACE-STATS] Inventory speed lookup failed: %s", exc)
     return speeds
+
+
+def _refresh_inventory_operational_state(
+    device_id: ObjectId,
+    raw_rows: list[dict],
+) -> int:
+    """
+    Apply targeted ``$set`` updates for operational link state only.
+
+    Updates ``adminStatus`` / ``operStatus`` and, when a negotiated speed is
+    present on the stats row, the existing inventory ``speed`` / ``speedMbps``
+    fields (no schema change — inventory does not store ``speedBps``).
+
+    Does **not**:
+    - create or replace interface documents
+    - modify VLAN / mode / classification / neighbors / monitoring preference
+    - touch discovery timestamps (``lastUpdated`` / ``updatedAt`` / ``createdAt``)
+    - overwrite existing status with null / unknown / empty values
+
+    Returns the number of interfaces successfully updated.
+    """
+    if not raw_rows:
+        return 0
+
+    inventory = list(
+        db.interfaces.find(
+            {"deviceId": device_id},
+            {"_id": 1, "name": 1, "ifIndex": 1},
+        )
+    )
+    if not inventory:
+        return 0
+
+    by_canon: dict[str, dict] = {}
+    by_if_index: dict[int, dict] = {}
+    for doc in inventory:
+        name = doc.get("name")
+        if name:
+            by_canon[canonicalize_interface_name(name)] = doc
+        if_index = doc.get("ifIndex")
+        if if_index is not None:
+            try:
+                by_if_index[int(if_index)] = doc
+            except (TypeError, ValueError):
+                pass
+
+    updated = 0
+    for raw in raw_rows:
+        fields = _operational_fields_from_raw(raw)
+        if not fields:
+            continue
+
+        target = None
+        raw_name = (raw.get("name") or "").strip()
+        if raw_name:
+            target = by_canon.get(canonicalize_interface_name(raw_name))
+        if target is None and raw.get("if_index") is not None:
+            try:
+                target = by_if_index.get(int(raw.get("if_index")))
+            except (TypeError, ValueError):
+                target = None
+        if target is None or not target.get("_id"):
+            continue
+
+        try:
+            result = db.interfaces.update_one(
+                {"_id": target["_id"]},
+                {"$set": fields},
+            )
+            if result.acknowledged and (
+                result.modified_count or result.matched_count
+            ):
+                updated += 1
+        except Exception as exc:  # noqa: BLE001
+            logger.debug(
+                "[IFACE-STATS] Status $set failed | device=%s iface=%s | %s",
+                device_id,
+                raw_name or raw.get("if_index"),
+                exc,
+            )
+
+    if updated:
+        logger.info(
+            "[IFACE-STATS] Refreshed operational status on %d interface(s) | device=%s",
+            updated,
+            device_id,
+        )
+    return updated
+
+
+def _operational_fields_from_raw(raw: dict) -> dict[str, Any]:
+    """
+    Build a partial ``$set`` payload from a stats row.
+
+    Only includes concrete, non-empty operational values.
+    """
+    fields: dict[str, Any] = {}
+
+    admin = _normalize_refresh_status(
+        raw.get("admin_status", raw.get("adminStatus"))
+    )
+    oper = _normalize_refresh_status(
+        raw.get("oper_status", raw.get("operStatus"))
+    )
+    if admin:
+        fields["adminStatus"] = admin
+    if oper:
+        fields["operStatus"] = oper
+
+    # Inventory stores speed / speedMbps (not speedBps). Map negotiated
+    # stats bandwidth onto those existing fields without schema changes.
+    speed_bps = resolve_speed_bps(raw.get("speed_bps"), raw.get("speedBps"))
+    if speed_bps and speed_bps > 0:
+        mbps = int(speed_bps // 1_000_000)
+        if mbps > 0:
+            fields["speedMbps"] = mbps
+            fields["speed"] = _format_speed_for_inventory(mbps)
+
+    return fields
+
+
+def _normalize_refresh_status(value: Any) -> str | None:
+    """Return a canonical up/down(/testing) string, or None to skip update."""
+    if value is None:
+        return None
+    text = str(value).strip().lower()
+    if not text or text in ("unknown", "none", "null"):
+        return None
+    if text in ("up", "connected"):
+        return "up"
+    if text in ("down", "notconnect", "disabled", "err-disabled", "errdisabled"):
+        return "down"
+    if text == "testing":
+        return "testing"
+    return None
+
+
+def _format_speed_for_inventory(speed_mbps: int) -> str:
+    """Human-readable speed string matching discovery inventory style."""
+    if speed_mbps >= 1000 and speed_mbps % 1000 == 0:
+        g = speed_mbps // 1000
+        return f"{g}G"
+    return str(speed_mbps)
 
 
 def _compute_utilization(

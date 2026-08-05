@@ -1,7 +1,8 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { zodResolver } from '@hookform/resolvers/zod'
+import { Eye, EyeOff } from 'lucide-react'
 import { DEFAULT_DEVICE_TYPE, DEVICE_TYPES } from '@/constants/devices'
 import type { Device, DevicePayload } from '@/types'
 import { useDeviceMutations } from '@/hooks/queries'
@@ -25,15 +26,21 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 
+const IPV4_RE = /^(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)$/
+// Accepts common IPv6 forms including compressed `::`.
+const IPV6_RE =
+  /^((?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|(?:[0-9a-fA-F]{1,4}:){1,7}:|(?:[0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|(?:[0-9a-fA-F]{1,4}:){1,5}(?::[0-9a-fA-F]{1,4}){1,2}|(?:[0-9a-fA-F]{1,4}:){1,4}(?::[0-9a-fA-F]{1,4}){1,3}|(?:[0-9a-fA-F]{1,4}:){1,3}(?::[0-9a-fA-F]{1,4}){1,4}|(?:[0-9a-fA-F]{1,4}:){1,2}(?::[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:(?:(?::[0-9a-fA-F]{1,4}){1,6})|:(?:(?::[0-9a-fA-F]{1,4}){1,7}|:))$/
+
 const schema = z.object({
-  hostname: z.string().min(1, 'Hostname is required'),
-  ipAddress: z
-    .string()
-    .regex(
-      /^(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)$/,
-      'Enter a valid IPv4 address',
-    ),
-  deviceType: z.string().min(1),
+  hostname: z.string().trim().min(1, 'Hostname is required'),
+  ipAddress: z.string().min(1).refine((val) => IPV4_RE.test(val.trim()) || IPV6_RE.test(val.trim()), {
+    message: 'Enter a valid IPv4/IPv6 address',
+  }),
+  deviceType: z.string().trim().min(1, 'Device type is required'),
+  vendor: z.string().trim().min(1, 'Vendor is required'),
+  username: z.string().trim().min(1, 'SSH username is required'),
+  // SSH password is required for new devices; on edits it is optional.
+  password: z.string(),
   critical: z.boolean(),
   monitor: z.boolean(),
   pingInterval: z.number().min(5).nullable().optional(),
@@ -51,12 +58,16 @@ interface DeviceFormDialogProps {
 
 export function DeviceFormDialog({ open, onOpenChange, device }: DeviceFormDialogProps) {
   const { create, update } = useDeviceMutations()
+  const [showPassword, setShowPassword] = useState(false)
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
     defaultValues: {
       hostname: '',
       ipAddress: '',
       deviceType: DEFAULT_DEVICE_TYPE,
+      vendor: '',
+      username: '',
+      password: '',
       critical: false,
       monitor: true,
       pingInterval: null,
@@ -72,6 +83,9 @@ export function DeviceFormDialog({ open, onOpenChange, device }: DeviceFormDialo
         hostname: device.hostname,
         ipAddress: device.ipAddress,
         deviceType: device.deviceType,
+        vendor: device.credentials?.sshVendor ?? '',
+        username: device.credentials?.sshUsername ?? '',
+        password: '',
         critical: device.critical,
         monitor: device.monitor,
         pingInterval: device.pingInterval ?? null,
@@ -83,6 +97,9 @@ export function DeviceFormDialog({ open, onOpenChange, device }: DeviceFormDialo
         hostname: '',
         ipAddress: '',
         deviceType: DEFAULT_DEVICE_TYPE,
+        vendor: '',
+        username: '',
+        password: '',
         critical: false,
         monitor: true,
         pingInterval: null,
@@ -90,9 +107,23 @@ export function DeviceFormDialog({ open, onOpenChange, device }: DeviceFormDialo
         pingRetries: null,
       })
     }
+    setShowPassword(false)
+    form.clearErrors()
   }, [device, open, form])
 
   const onSubmit = form.handleSubmit(async (values) => {
+    const nextPassword = values.password.trim()
+    if (!device && !nextPassword) {
+      form.setError('password', { type: 'manual', message: 'SSH password is required' })
+      return
+    }
+
+    const credentialsPayload = {
+      sshUsername: values.username.trim(),
+      sshVendor: values.vendor.trim(),
+      ...(nextPassword ? { sshPassword: nextPassword } : {}),
+    }
+
     const payload: DevicePayload = {
       hostname: values.hostname,
       ipAddress: values.ipAddress,
@@ -102,6 +133,7 @@ export function DeviceFormDialog({ open, onOpenChange, device }: DeviceFormDialo
       pingInterval: values.pingInterval ?? null,
       pingTimeoutMs: values.pingTimeoutMs ?? null,
       pingRetries: values.pingRetries ?? null,
+      credentials: credentialsPayload,
     }
 
     if (device) {
@@ -158,6 +190,64 @@ export function DeviceFormDialog({ open, onOpenChange, device }: DeviceFormDialo
                 ))}
               </SelectContent>
             </Select>
+            {form.formState.errors.deviceType ? (
+              <p className="text-xs text-danger">{form.formState.errors.deviceType.message}</p>
+            ) : null}
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="vendor">Vendor</Label>
+              <Input id="vendor" {...form.register('vendor')} placeholder="e.g. cisco_ios" />
+              {form.formState.errors.vendor ? (
+                <p className="text-xs text-danger">{form.formState.errors.vendor.message}</p>
+              ) : null}
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="ssh-username">SSH Username</Label>
+              <Input
+                id="ssh-username"
+                autoComplete="username"
+                {...form.register('username')}
+                placeholder="Enter SSH username"
+              />
+              {form.formState.errors.username ? (
+                <p className="text-xs text-danger">{form.formState.errors.username.message}</p>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between gap-4">
+              <Label htmlFor="ssh-password">SSH Password</Label>
+              {device?.credentials?.sshPasswordConfigured ? (
+                <p className="text-xs text-muted-foreground">Password Configured</p>
+              ) : null}
+            </div>
+            <div className="relative">
+              <Input
+                id="ssh-password"
+                type={showPassword ? 'text' : 'password'}
+                autoComplete={device ? 'new-password' : 'current-password'}
+                {...form.register('password')}
+                placeholder={device ? 'Leave blank to keep current password' : 'Enter SSH password'}
+                className="pr-10"
+              />
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="absolute right-0 top-1/2 -translate-y-1/2"
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+                onClick={() => setShowPassword((s) => !s)}
+              >
+                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </Button>
+            </div>
+            {form.formState.errors.password ? (
+              <p className="text-xs text-danger">{form.formState.errors.password.message}</p>
+            ) : null}
           </div>
 
           <div className="grid gap-3 sm:grid-cols-3">
