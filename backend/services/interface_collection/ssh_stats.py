@@ -78,10 +78,11 @@ class SSHStatsCollector:
         if vendor.startswith("juniper"):
             rows = parse_juniper_statistics(outputs.get("counters", ""))
         else:
+            status_map = parse_cisco_status_map(outputs.get("status", ""))
             rows = merge_cisco_counter_tables(
                 parse_cisco_counters(outputs.get("counters", "")),
                 parse_cisco_counter_errors(outputs.get("errors", "")),
-                parse_cisco_speed_map(outputs.get("status", "")),
+                status_map,
             )
 
         logger.info(
@@ -267,17 +268,16 @@ def parse_cisco_counter_errors(output: str) -> dict[str, dict[str, int]]:
     return result
 
 
-def parse_cisco_speed_map(output: str) -> dict[str, int]:
+def parse_cisco_status_map(output: str) -> dict[str, dict[str, Any]]:
     """
-    Extract port → speed_bps from ``show interfaces status``.
+    Parse ``show interfaces status`` into port → operational fields.
 
-    Parses the Speed column explicitly — never treats the VLAN id as bandwidth.
-    When Speed is ``auto`` / ``a-auto`` / ``-``, the port is omitted so callers
-    can fall back to inventory / SNMP negotiated speed.
+    Returns map of port → {admin_status, oper_status, speed_bps, status}.
+    Speed is omitted when auto / unknown so callers can fall back to inventory.
     """
-    speeds: dict[str, int] = {}
+    result: dict[str, dict[str, Any]] = {}
     if not output:
-        return speeds
+        return result
 
     # Cisco IOS/XE tabular status (Name may contain spaces / be empty).
     status_re = re.compile(
@@ -300,23 +300,83 @@ def parse_cisco_speed_map(output: str) -> dict[str, int]:
         match = status_re.match(stripped)
         if match:
             port = match.group("port")
-            speed_token = match.group("speed")
-            bps = _speed_token_to_bps(speed_token)
+            status = match.group("status").lower()
+            admin_status, oper_status = _cisco_link_status_to_admin_oper(status)
+            entry: dict[str, Any] = {
+                "status": status,
+                "admin_status": admin_status,
+                "oper_status": oper_status,
+            }
+            bps = _speed_token_to_bps(match.group("speed"))
             if bps:
-                speeds[port] = bps
+                entry["speed_bps"] = bps
+            result[port] = entry
             continue
 
-        # Fallback for odd layouts: take the token immediately before Type
-        # (token containing '/' or 'Base'), never bare VLAN integers alone.
+        # Fallback for odd layouts: infer status + speed tokens when possible.
         parts = stripped.split()
         if len(parts) < 5:
             continue
         port = parts[0]
+        status_token = None
+        for token in parts[1:]:
+            tl = token.lower()
+            if tl in (
+                "connected", "notconnect", "disabled", "err-disabled",
+                "errdisabled", "monitoring", "inactive", "up", "down",
+            ):
+                status_token = tl
+                break
+        if not status_token:
+            continue
+        admin_status, oper_status = _cisco_link_status_to_admin_oper(status_token)
+        entry = {
+            "status": status_token,
+            "admin_status": admin_status,
+            "oper_status": oper_status,
+        }
         speed_token = _guess_speed_token(parts)
         bps = _speed_token_to_bps(speed_token) if speed_token else None
         if bps:
-            speeds[port] = bps
+            entry["speed_bps"] = bps
+        result[port] = entry
+    return result
+
+
+def parse_cisco_speed_map(output: str) -> dict[str, int]:
+    """
+    Extract port → speed_bps from ``show interfaces status``.
+
+    Parses the Speed column explicitly — never treats the VLAN id as bandwidth.
+    When Speed is ``auto`` / ``a-auto`` / ``-``, the port is omitted so callers
+    can fall back to inventory / SNMP negotiated speed.
+    """
+    speeds: dict[str, int] = {}
+    for port, entry in parse_cisco_status_map(output).items():
+        bps = entry.get("speed_bps")
+        if bps:
+            speeds[port] = int(bps)
     return speeds
+
+
+def _cisco_link_status_to_admin_oper(status: str) -> tuple[str, str]:
+    """
+    Map Cisco ``show interfaces status`` Status column to inventory fields.
+
+    Mirrors discovery normalizer status-only mapping so stats refresh stays
+    consistent with SSH inventory semantics.
+    """
+    text = (status or "").strip().lower()
+    if text == "disabled":
+        return "down", "down"
+    if text in ("connected", "up"):
+        return "up", "up"
+    if text in (
+        "notconnect", "err-disabled", "errdisabled", "monitoring",
+        "inactive", "down",
+    ):
+        return "up", "down"
+    return "unknown", "unknown"
 
 
 def _guess_speed_token(parts: list[str]) -> str | None:
@@ -343,14 +403,34 @@ def _guess_speed_token(parts: list[str]) -> str | None:
 def merge_cisco_counter_tables(
     counters: dict[str, dict[str, int]],
     errors: dict[str, dict[str, int]],
-    speeds: dict[str, int],
+    status_or_speeds: dict[str, Any] | None = None,
 ) -> list[dict]:
+    """
+    Merge counter / error / status tables into raw stats rows.
+
+    ``status_or_speeds`` accepts either:
+    - parse_cisco_status_map() output (preferred — includes admin/oper), or
+    - parse_cisco_speed_map() output (legacy speed-only dict[str, int]).
+    """
+    status_map = status_or_speeds or {}
     names = set(counters) | set(errors)
     rows: list[dict] = []
     for name in sorted(names):
         c = counters.get(name, {})
         e = errors.get(name, {})
-        rows.append({
+        status_entry = status_map.get(name)
+
+        speed_bps = None
+        admin_status = None
+        oper_status = None
+        if isinstance(status_entry, dict):
+            speed_bps = status_entry.get("speed_bps")
+            admin_status = status_entry.get("admin_status")
+            oper_status = status_entry.get("oper_status")
+        elif isinstance(status_entry, int):
+            speed_bps = status_entry
+
+        row: dict[str, Any] = {
             "name": name,
             "if_index": None,
             "rx_bytes": c.get("rx_bytes", 0),
@@ -368,8 +448,13 @@ def merge_cisco_counter_tables(
             "rx_discards": e.get("rx_discards"),
             "tx_discards": e.get("tx_discards"),
             "discards": e.get("discards", 0),
-            "speed_bps": speeds.get(name),
-        })
+            "speed_bps": speed_bps,
+        }
+        if admin_status:
+            row["admin_status"] = admin_status
+        if oper_status:
+            row["oper_status"] = oper_status
+        rows.append(row)
     return rows
 
 
@@ -393,7 +478,7 @@ def parse_juniper_statistics(output: str) -> list[dict]:
         if name_match:
             flush()
             current = {
-                "name": name_match.group(1),
+                "name": name_match.group(1).rstrip(","),
                 "if_index": None,
                 "rx_bytes": 0,
                 "tx_bytes": 0,
@@ -406,6 +491,12 @@ def parse_juniper_statistics(output: str) -> list[dict]:
                 "discards": 0,
                 "speed_bps": None,
             }
+            # Typical: "Physical interface: ge-0/0/0, Enabled, Physical link is Up"
+            admin_status, oper_status = _parse_juniper_link_flags(stripped)
+            if admin_status:
+                current["admin_status"] = admin_status
+            if oper_status:
+                current["oper_status"] = oper_status
             continue
         if not current:
             continue
@@ -442,6 +533,25 @@ def parse_juniper_statistics(output: str) -> list[dict]:
 
     flush()
     return rows
+
+
+def _parse_juniper_link_flags(line: str) -> tuple[str | None, str | None]:
+    """Extract admin/oper from a Juniper Physical interface header line."""
+    admin_status = None
+    oper_status = None
+    lower = line.lower()
+    if re.search(r"\bdisabled\b", lower):
+        admin_status = "down"
+    elif re.search(r"\benabled\b", lower):
+        admin_status = "up"
+    link = re.search(r"physical link is\s+(\w+)", lower)
+    if link:
+        token = link.group(1)
+        if token == "up":
+            oper_status = "up"
+        elif token in ("down", "absent"):
+            oper_status = "down"
+    return admin_status, oper_status
 
 
 def _speed_token_to_bps(token: str) -> int | None:

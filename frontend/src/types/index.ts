@@ -61,6 +61,11 @@ export interface Device {
   createdAt: string
   updatedAt: string
   networkInfo?: NetworkInfo | null
+  /**
+   * SSH/SNMP credentials metadata.
+   * Secrets are never returned (passwords are represented via configured flags).
+   */
+  credentials?: DeviceCredentials | null
 }
 
 export interface DevicePayload {
@@ -72,6 +77,34 @@ export interface DevicePayload {
   pingInterval?: number | null
   pingTimeoutMs?: number | null
   pingRetries?: number | null
+  /**
+   * Per-device credentials update/creation payload.
+   * Backend expects this nested under `credentials` and normalizes partial updates.
+   */
+  credentials?: DeviceCredentialsPayload
+}
+
+export interface DeviceCredentials {
+  sshUsername: string
+  sshPort: number
+  sshVendor: string
+  sshPasswordConfigured: boolean
+  sshSecretConfigured: boolean
+  snmpCommunityConfigured: boolean
+  snmpPort: number
+  snmpVersion: string
+}
+
+export interface DeviceCredentialsPayload {
+  sshUsername?: string
+  sshPassword?: string
+  sshVendor?: string
+  sshSecret?: string
+  sshPort?: number
+  snmpCommunity?: string
+  snmpVersion?: string
+  snmpPort?: number
+  snmpTimeout?: number
 }
 
 export interface PingHistory {

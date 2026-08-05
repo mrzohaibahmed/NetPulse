@@ -167,6 +167,16 @@ export function DeviceDrawer({ deviceId, open, onOpenChange }: DeviceDrawerProps
                       <Meta label="Hostname" value={device.hostname} />
                       <Meta label="IP address" value={device.ipAddress} mono />
                       <Meta label="Device type" value={device.deviceType} />
+                      <Meta label="Vendor" value={device.credentials?.sshVendor || '—'} />
+                      <Meta
+                        label="SSH Username"
+                        value={device.credentials?.sshUsername || '—'}
+                      />
+                      <Meta
+                        label="SSH Password"
+                        value={device.credentials?.sshPasswordConfigured ? '••••••••' : 'Not Configured'}
+                      />
+                      <Meta label="Monitor" value={device.monitor ? 'Enabled' : 'Disabled'} />
                       <Meta label="Last seen" value={formatRelative(device.lastSeen)} />
                       <Meta label="Response time" value={formatMs(device.responseTime)} mono />
                       <Meta label="Consecutive failures" value={String(device.consecutiveFailures ?? 0)} />
