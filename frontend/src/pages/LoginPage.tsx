@@ -3,9 +3,9 @@ import { Navigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { Activity, Eye, EyeOff, Loader2, Lock, Shield, User, Wifi } from 'lucide-react'
 import { useAuth } from '@/auth/AuthContext'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
+import { Button } from '@/shared/ui/button'
+import { Input } from '@/shared/ui/input'
+import { Label } from '@/shared/ui/label'
 
 const FADE_UP = { hidden: { opacity: 0, y: 12 }, show: { opacity: 1, y: 0 } }
 

@@ -14,9 +14,9 @@ import { useAuth } from '@/auth/AuthContext'
 import { useAlertsQuery, useHealthQuery } from '@/hooks/queries'
 import { useTheme } from '@/lib/theme'
 import { formatRelative } from '@/utils/format'
-import { Avatar, AvatarFallback } from '@/components/ui/avatar'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
+import { Avatar, AvatarFallback } from '@/shared/ui/avatar'
+import { Badge } from '@/shared/ui/badge'
+import { Button } from '@/shared/ui/button'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -24,9 +24,9 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
-import { Input } from '@/components/ui/input'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+} from '@/shared/ui/dropdown-menu'
+import { Input } from '@/shared/ui/input'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip'
 
 interface TopNavbarProps {
   lastUpdated?: number | null

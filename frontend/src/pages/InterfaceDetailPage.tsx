@@ -31,14 +31,14 @@ import {
   formatAllowedVlans,
   neighborRemotePort,
 } from '@/components/interfaces/InterfaceStatusBadge'
-import { EmptyState } from '@/components/shared/EmptyState'
-import { ErrorState } from '@/components/shared/ErrorState'
-import { KpiCard } from '@/components/shared/KpiCard'
-import { LoadingState, TableSkeleton } from '@/components/shared/LoadingState'
-import { PageHeader } from '@/components/shared/PageHeader'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { EmptyState } from '@/shared/components/EmptyState'
+import { ErrorState } from '@/shared/components/ErrorState'
+import { KpiCard } from '@/shared/components/KpiCard'
+import { LoadingState, TableSkeleton } from '@/shared/components/LoadingState'
+import { PageHeader } from '@/shared/components/PageHeader'
+import { Badge } from '@/shared/ui/badge'
+import { Button } from '@/shared/ui/button'
+import { Card, CardContent, CardHeader, CardTitle } from '@/shared/ui/card'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -48,21 +48,21 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
+} from '@/shared/ui/alert-dialog'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+} from '@/shared/ui/select'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table'
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
-} from '@/components/ui/tooltip'
+} from '@/shared/ui/tooltip'
 import {
   useDeviceInterfaceStatsQuery,
   useDeviceInterfacesQuery,

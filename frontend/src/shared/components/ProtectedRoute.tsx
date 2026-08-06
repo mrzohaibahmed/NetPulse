@@ -1,6 +1,6 @@
 import { Navigate, Outlet, useLocation } from 'react-router-dom'
 import { useAuth } from '@/auth/AuthContext'
-import { LoadingState } from '@/components/shared/LoadingState'
+import { LoadingState } from '@/shared/components/LoadingState'
 
 export function ProtectedRoute() {
   const { user, loading } = useAuth()

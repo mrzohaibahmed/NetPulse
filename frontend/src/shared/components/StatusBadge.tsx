@@ -1,6 +1,6 @@
 import { statusTone } from '@/lib/status'
 import { cn } from '@/lib/utils'
-import { Badge } from '@/components/ui/badge'
+import { Badge } from '@/shared/ui/badge'
 
 interface StatusBadgeProps {
   status: string | null | undefined

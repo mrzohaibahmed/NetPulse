@@ -23,24 +23,24 @@ import {
 import { useDeviceHistoryQuery, useDeviceMutations, useNmapScanMutation } from '@/hooks/queries'
 import { useAuth } from '@/auth/AuthContext'
 import { formatDateTime, formatMs, formatPercent, formatRelative } from '@/utils/format'
-import { StatusBadge } from '@/components/shared/StatusBadge'
-import { EmptyState } from '@/components/shared/EmptyState'
-import { ErrorState } from '@/components/shared/ErrorState'
-import { LoadingState } from '@/components/shared/LoadingState'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { ScrollArea } from '@/components/ui/scroll-area'
+import { StatusBadge } from '@/shared/components/StatusBadge'
+import { EmptyState } from '@/shared/components/EmptyState'
+import { ErrorState } from '@/shared/components/ErrorState'
+import { LoadingState } from '@/shared/components/LoadingState'
+import { Badge } from '@/shared/ui/badge'
+import { Button } from '@/shared/ui/button'
+import { Input } from '@/shared/ui/input'
+import { Label } from '@/shared/ui/label'
+import { ScrollArea } from '@/shared/ui/scroll-area'
 import {
   Sheet,
   SheetContent,
   SheetDescription,
   SheetHeader,
   SheetTitle,
-} from '@/components/ui/sheet'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { Separator } from '@/components/ui/separator'
+} from '@/shared/ui/sheet'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table'
+import { Separator } from '@/shared/ui/separator'
 import type { NetworkInfo, NetworkPort } from '@/types'
 
 interface DeviceDrawerProps {

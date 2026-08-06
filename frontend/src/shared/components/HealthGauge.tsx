@@ -2,7 +2,7 @@ import { motion } from 'framer-motion'
 import { computeNetworkHealth, healthColor, type HealthLabel } from '@/lib/health'
 import type { DashboardSummary } from '@/types'
 import { cn } from '@/lib/utils'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle } from '@/shared/ui/card'
 
 interface HealthGaugeProps {
   summary: DashboardSummary | null | undefined

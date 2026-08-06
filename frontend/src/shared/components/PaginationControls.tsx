@@ -1,11 +1,11 @@
-import { Button } from '@/components/ui/button'
+import { Button } from '@/shared/ui/button'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select'
+} from '@/shared/ui/select'
 
 interface PaginationControlsProps {
   page: number

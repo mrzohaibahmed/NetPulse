@@ -3,23 +3,23 @@ import { Download, FileSpreadsheet, Calculator } from 'lucide-react'
 import { useExportReports, useUptimeReportQuery } from '@/hooks/queries'
 import { DEVICE_TYPES } from '@/constants/devices'
 import { formatPercent } from '@/utils/format'
-import { EmptyState } from '@/components/shared/EmptyState'
-import { ErrorState } from '@/components/shared/ErrorState'
-import { LoadingState } from '@/components/shared/LoadingState'
-import { PageHeader } from '@/components/shared/PageHeader'
-import { StatusBadge } from '@/components/shared/StatusBadge'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
+import { EmptyState } from '@/shared/components/EmptyState'
+import { ErrorState } from '@/shared/components/ErrorState'
+import { LoadingState } from '@/shared/components/LoadingState'
+import { PageHeader } from '@/shared/components/PageHeader'
+import { StatusBadge } from '@/shared/components/StatusBadge'
+import { Button } from '@/shared/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/shared/ui/card'
+import { Input } from '@/shared/ui/input'
+import { Label } from '@/shared/ui/label'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+} from '@/shared/ui/select'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table'
 
 const REPORT_DEVICE_TYPES = ['all', ...DEVICE_TYPES] as const
 const STATUSES = ['all', 'Online', 'Not Reachable', 'Offline (Critical)', 'Unknown']

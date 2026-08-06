@@ -21,8 +21,8 @@ import {
 import { useAuth } from '@/auth/AuthContext'
 import { useHealthQuery } from '@/hooks/queries'
 import { cn } from '@/lib/utils'
-import { Button } from '@/components/ui/button'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { Button } from '@/shared/ui/button'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip'
 
 interface SidebarProps {
   pinned: boolean
