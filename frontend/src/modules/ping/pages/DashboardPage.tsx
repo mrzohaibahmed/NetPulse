@@ -1,299 +1,194 @@
-import { useMemo, useRef, useState } from 'react'
+import { useMemo } from 'react'
 import { Link } from 'react-router-dom'
+import { motion } from 'framer-motion'
 import {
   Activity,
+  ArrowRight,
   Bell,
-  Check,
+  Database,
+  FileBarChart,
   Gauge,
+  Network,
+  Radar,
+  RefreshCw,
   Server,
+  Settings,
+  Shield,
+  ShieldAlert,
   Timer,
   Wifi,
   WifiOff,
-  X,
-  AlertTriangle,
-  ChevronRight,
 } from 'lucide-react'
 import { useAuth } from '@/shared/auth/AuthContext'
-import {
-  Area,
-  AreaChart,
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Cell,
-  Pie,
-  PieChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts'
-import { useAlertMutations, useDashboardQuery } from '@/hooks/queries'
-import { computeNetworkHealth } from '@/lib/health'
-import { STATUS_COLORS, TYPE_COLORS } from '@/lib/status'
+import { useDashboardQuery, useHealthQuery } from '@/hooks/queries'
+import { computeNetworkHealth, healthColor } from '@/lib/health'
 import { formatDateTime, formatMs, formatPercent, formatRelative } from '@/utils/format'
-import { useClientPagination } from '@/hooks/useClientPagination'
-import type { AlertItem, DeviceStatusRow } from '@/types'
-import { KpiCard } from '@/shared/components/KpiCard'
+import type { AlertItem, PingHistory } from '@/types'
 import { HealthGauge } from '@/shared/components/HealthGauge'
 import { StatusBadge } from '@/shared/components/StatusBadge'
 import { EmptyState } from '@/shared/components/EmptyState'
 import { ErrorState } from '@/shared/components/ErrorState'
 import { DashboardSkeleton } from '@/shared/components/LoadingState'
 import { PageHeader } from '@/shared/components/PageHeader'
+import { Badge } from '@/shared/ui/badge'
 import { Button } from '@/shared/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/shared/ui/card'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/shared/ui/dialog'
-import { PaginationControls } from '@/shared/components/PaginationControls'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/shared/ui/card'
+import { cn } from '@/lib/utils'
 
-const TYPE_ORDER = [
-  'router',
-  'switch',
-  'firewall',
-  'server',
-  'access-point',
-  'workstation',
-  'printer',
-  'other',
-  'unknown',
-]
-
-const TYPE_LABELS: Record<string, string> = {
-  router: 'Routers',
-  switch: 'Switches',
-  firewall: 'Firewalls',
-  server: 'Servers',
-  'access-point': 'Access points',
-  workstation: 'Workstations',
-  printer: 'Printers',
-  other: 'Other',
-  unknown: 'Unknown',
+function isStormAlert(alert: AlertItem): boolean {
+  const category = (alert.category || '').toLowerCase()
+  const alertType = (alert.alertType || '').toLowerCase()
+  const message = (alert.message || '').toLowerCase()
+  return (
+    Boolean(alert.incidentId) ||
+    category.includes('storm') ||
+    alertType.includes('storm') ||
+    alertType.includes('mitigation') ||
+    alertType.includes('recovery') ||
+    message.includes('storm') ||
+    message.includes('mitigation') ||
+    message.includes('recovery')
+  )
 }
 
-function normalizeDeviceType(type: string | null | undefined): string {
-  const raw = (type || 'Unknown').trim().toLowerCase()
-  if (!raw) return 'unknown'
-  return raw.replace(/[\s_]+/g, '-')
+function alertSeverityRank(alert: AlertItem): number {
+  const severity = (alert.severity || '').toUpperCase()
+  if (severity === 'CRITICAL' || severity === 'EMERGENCY') return 4
+  if (severity === 'HIGH') return 3
+  if (severity === 'MEDIUM' || severity === 'WARNING') return 2
+  if (alert.status === 'Offline (Critical)' || alert.status === 'Offline') return 3
+  if (alert.status === 'Not Reachable') return 2
+  return 1
 }
 
-function formatTypeLabel(key: string): string {
-  if (TYPE_LABELS[key]) return TYPE_LABELS[key]
-  return key
-    .split('-')
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ')
+function isHighPriorityAlert(alert: AlertItem): boolean {
+  return alertSeverityRank(alert) >= 3
 }
 
-function groupDevicesByType(devices: DeviceStatusRow[]) {
-  const groups = new Map<string, DeviceStatusRow[]>()
-  for (const device of devices) {
-    const key = normalizeDeviceType(device.deviceType)
-    const list = groups.get(key)
-    if (list) list.push(device)
-    else groups.set(key, [device])
-  }
-  return [...groups.entries()]
-    .sort(([a], [b]) => {
-      const ai = TYPE_ORDER.indexOf(a)
-      const bi = TYPE_ORDER.indexOf(b)
-      const aRank = ai === -1 ? TYPE_ORDER.length : ai
-      const bRank = bi === -1 ? TYPE_ORDER.length : bi
-      if (aRank !== bRank) return aRank - bRank
-      return formatTypeLabel(a).localeCompare(formatTypeLabel(b))
+type ActivityItem = {
+  id: string
+  kind: 'status' | 'storm' | 'alert' | 'scan'
+  title: string
+  detail: string
+  timestamp: string
+  href?: string
+}
+
+function buildRecentActivity(
+  history: PingHistory[],
+  alerts: AlertItem[],
+): ActivityItem[] {
+  const items: ActivityItem[] = []
+
+  for (const row of history) {
+    items.push({
+      id: `hist-${row._id}`,
+      kind: row.status === 'Online' ? 'scan' : 'status',
+      title: `${row.hostname} · ${row.status}`,
+      detail: `${row.ipAddress} · ${row.scanType}${row.responseTime != null ? ` · ${formatMs(row.responseTime)}` : ''}`,
+      timestamp: row.timestamp,
+      href: row.deviceId ? `/devices/${row.deviceId}` : '/history',
     })
-    .map(([key, items]) => ({
-      key,
-      label: formatTypeLabel(key),
-      devices: items,
-    }))
+  }
+
+  for (const alert of alerts) {
+    const storm = isStormAlert(alert)
+    items.push({
+      id: `alert-${alert._id}`,
+      kind: storm ? 'storm' : 'alert',
+      title: alert.title || alert.message || `${alert.hostname} alert`,
+      detail: [
+        alert.hostname,
+        alert.interface,
+        alert.incidentId ? `Incident ${alert.incidentId}` : null,
+        alert.action,
+      ]
+        .filter(Boolean)
+        .join(' · '),
+      timestamp: alert.createdAt,
+      href: storm && alert.incidentId
+        ? `/storm?incident=${encodeURIComponent(alert.incidentId)}`
+        : storm
+          ? '/storm'
+          : '/alerts',
+    })
+  }
+
+  return items
+    .filter((item) => Boolean(item.timestamp))
+    .sort((a, b) => String(b.timestamp).localeCompare(String(a.timestamp)))
+    .slice(0, 8)
 }
 
-function useTrend(current: number | null | undefined) {
-  const prev = useRef<number | null>(null)
-  const trend =
-    current == null || prev.current == null ? null : Math.round(current - prev.current)
-  if (current != null) prev.current = current
-  return trend
-}
-
-function ChartTooltip({ active, payload, label }: {
-  active?: boolean
-  payload?: Array<{ value: number; name: string; color?: string }>
-  label?: string
-}) {
-  if (!active || !payload?.length) return null
-  return (
-    <div className="rounded-lg border border-border bg-popover px-3 py-2 text-xs shadow-xl">
-      {label ? <p className="mb-1 font-medium text-foreground">{label}</p> : null}
-      {payload.map((entry) => (
-        <p key={entry.name} className="text-muted-foreground">
-          <span style={{ color: entry.color }}>{entry.name}</span>: {entry.value}
-        </p>
-      ))}
-    </div>
-  )
-}
-
-function DeviceTypePanel({ label, devices }: { label: string; devices: DeviceStatusRow[] }) {
-  const [isOpen, setIsOpen] = useState(false)
-  const pagination = useClientPagination(devices, 10)
-  const online = devices.filter((d) => d.status === 'Online').length
-  const offline = devices.length - online
-
-  // Show up to 3 device cards
-  const displayDevices = devices.slice(0, 3)
-  const hasMore = devices.length > 3
-
-  return (
-    <>
-      <Card 
-        className="glass overflow-hidden cursor-pointer transition-all hover:shadow-lg hover:border-primary/50"
-        onClick={() => setIsOpen(true)}
-      >
-        <CardHeader className="pb-3">
-          <div className="flex items-center justify-between">
-            <div className="flex-1">
-              <CardTitle className="flex items-center gap-2">
-                {label}
-                <span className="rounded-full bg-primary/15 px-2 py-0.5 text-xs font-semibold text-primary">
-                  {devices.length}
-                </span>
-              </CardTitle>
-              <p className="mt-2 text-xs text-muted-foreground">
-                <span className="text-green-500 font-semibold">{online}</span> online · <span className="text-orange-500 font-semibold">{offline}</span> offline
-              </p>
-            </div>
-            <ChevronRight className="h-5 w-5 text-muted-foreground shrink-0" />
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-2">
-          {displayDevices.map((device) => (
-            <div
-              key={device._id}
-              className="flex items-center justify-between rounded-lg border border-border/50 bg-secondary/30 px-3 py-2 hover:bg-secondary/50 transition-colors"
-              onClick={(e) => {
-                e.stopPropagation()
-              }}
-            >
-              <div className="flex-1 min-w-0">
-                <Link
-                  to={`/devices/${device._id}`}
-                  className="font-medium text-primary hover:underline block truncate"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  {device.hostname}
-                </Link>
-                <p className="mono text-xs text-muted-foreground truncate">{device.ipAddress}</p>
-              </div>
-              <div className="flex items-center gap-2 shrink-0 ml-2">
-                <StatusBadge status={device.status} />
-                <span className="mono text-xs text-muted-foreground">{formatMs(device.responseTime)}</span>
-              </div>
-            </div>
-          ))}
-          {hasMore && (
-            <div className="pt-2 text-center">
-              <p className="text-xs text-muted-foreground font-medium">
-                +{devices.length - 3} more device{devices.length - 3 !== 1 ? 's' : ''}
-              </p>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      <Dialog open={isOpen} onOpenChange={setIsOpen}>
-        <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>{label} Devices</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="flex items-center justify-between text-sm">
-              <div>
-                <span className="text-green-500 font-semibold">{online}</span> online · <span className="text-orange-500 font-semibold">{offline}</span> offline
-              </div>
-              <span className="text-muted-foreground">Total: {devices.length}</span>
-            </div>
-            
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Hostname</TableHead>
-                  <TableHead>IP</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>RTT</TableHead>
-                  <TableHead>Last seen</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {pagination.pageItems.map((device) => (
-                  <TableRow key={device._id} className="cursor-pointer hover:bg-secondary/50">
-                    <TableCell>
-                      <Link
-                        to={`/devices/${device._id}`}
-                        className="font-semibold text-primary hover:underline"
-                      >
-                        {device.hostname}
-                      </Link>
-                    </TableCell>
-                    <TableCell className="mono text-muted-foreground">{device.ipAddress}</TableCell>
-                    <TableCell>
-                      <StatusBadge status={device.status} />
-                    </TableCell>
-                    <TableCell className="mono">{formatMs(device.responseTime)}</TableCell>
-                    <TableCell className="text-muted-foreground">{formatRelative(device.lastSeen)}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-            <PaginationControls
-              page={pagination.page}
-              totalPages={pagination.totalPages}
-              total={pagination.total}
-              limit={pagination.limit}
-              onPageChange={pagination.setPage}
-              onLimitChange={pagination.setLimit}
-              limitOptions={[10, 25, 50]}
-            />
-          </div>
-        </DialogContent>
-      </Dialog>
-    </>
-  )
+const fadeUp = {
+  hidden: { opacity: 0, y: 12 },
+  show: { opacity: 1, y: 0 },
 }
 
 export function DashboardPage() {
-  const { isOperator } = useAuth()
+  const { isAdmin } = useAuth()
   const dash = useDashboardQuery()
-  const { acknowledge, dismiss } = useAlertMutations()
+  const healthQuery = useHealthQuery()
   const health = computeNetworkHealth(dash.summary)
 
-  const onlineTrend = useTrend(dash.summary?.onlineDevices)
-  const criticalTrend = useTrend(dash.summary?.criticalOfflineDevices)
-  const totalTrend = useTrend(dash.summary?.totalDevices)
-  const rttTrend = useTrend(dash.statistics?.averageResponseTime ?? null)
+  const offlineCount =
+    (dash.summary?.notReachableDevices ?? 0) + (dash.summary?.criticalOfflineDevices ?? 0)
 
-  const deviceGroups = useMemo(() => groupDevicesByType(dash.devices), [dash.devices])
-  const chartTotal = dash.statusChart.reduce((sum, entry) => sum + entry.value, 0)
+  const stormMetrics = useMemo(() => {
+    const stormAlerts = dash.alerts.filter(isStormAlert)
+    const incidentIds = new Set(
+      stormAlerts.map((a) => a.incidentId).filter((id): id is string => Boolean(id)),
+    )
+    const riskScores = stormAlerts
+      .map((a) => a.riskScore)
+      .filter((n): n is number => typeof n === 'number' && !Number.isNaN(n))
+    const peakRisk = riskScores.length ? Math.max(...riskScores) : null
+    const managedSwitches = dash.devices.filter(
+      (d) => (d.deviceType || '').trim().toLowerCase() === 'switch',
+    ).length
+    const monitoredSwitches = dash.devices.filter(
+      (d) =>
+        (d.deviceType || '').trim().toLowerCase() === 'switch' && d.monitor,
+    ).length
 
-  const alertTrendData = useMemo(() => {
-    const buckets = new Map<string, number>()
-    for (const alert of dash.alerts) {
-      const day = (alert.createdAt || '').slice(0, 10) || 'unknown'
-      buckets.set(day, (buckets.get(day) ?? 0) + 1)
+    return {
+      activeIncidents: incidentIds.size || stormAlerts.filter((a) => Boolean(a.incidentId)).length,
+      stormAlerts: stormAlerts.length,
+      peakRisk,
+      managedSwitches,
+      monitoredSwitches,
     }
-    if (buckets.size === 0 && dash.scanActivity.length) {
-      return dash.scanActivity.map((p) => ({ date: p.date, value: p.scans }))
-    }
-    return [...buckets.entries()]
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([date, value]) => ({ date, value }))
-  }, [dash.alerts, dash.scanActivity])
+  }, [dash.alerts, dash.devices])
+
+  const recentActivity = useMemo(
+    () => buildRecentActivity(dash.history, dash.alerts),
+    [dash.history, dash.alerts],
+  )
+
+  const criticalAlerts = useMemo(() => {
+    return [...dash.alerts]
+      .filter(isHighPriorityAlert)
+      .sort((a, b) => alertSeverityRank(b) - alertSeverityRank(a))
+      .slice(0, 5)
+  }, [dash.alerts])
+
+  const apiOk = healthQuery.isError ? false : healthQuery.data ? true : null
+  const dbOk = healthQuery.data
+    ? healthQuery.data.database === 'Connected'
+    : healthQuery.isError
+      ? false
+      : null
+  const lastRefresh = dash.dataUpdatedAt
+    ? formatRelative(new Date(dash.dataUpdatedAt).toISOString())
+    : null
 
   if (dash.isLoading && !dash.summary) {
     return (
-      <div className="space-y-6">
-        <PageHeader title="Dashboard" description="Live overview of monitored network devices" />
+      <div className="space-y-8">
+        <PageHeader
+          title="Enterprise Dashboard"
+          description="Choose a workspace or monitor the overall health of your network."
+        />
         <DashboardSkeleton />
       </div>
     )
@@ -301,370 +196,510 @@ export function DashboardPage() {
 
   if (dash.error && !dash.summary) {
     return (
-      <div className="space-y-6">
-        <PageHeader title="Dashboard" />
+      <div className="space-y-8">
+        <PageHeader title="Enterprise Dashboard" />
         <ErrorState message={dash.error} onRetry={() => void dash.refetchAll()} />
       </div>
     )
   }
 
   return (
-    <div className="space-y-6">
-      <PageHeader
-        title="Dashboard"
-        description="Live overview of monitored network devices"
-        actions={
-          <Button type="button" variant="secondary" onClick={() => void dash.refetchAll()}>
-            Refresh
-          </Button>
-        }
-      />
+    <motion.div
+      className="space-y-10"
+      initial="hidden"
+      animate="show"
+      variants={{ show: { transition: { staggerChildren: 0.06 } } }}
+    >
+      <motion.div variants={fadeUp}>
+        <PageHeader
+          title="Enterprise Dashboard"
+          description="Choose a workspace or monitor the overall health of your network."
+          actions={
+            <Button type="button" variant="secondary" onClick={() => void dash.refetchAll()}>
+              <RefreshCw className="mr-2 h-4 w-4" />
+              Refresh
+            </Button>
+          }
+        />
+      </motion.div>
 
       {dash.error ? (
         <ErrorState message={dash.error} onRetry={() => void dash.refetchAll()} className="py-4" />
       ) : null}
 
-      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-7">
-        <KpiCard
-          label="Online Devices"
-          value={dash.summary?.onlineDevices ?? 0}
-          hint={formatPercent(dash.summary?.onlinePercentage)}
-          icon={Wifi}
-          tone="success"
-          trend={onlineTrend}
+      {/* Row 1 — Workspace launchers */}
+      <motion.section
+        variants={fadeUp}
+        className="grid gap-6 lg:grid-cols-2"
+        aria-label="Workspaces"
+      >
+        <WorkspaceCard
+          title="Ping Monitoring"
+          description="Device reachability, discovery, history, and uptime reporting."
+          icon={Activity}
+          accent="from-sky-500/20 via-primary/10 to-transparent"
+          iconClass="bg-sky-500/15 text-sky-400"
+          metrics={[
+            {
+              label: 'Total Devices',
+              value: String(dash.summary?.totalDevices ?? 0),
+              icon: Server,
+            },
+            {
+              label: 'Online',
+              value: String(dash.summary?.onlineDevices ?? 0),
+              icon: Wifi,
+              tone: 'success',
+            },
+            {
+              label: 'Offline',
+              value: String(offlineCount),
+              icon: WifiOff,
+              tone: offlineCount > 0 ? 'warning' : 'default',
+            },
+            {
+              label: 'Avg Response',
+              value: formatMs(dash.statistics?.averageResponseTime),
+              icon: Timer,
+            },
+            {
+              label: 'Availability',
+              value: formatPercent(dash.summary?.onlinePercentage ?? dash.statistics?.onlinePercentage),
+              icon: Gauge,
+              tone: 'accent',
+            },
+          ]}
+          ctaLabel="Open Ping Monitoring"
+          ctaTo="/devices"
         />
-        <KpiCard
-          label="Offline / Unreachable"
-          value={(dash.summary?.notReachableDevices ?? 0) + (dash.summary?.criticalOfflineDevices ?? 0)}
-          hint={formatPercent(dash.summary?.notReachablePercentage)}
-          icon={WifiOff}
-          tone="warning"
+
+        <WorkspaceCard
+          title="Storm Protection"
+          description="Switch interface protection, risk scoring, incidents, and recovery."
+          icon={Shield}
+          accent="from-violet-500/20 via-fuchsia-500/5 to-transparent"
+          iconClass="bg-violet-500/15 text-violet-300"
+          metrics={[
+            {
+              label: 'Active Incidents',
+              value: String(stormMetrics.activeIncidents),
+              icon: ShieldAlert,
+              tone: stormMetrics.activeIncidents > 0 ? 'danger' : 'success',
+            },
+            {
+              label: 'Storm Alerts',
+              value: String(stormMetrics.stormAlerts),
+              icon: Bell,
+              tone: stormMetrics.stormAlerts > 0 ? 'warning' : 'default',
+            },
+            {
+              label: 'Peak Risk Score',
+              value:
+                stormMetrics.peakRisk == null ? '—' : stormMetrics.peakRisk.toFixed(0),
+              icon: Gauge,
+              tone:
+                stormMetrics.peakRisk != null && stormMetrics.peakRisk >= 70
+                  ? 'danger'
+                  : 'default',
+            },
+            {
+              label: 'Managed Switches',
+              value: String(stormMetrics.managedSwitches),
+              icon: Network,
+            },
+            {
+              label: 'Monitored Switches',
+              value: String(stormMetrics.monitoredSwitches),
+              icon: Activity,
+              tone: 'accent',
+            },
+          ]}
+          ctaLabel="Open Storm Protection"
+          ctaTo="/storm"
         />
-        <KpiCard
-          label="Critical Devices"
-          value={dash.summary?.criticalOfflineDevices ?? 0}
-          hint={formatPercent(dash.summary?.criticalOfflinePercentage)}
-          icon={AlertTriangle}
-          tone="danger"
-          trend={criticalTrend}
+      </motion.section>
+
+      {/* Row 2 — Overall Network Health */}
+      <motion.section variants={fadeUp} className="space-y-4" aria-label="Network health">
+        <SectionHeading
+          title="Overall Network Health"
+          description="Platform posture derived from live monitoring data."
         />
-        <KpiCard
-          label="Avg Response"
-          value={formatMs(dash.statistics?.averageResponseTime)}
-          icon={Timer}
-          tone="accent"
-          trend={rttTrend}
-        />
-        <KpiCard
-          label="Total Devices"
-          value={dash.summary?.totalDevices ?? 0}
-          icon={Server}
-          tone="accent"
-          trend={totalTrend}
-        />
-        <KpiCard
-          label="Active Alerts"
-          value={dash.alerts.length}
-          icon={Bell}
-          tone={dash.alerts.length ? 'danger' : 'success'}
-        />
-        <KpiCard
-          label="Health Score"
-          value={`${health.score}%`}
-          hint={health.label}
-          icon={Gauge}
-          tone={
-            health.label === 'Critical'
-              ? 'danger'
-              : health.label === 'Warning'
-                ? 'warning'
-                : health.label === 'Good'
-                  ? 'accent'
-                  : 'success'
-          }
-        />
-      </section>
-
-      <section className="grid gap-4 lg:grid-cols-3">
-        <HealthGauge summary={dash.summary} />
-        <Card className="glass lg:col-span-2">
-          <CardHeader>
-            <CardTitle>Response Time</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {dash.responseTime.length === 0 ? (
-              <EmptyState title="No response time data" />
-            ) : (
-              <div className="h-64">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={dash.responseTime.slice(0, 12)}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
-                    <XAxis dataKey="hostname" tick={{ fill: '#94a3b8', fontSize: 11 }} interval={0} angle={-20} textAnchor="end" height={60} />
-                    <YAxis tick={{ fill: '#94a3b8', fontSize: 11 }} unit=" ms" width={56} />
-                    <Tooltip content={<ChartTooltip />} />
-                    <Bar dataKey="responseTime" name="RTT" fill="#3B82F6" radius={[6, 6, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </section>
-
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        <Card className="glass">
-          <CardHeader>
-            <CardTitle>Status Distribution</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {chartTotal === 0 ? (
-              <EmptyState title="No status data yet" />
-            ) : (
-              <div className="flex flex-col items-center gap-4 sm:flex-row">
-                <div className="h-52 w-full sm:w-1/2">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie data={dash.statusChart} dataKey="value" nameKey="name" innerRadius={52} outerRadius={78} paddingAngle={3}>
-                        {dash.statusChart.map((entry) => (
-                          <Cell key={entry.name} fill={STATUS_COLORS[entry.name] ?? '#64748B'} />
-                        ))}
-                      </Pie>
-                      <Tooltip content={<ChartTooltip />} />
-                    </PieChart>
-                  </ResponsiveContainer>
-                </div>
-                <ul className="w-full space-y-2 text-sm sm:w-1/2">
-                  {dash.statusChart.map((entry) => (
-                    <li key={entry.name} className="flex items-center justify-between gap-2">
-                      <span className="flex items-center gap-2">
-                        <span className="h-2.5 w-2.5 rounded-full" style={{ background: STATUS_COLORS[entry.name] ?? '#64748B' }} />
-                        {entry.name}
-                      </span>
-                      <span className="font-semibold">{entry.value}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card className="glass">
-          <CardHeader>
-            <CardTitle>Device Types</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {dash.typeChart.length === 0 ? (
-              <EmptyState title="No devices yet" />
-            ) : (
-              <div className="flex flex-col items-center gap-4 sm:flex-row">
-                <div className="h-52 w-full sm:w-1/2">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie data={dash.typeChart} dataKey="value" nameKey="name" outerRadius={78} paddingAngle={2}>
-                        {dash.typeChart.map((entry, index) => (
-                          <Cell key={entry.name} fill={TYPE_COLORS[index % TYPE_COLORS.length]} />
-                        ))}
-                      </Pie>
-                      <Tooltip content={<ChartTooltip />} />
-                    </PieChart>
-                  </ResponsiveContainer>
-                </div>
-                <ul className="w-full space-y-2 text-sm sm:w-1/2">
-                  {dash.typeChart.map((entry, index) => (
-                    <li key={entry.name} className="flex items-center justify-between gap-2">
-                      <span className="flex items-center gap-2">
-                        <span className="h-2.5 w-2.5 rounded-full" style={{ background: TYPE_COLORS[index % TYPE_COLORS.length] }} />
-                        {entry.name}
-                      </span>
-                      <span className="font-semibold">{entry.value}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card className="glass md:col-span-2 xl:col-span-1">
-          <CardHeader>
-            <CardTitle>Uptime / Scan Activity</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {dash.scanActivity.length === 0 ? (
-              <EmptyState title="No scan activity yet" />
-            ) : (
-              <div className="h-52">
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={dash.scanActivity}>
-                    <defs>
-                      <linearGradient id="scanFill" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="#3B82F6" stopOpacity={0.35} />
-                        <stop offset="100%" stopColor="#3B82F6" stopOpacity={0} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
-                    <XAxis dataKey="date" tick={{ fill: '#94a3b8', fontSize: 11 }} />
-                    <YAxis tick={{ fill: '#94a3b8', fontSize: 11 }} width={36} />
-                    <Tooltip content={<ChartTooltip />} />
-                    <Area type="monotone" dataKey="scans" name="Scans" stroke="#3B82F6" fill="url(#scanFill)" strokeWidth={2} />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </section>
-
-      <section className="grid gap-4 xl:grid-cols-2">
-        <Card className="glass">
-          <CardHeader className="flex-row items-center justify-between">
-            <CardTitle>Active Alerts</CardTitle>
-            <Button type="button" variant="ghost" size="sm" asChild>
-              <Link to="/alerts">View all</Link>
-            </Button>
-          </CardHeader>
-          <CardContent>
-            {dash.alerts.length === 0 ? (
-              <EmptyState title="No active alerts" description="All clear — no outstanding alerts." icon={Activity} />
-            ) : (
-              <div className="space-y-3">
-                {dash.alerts.map((alert) => (
-                  <AlertRow
-                    key={alert._id}
-                    alert={alert}
-                    canAct={isOperator}
-                    onAck={() => acknowledge.mutate(alert._id)}
-                    onDismiss={() => dismiss.mutate(alert._id)}
-                    busy={acknowledge.isPending || dismiss.isPending}
-                  />
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card className="glass">
-          <CardHeader>
-            <CardTitle>Alerts / Activity Trend</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {alertTrendData.length === 0 ? (
-              <EmptyState title="No trend data" />
-            ) : (
-              <div className="h-56">
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={alertTrendData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
-                    <XAxis dataKey="date" tick={{ fill: '#94a3b8', fontSize: 11 }} />
-                    <YAxis tick={{ fill: '#94a3b8', fontSize: 11 }} width={36} />
-                    <Tooltip content={<ChartTooltip />} />
-                    <Area type="monotone" dataKey="value" name="Count" stroke="#EF4444" fill="#EF444433" strokeWidth={2} />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </section>
-
-      <section className="space-y-3">
-        <div>
-          <h2 className="text-lg font-semibold">Devices</h2>
-          <p className="text-sm text-muted-foreground">Grouped by type — click a card to view all devices</p>
-        </div>
-        {dash.devices.length === 0 ? (
+        <div className="grid gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
+          <HealthGauge summary={dash.summary} />
           <Card className="glass">
-            <EmptyState title="No devices" description="Add devices or run discovery." />
+            <CardHeader>
+              <CardTitle className="text-base">System Status</CardTitle>
+              <CardDescription>Backend and data-plane connectivity</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                <StatusTile
+                  label="Network Health Score"
+                  value={`${health.score}%`}
+                  hint={health.label}
+                  color={healthColor(health.label)}
+                />
+                <StatusTile
+                  label="System Status"
+                  value={
+                    dash.error
+                      ? 'Degraded'
+                      : health.label === 'Critical'
+                        ? 'Critical'
+                        : health.label === 'Warning'
+                          ? 'Attention'
+                          : 'Operational'
+                  }
+                  hint={dash.error ? 'Dashboard data incomplete' : 'Monitoring active'}
+                  ok={!dash.error && health.label !== 'Critical'}
+                />
+                <StatusTile
+                  label="Backend Health"
+                  value={apiOk === null ? 'Checking…' : apiOk ? 'Online' : 'Down'}
+                  hint="API service"
+                  ok={apiOk}
+                />
+                <StatusTile
+                  label="Database"
+                  value={dbOk === null ? 'Checking…' : dbOk ? 'Connected' : 'Disconnected'}
+                  hint="Persistence layer"
+                  ok={dbOk}
+                  icon={Database}
+                />
+              </div>
+              <p className="mt-4 text-xs text-muted-foreground">
+                Last refresh:{' '}
+                <span className="font-medium text-foreground">{lastRefresh ?? '—'}</span>
+              </p>
+            </CardContent>
           </Card>
-        ) : (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
-            {deviceGroups.map((group) => (
-              <DeviceTypePanel key={group.key} label={group.label} devices={group.devices} />
-            ))}
-          </div>
-        )}
-      </section>
+        </div>
+      </motion.section>
 
-      <Card className="glass">
-        <CardHeader>
-          <CardTitle>Recent Scans</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {dash.history.length === 0 ? (
-            <EmptyState title="No history yet" />
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Host</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>When</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {dash.history.map((row) => (
-                  <TableRow key={row._id}>
-                    <TableCell>
-                      <div>
-                        <p className="font-semibold">{row.hostname}</p>
-                        <p className="mono text-xs text-muted-foreground">{row.ipAddress}</p>
+      {/* Row 3 — Recent Activity */}
+      <motion.section variants={fadeUp} className="space-y-4" aria-label="Recent activity">
+        <SectionHeading
+          title="Recent Activity"
+          description="Latest device status changes, scans, and storm-related events."
+        />
+        <Card className="glass">
+          <CardContent className="p-0">
+            {recentActivity.length === 0 ? (
+              <div className="p-6">
+                <EmptyState title="No recent activity" description="History and alerts will appear here." />
+              </div>
+            ) : (
+              <ul className="divide-y divide-border/60">
+                {recentActivity.map((item) => (
+                  <li key={item.id}>
+                    <Link
+                      to={item.href || '/'}
+                      className="flex items-start gap-3 px-5 py-3.5 transition-colors hover:bg-secondary/40"
+                    >
+                      <span
+                        className={cn(
+                          'mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg',
+                          item.kind === 'storm' && 'bg-violet-500/15 text-violet-300',
+                          item.kind === 'alert' && 'bg-danger/15 text-danger',
+                          item.kind === 'status' && 'bg-warning/15 text-warning',
+                          item.kind === 'scan' && 'bg-success/15 text-success',
+                        )}
+                      >
+                        {item.kind === 'storm' ? (
+                          <Shield className="h-4 w-4" />
+                        ) : item.kind === 'alert' ? (
+                          <Bell className="h-4 w-4" />
+                        ) : item.kind === 'status' ? (
+                          <WifiOff className="h-4 w-4" />
+                        ) : (
+                          <Activity className="h-4 w-4" />
+                        )}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-semibold">{item.title}</p>
+                        <p className="truncate text-xs text-muted-foreground">{item.detail}</p>
                       </div>
-                    </TableCell>
-                    <TableCell>
-                      <StatusBadge status={row.status} />
-                    </TableCell>
-                    <TableCell>{row.scanType}</TableCell>
-                    <TableCell className="text-muted-foreground">{formatDateTime(row.timestamp)}</TableCell>
-                  </TableRow>
+                      <span className="shrink-0 text-xs text-muted-foreground">
+                        {formatRelative(item.timestamp)}
+                      </span>
+                    </Link>
+                  </li>
                 ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
+              </ul>
+            )}
+          </CardContent>
+        </Card>
+      </motion.section>
+
+      {/* Row 4 — Critical Alerts */}
+      <motion.section variants={fadeUp} className="space-y-4" aria-label="Critical alerts">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <SectionHeading
+            title="Critical Alerts"
+            description="Highest-priority active alerts requiring attention."
+          />
+          <Button type="button" variant="ghost" size="sm" asChild>
+            <Link to="/alerts">
+              View all alerts
+              <ArrowRight className="ml-1 h-3.5 w-3.5" />
+            </Link>
+          </Button>
+        </div>
+        <Card className="glass">
+          <CardContent className="p-0">
+            {criticalAlerts.length === 0 ? (
+              <div className="p-6">
+                <EmptyState
+                  title="No critical alerts"
+                  description="No high-severity alerts are currently active."
+                  icon={Bell}
+                />
+              </div>
+            ) : (
+              <ul className="divide-y divide-border/60">
+                {criticalAlerts.map((alert) => (
+                  <li
+                    key={alert._id}
+                    className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between"
+                  >
+                    <div className="min-w-0 space-y-1.5">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <SeverityChip alert={alert} />
+                        {isStormAlert(alert) ? (
+                          <Badge variant="secondary" className="uppercase tracking-wide">
+                            Storm
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="uppercase tracking-wide">
+                            Ping
+                          </Badge>
+                        )}
+                        <StatusBadge status={alert.status} pulse={false} />
+                      </div>
+                      <p className="truncate text-sm font-semibold">
+                        {alert.title || alert.message || alert.hostname}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        Source: {alert.hostname}
+                        {alert.interface ? ` · ${alert.interface}` : ''}
+                        {alert.ipAddress ? ` · ${alert.ipAddress}` : ''}
+                        {' · '}
+                        {formatDateTime(alert.createdAt)}
+                      </p>
+                    </div>
+                    <Button type="button" size="sm" variant="secondary" asChild>
+                      <Link
+                        to={
+                          isStormAlert(alert) && alert.incidentId
+                            ? `/storm?incident=${encodeURIComponent(alert.incidentId)}`
+                            : isStormAlert(alert)
+                              ? '/storm'
+                              : '/alerts'
+                        }
+                      >
+                        Quick View
+                      </Link>
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
+      </motion.section>
+
+      {/* Row 5 — Quick Actions */}
+      <motion.section variants={fadeUp} className="space-y-4" aria-label="Quick actions">
+        <SectionHeading
+          title="Quick Actions"
+          description="Jump into common operational workflows."
+        />
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+          <QuickAction to="/devices" icon={Server} label="Scan Devices" hint="Open device inventory" />
+          {isAdmin ? (
+            <QuickAction to="/discovery" icon={Radar} label="Discover Network" hint="Subnet discovery" />
+          ) : null}
+          <QuickAction to="/interfaces" icon={Network} label="Open Interfaces" hint="Switch port inventory" />
+          <QuickAction to="/reports" icon={FileBarChart} label="Open Reports" hint="Exports & uptime" />
+          {isAdmin ? (
+            <QuickAction to="/settings" icon={Settings} label="Open Settings" hint="Platform configuration" />
+          ) : null}
+        </div>
+      </motion.section>
+    </motion.div>
+  )
+}
+
+function SectionHeading({ title, description }: { title: string; description: string }) {
+  return (
+    <div>
+      <h2 className="text-lg font-semibold tracking-tight">{title}</h2>
+      <p className="text-sm text-muted-foreground">{description}</p>
     </div>
   )
 }
 
-function AlertRow({
-  alert,
-  canAct,
-  onAck,
-  onDismiss,
-  busy,
+function WorkspaceCard({
+  title,
+  description,
+  icon: Icon,
+  accent,
+  iconClass,
+  metrics,
+  ctaLabel,
+  ctaTo,
 }: {
-  alert: AlertItem
-  canAct: boolean
-  onAck: () => void
-  onDismiss: () => void
-  busy: boolean
+  title: string
+  description: string
+  icon: typeof Activity
+  accent: string
+  iconClass: string
+  metrics: Array<{
+    label: string
+    value: string
+    icon: typeof Activity
+    tone?: 'default' | 'success' | 'warning' | 'danger' | 'accent'
+  }>
+  ctaLabel: string
+  ctaTo: string
 }) {
   return (
-    <div className="flex flex-col gap-3 rounded-lg border border-border/70 bg-secondary/30 p-3 sm:flex-row sm:items-center sm:justify-between">
-      <div className="min-w-0">
-        <div className="flex flex-wrap items-center gap-2">
-          <p className="font-semibold">{alert.hostname}</p>
-          <StatusBadge status={alert.status} pulse={false} />
-        </div>
-        <p className="mt-1 text-sm text-muted-foreground">{alert.message}</p>
-        <p className="mono mt-1 text-xs text-muted-foreground">
-          {alert.ipAddress} · {formatDateTime(alert.createdAt)}
+    <motion.div whileHover={{ y: -3 }} transition={{ type: 'spring', stiffness: 380, damping: 28 }}>
+      <Card className="glass relative h-full overflow-hidden border-border/70 shadow-sm transition-shadow hover:shadow-lg hover:shadow-primary/5">
+        <div className={cn('pointer-events-none absolute inset-0 bg-gradient-to-br', accent)} />
+        <CardHeader className="relative space-y-4 pb-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="space-y-1.5">
+              <CardTitle className="text-xl tracking-tight">{title}</CardTitle>
+              <CardDescription className="max-w-md text-sm leading-relaxed">
+                {description}
+              </CardDescription>
+            </div>
+            <div className={cn('flex h-12 w-12 shrink-0 items-center justify-center rounded-xl', iconClass)}>
+              <Icon className="h-6 w-6" />
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="relative flex h-[calc(100%-7rem)] flex-col justify-between gap-6">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-2 xl:grid-cols-3">
+            {metrics.map((metric) => (
+              <div
+                key={metric.label}
+                className="rounded-xl border border-border/60 bg-card/70 px-3 py-3 backdrop-blur-sm"
+              >
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <metric.icon className="h-3.5 w-3.5" />
+                  <p className="text-[10px] font-semibold uppercase tracking-wider">{metric.label}</p>
+                </div>
+                <p
+                  className={cn(
+                    'mt-1.5 text-lg font-bold tracking-tight',
+                    metric.tone === 'success' && 'text-success',
+                    metric.tone === 'warning' && 'text-warning',
+                    metric.tone === 'danger' && 'text-danger',
+                    metric.tone === 'accent' && 'text-primary',
+                  )}
+                >
+                  {metric.value}
+                </p>
+              </div>
+            ))}
+          </div>
+          <Button type="button" className="w-full sm:w-auto" asChild>
+            <Link to={ctaTo}>
+              {ctaLabel}
+              <ArrowRight className="ml-2 h-4 w-4" />
+            </Link>
+          </Button>
+        </CardContent>
+      </Card>
+    </motion.div>
+  )
+}
+
+function StatusTile({
+  label,
+  value,
+  hint,
+  ok,
+  color,
+  icon: Icon,
+}: {
+  label: string
+  value: string
+  hint?: string
+  ok?: boolean | null
+  color?: string
+  icon?: typeof Database
+}) {
+  return (
+    <div className="rounded-xl border border-border/60 bg-secondary/20 p-4">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+          {label}
         </p>
+        {Icon ? <Icon className="h-3.5 w-3.5 text-muted-foreground" /> : null}
       </div>
-      {canAct ? (
-        <div className="flex shrink-0 gap-2">
-          <Button type="button" size="sm" variant="secondary" disabled={busy} onClick={onAck}>
-            <Check className="h-3.5 w-3.5" />
-            Ack
-          </Button>
-          <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={onDismiss}>
-            <X className="h-3.5 w-3.5" />
-            Dismiss
-          </Button>
-        </div>
-      ) : null}
+      <p className="mt-2 text-lg font-bold tracking-tight" style={color ? { color } : undefined}>
+        <span
+          className={cn(
+            !color && ok === true && 'text-success',
+            !color && ok === false && 'text-danger',
+          )}
+        >
+          {value}
+        </span>
+      </p>
+      {hint ? <p className="mt-1 text-xs text-muted-foreground">{hint}</p> : null}
     </div>
+  )
+}
+
+function SeverityChip({ alert }: { alert: AlertItem }) {
+  const severity = (alert.severity || '').toUpperCase()
+  const label = severity || (alert.status === 'Offline (Critical)' ? 'CRITICAL' : 'HIGH')
+  const variant =
+    label === 'CRITICAL' || label === 'EMERGENCY'
+      ? 'danger'
+      : label === 'HIGH'
+        ? 'warning'
+        : 'secondary'
+  return (
+    <Badge variant={variant} className="font-semibold uppercase tracking-wide">
+      {label}
+    </Badge>
+  )
+}
+
+function QuickAction({
+  to,
+  icon: Icon,
+  label,
+  hint,
+}: {
+  to: string
+  icon: typeof Server
+  label: string
+  hint: string
+}) {
+  return (
+    <Link to={to} className="group block h-full">
+      <Card className="glass h-full transition-all duration-200 group-hover:-translate-y-0.5 group-hover:border-primary/40 group-hover:shadow-md">
+        <CardContent className="flex h-full flex-col gap-3 p-4">
+          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary transition-colors group-hover:bg-primary/15">
+            <Icon className="h-5 w-5" />
+          </div>
+          <div>
+            <p className="text-sm font-semibold">{label}</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">{hint}</p>
+          </div>
+          <span className="mt-auto inline-flex items-center text-xs font-medium text-primary opacity-80 group-hover:opacity-100">
+            Open
+            <ArrowRight className="ml-1 h-3.5 w-3.5" />
+          </span>
+        </CardContent>
+      </Card>
+    </Link>
   )
 }
