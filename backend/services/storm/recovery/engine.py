@@ -137,6 +137,8 @@ def execute_recovery(
                         "stabilizationEnd": stab_end,
                         "recoveredAt": now,
                         "updatedAt": now,
+                        "postRecoveryReMitigationPending": True,
+                        "postRecoveryReMitigationAttempted": False,
                     }
                 },
             )
@@ -355,7 +357,12 @@ def execute_recovery(
         LockService.release_recovery_locks(device_lock_id, interface_lock_id)
 
 
-def trigger_re_mitigation(incident_id: str, reason: str) -> dict[str, Any]:
+def trigger_re_mitigation(
+    incident_id: str,
+    reason: str,
+    *,
+    post_recovery_allowance: bool = False,
+) -> dict[str, Any]:
     """Invokes Mitigation Orchestrator to shut down the interface again when storm reappears."""
     db = _db()
     incident = get_incident(incident_id)
@@ -363,7 +370,15 @@ def trigger_re_mitigation(incident_id: str, reason: str) -> dict[str, Any]:
         return {"success": False, "incidentId": None, "error": "Incident not found"}
 
     device_id = incident.get("deviceId")
-    interface = incident.get("interface")
+    interface_raw = incident.get("interface")
+    if not device_id or not interface_raw:
+        return {
+            "success": False,
+            "incidentId": incident_id,
+            "status": "BLOCKED",
+            "error": "Incident is missing deviceId or interface",
+        }
+    interface = str(interface_raw).strip()
 
     logger.warning("Storm reappeared! Re-mitigation triggered | incident=%s | %s", incident_id, reason)
     append_timeline_event(incident_id, "Storm Reappeared", detail=reason)
@@ -374,18 +389,26 @@ def trigger_re_mitigation(incident_id: str, reason: str) -> dict[str, Any]:
         #    Post-recovery invalidation leaves latest safety as UNSAFE; do not
         #    reuse that — require a fresh safety decision for remmitigation.
         from services.storm.safety import evaluate as evaluate_safety  # noqa: PLC0415
+        from services.storm.safety_history import build_safety_context  # noqa: PLC0415
+
+        safety_context = None
+        if post_recovery_allowance:
+            safety_context = build_safety_context(device_id, interface, probe_ssh=True)
+            safety_context.extras["post_recovery_remitigation"] = True
 
         safety_result = evaluate_safety(
             device_id,
             interface,
+            context=safety_context,
             probe_ssh=True,
             persist=True,
         )
         if not safety_result.safe:
             reason_blocked = safety_result.reason or "Safety rejected remmitigation"
             logger.error(
-                "Re-mitigation blocked by safety | incident=%s | %s",
+                "Re-mitigation blocked by safety | incident=%s | rule=%s | %s",
                 incident_id,
+                safety_result.failed_rule,
                 reason_blocked,
             )
             return {
@@ -393,6 +416,9 @@ def trigger_re_mitigation(incident_id: str, reason: str) -> dict[str, Any]:
                 "incidentId": incident_id,
                 "status": "BLOCKED",
                 "error": reason_blocked,
+                "failedRule": safety_result.failed_rule,
+                "checks": dict(safety_result.checks or {}),
+                "engine": "mitigation_safety",
             }
 
         # 2) Call orchestrator prepare (live storm gates + fresh safety)
@@ -456,6 +482,7 @@ def trigger_re_mitigation(incident_id: str, reason: str) -> dict[str, Any]:
                 "incidentId": target_incident_id,
                 "status": "MITIGATION_FAILED",
                 "error": prep_res.get("reason"),
+                "engine": "mitigation_orchestrator",
             }
     except Exception as exc:  # noqa: BLE001
         logger.exception("Failed to execute re-mitigation | incident=%s: %s", incident_id, exc)
@@ -478,6 +505,7 @@ def trigger_re_mitigation(incident_id: str, reason: str) -> dict[str, Any]:
             "incidentId": target_incident_id,
             "status": "MITIGATION_FAILED",
             "error": str(exc),
+            "engine": "mitigation_engine",
         }
 
 
