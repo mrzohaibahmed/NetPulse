@@ -152,159 +152,176 @@ export function DeviceFormDialog({ open, onOpenChange, device }: DeviceFormDialo
         <DialogHeader>
           <DialogTitle>{device ? 'Edit device' : 'Add device'}</DialogTitle>
           <DialogDescription>
-            {device ? 'Update monitoring settings for this host.' : 'Register a new host for monitoring.'}
+            {device
+              ? 'Update monitoring settings for this host.'
+              : 'Register a new host for monitoring.'}
           </DialogDescription>
         </DialogHeader>
 
-        <form className="space-y-4" onSubmit={(e) => void onSubmit(e)}>
-          <div className="space-y-1.5">
-            <Label htmlFor="hostname">Hostname</Label>
-            <Input id="hostname" {...form.register('hostname')} />
-            {form.formState.errors.hostname ? (
-              <p className="text-xs text-danger">{form.formState.errors.hostname.message}</p>
-            ) : null}
-          </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor="ipAddress">IP address</Label>
-            <Input id="ipAddress" className="mono" {...form.register('ipAddress')} />
-            {form.formState.errors.ipAddress ? (
-              <p className="text-xs text-danger">{form.formState.errors.ipAddress.message}</p>
-            ) : null}
-          </div>
-
-          <div className="space-y-1.5">
-            <Label>Device type</Label>
-            <Select
-              value={form.watch('deviceType')}
-              onValueChange={(value) => form.setValue('deviceType', value)}
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {DEVICE_TYPES.map((type) => (
-                  <SelectItem key={type} value={type}>
-                    {type}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {form.formState.errors.deviceType ? (
-              <p className="text-xs text-danger">{form.formState.errors.deviceType.message}</p>
-            ) : null}
-          </div>
-
-          <div className="grid gap-3 sm:grid-cols-2">
+        <form className="space-y-5" onSubmit={(e) => void onSubmit(e)}>
+          <fieldset className="space-y-3 rounded-xl border border-border/60 bg-secondary/20 p-4">
+            <legend className="px-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              Identity
+            </legend>
             <div className="space-y-1.5">
-              <Label htmlFor="vendor">Vendor</Label>
-              <Input id="vendor" {...form.register('vendor')} placeholder="e.g. cisco_ios" />
-              {form.formState.errors.vendor ? (
-                <p className="text-xs text-danger">{form.formState.errors.vendor.message}</p>
+              <Label htmlFor="hostname">Hostname</Label>
+              <Input id="hostname" {...form.register('hostname')} />
+              {form.formState.errors.hostname ? (
+                <p className="text-xs text-danger">{form.formState.errors.hostname.message}</p>
               ) : null}
             </div>
 
             <div className="space-y-1.5">
-              <Label htmlFor="ssh-username">SSH Username</Label>
-              <Input
-                id="ssh-username"
-                autoComplete="username"
-                {...form.register('username')}
-                placeholder="Enter SSH username"
-              />
-              {form.formState.errors.username ? (
-                <p className="text-xs text-danger">{form.formState.errors.username.message}</p>
+              <Label htmlFor="ipAddress">IP address</Label>
+              <Input id="ipAddress" className="mono" {...form.register('ipAddress')} />
+              {form.formState.errors.ipAddress ? (
+                <p className="text-xs text-danger">{form.formState.errors.ipAddress.message}</p>
               ) : null}
             </div>
-          </div>
 
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between gap-4">
-              <Label htmlFor="ssh-password">SSH Password</Label>
-              {device?.credentials?.sshPasswordConfigured ? (
-                <p className="text-xs text-muted-foreground">Password Configured</p>
-              ) : null}
-            </div>
-            <div className="relative">
-              <Input
-                id="ssh-password"
-                type={showPassword ? 'text' : 'password'}
-                autoComplete={device ? 'new-password' : 'current-password'}
-                {...form.register('password')}
-                placeholder={device ? 'Leave blank to keep current password' : 'Enter SSH password'}
-                className="pr-10"
-              />
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="absolute right-0 top-1/2 -translate-y-1/2"
-                aria-label={showPassword ? 'Hide password' : 'Show password'}
-                onClick={() => setShowPassword((s) => !s)}
+            <div className="space-y-1.5">
+              <Label>Device type</Label>
+              <Select
+                value={form.watch('deviceType')}
+                onValueChange={(value) => form.setValue('deviceType', value)}
               >
-                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-              </Button>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {DEVICE_TYPES.map((type) => (
+                    <SelectItem key={type} value={type}>
+                      {type}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {form.formState.errors.deviceType ? (
+                <p className="text-xs text-danger">{form.formState.errors.deviceType.message}</p>
+              ) : null}
             </div>
-            {form.formState.errors.password ? (
-              <p className="text-xs text-danger">{form.formState.errors.password.message}</p>
-            ) : null}
-          </div>
+          </fieldset>
 
-          <div className="grid gap-3 sm:grid-cols-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="pingInterval">Interval (s)</Label>
-              <Input
-                id="pingInterval"
-                type="number"
-                min={5}
-                value={form.watch('pingInterval') ?? ''}
-                onChange={(e) =>
-                  form.setValue('pingInterval', e.target.value ? Number(e.target.value) : null)
-                }
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="pingTimeoutMs">Timeout (ms)</Label>
-              <Input
-                id="pingTimeoutMs"
-                type="number"
-                min={100}
-                value={form.watch('pingTimeoutMs') ?? ''}
-                onChange={(e) =>
-                  form.setValue('pingTimeoutMs', e.target.value ? Number(e.target.value) : null)
-                }
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="pingRetries">Retries</Label>
-              <Input
-                id="pingRetries"
-                type="number"
-                min={1}
-                value={form.watch('pingRetries') ?? ''}
-                onChange={(e) =>
-                  form.setValue('pingRetries', e.target.value ? Number(e.target.value) : null)
-                }
-              />
-            </div>
-          </div>
+          <fieldset className="space-y-3 rounded-xl border border-border/60 bg-secondary/20 p-4">
+            <legend className="px-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              SSH credentials
+            </legend>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="vendor">Vendor</Label>
+                <Input id="vendor" {...form.register('vendor')} placeholder="e.g. cisco_ios" />
+                {form.formState.errors.vendor ? (
+                  <p className="text-xs text-danger">{form.formState.errors.vendor.message}</p>
+                ) : null}
+              </div>
 
-          <div className="flex flex-wrap gap-4">
-            <label className="flex items-center gap-2 text-sm">
-              <Checkbox
-                checked={form.watch('monitor')}
-                onCheckedChange={(checked) => form.setValue('monitor', Boolean(checked))}
-              />
-              Include in automatic monitoring
-            </label>
-            <label className="flex items-center gap-2 text-sm">
-              <Checkbox
-                checked={form.watch('critical')}
-                onCheckedChange={(checked) => form.setValue('critical', Boolean(checked))}
-              />
-              Mark as critical
-            </label>
-          </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="ssh-username">SSH Username</Label>
+                <Input
+                  id="ssh-username"
+                  autoComplete="username"
+                  {...form.register('username')}
+                  placeholder="Enter SSH username"
+                />
+                {form.formState.errors.username ? (
+                  <p className="text-xs text-danger">{form.formState.errors.username.message}</p>
+                ) : null}
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between gap-4">
+                <Label htmlFor="ssh-password">SSH Password</Label>
+                {device?.credentials?.sshPasswordConfigured ? (
+                  <p className="text-xs text-muted-foreground">Password Configured</p>
+                ) : null}
+              </div>
+              <div className="relative">
+                <Input
+                  id="ssh-password"
+                  type={showPassword ? 'text' : 'password'}
+                  autoComplete={device ? 'new-password' : 'current-password'}
+                  {...form.register('password')}
+                  placeholder={device ? 'Leave blank to keep current password' : 'Enter SSH password'}
+                  className="pr-10"
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="absolute right-0 top-1/2 -translate-y-1/2"
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  onClick={() => setShowPassword((s) => !s)}
+                >
+                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </Button>
+              </div>
+              {form.formState.errors.password ? (
+                <p className="text-xs text-danger">{form.formState.errors.password.message}</p>
+              ) : null}
+            </div>
+          </fieldset>
+
+          <fieldset className="space-y-3 rounded-xl border border-border/60 bg-secondary/20 p-4">
+            <legend className="px-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              Monitoring
+            </legend>
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="pingInterval">Interval (s)</Label>
+                <Input
+                  id="pingInterval"
+                  type="number"
+                  min={5}
+                  value={form.watch('pingInterval') ?? ''}
+                  onChange={(e) =>
+                    form.setValue('pingInterval', e.target.value ? Number(e.target.value) : null)
+                  }
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="pingTimeoutMs">Timeout (ms)</Label>
+                <Input
+                  id="pingTimeoutMs"
+                  type="number"
+                  min={100}
+                  value={form.watch('pingTimeoutMs') ?? ''}
+                  onChange={(e) =>
+                    form.setValue('pingTimeoutMs', e.target.value ? Number(e.target.value) : null)
+                  }
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="pingRetries">Retries</Label>
+                <Input
+                  id="pingRetries"
+                  type="number"
+                  min={1}
+                  value={form.watch('pingRetries') ?? ''}
+                  onChange={(e) =>
+                    form.setValue('pingRetries', e.target.value ? Number(e.target.value) : null)
+                  }
+                />
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-4">
+              <label className="flex items-center gap-2 text-sm">
+                <Checkbox
+                  checked={form.watch('monitor')}
+                  onCheckedChange={(checked) => form.setValue('monitor', Boolean(checked))}
+                />
+                Include in automatic monitoring
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <Checkbox
+                  checked={form.watch('critical')}
+                  onCheckedChange={(checked) => form.setValue('critical', Boolean(checked))}
+                />
+                Mark as critical
+              </label>
+            </div>
+          </fieldset>
 
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
