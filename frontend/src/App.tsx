@@ -20,10 +20,10 @@ const queryClient = new QueryClient({
 })
 
 const DashboardPage = lazy(() =>
-  import('@/pages/DashboardPage').then((m) => ({ default: m.DashboardPage })),
+  import('@/modules/ping/pages/DashboardPage').then((m) => ({ default: m.DashboardPage })),
 )
 const DevicesPage = lazy(() =>
-  import('@/pages/DevicesPage').then((m) => ({ default: m.DevicesPage })),
+  import('@/modules/ping/pages/DevicesPage').then((m) => ({ default: m.DevicesPage })),
 )
 const InterfacesPage = lazy(() =>
   import('@/pages/InterfacesEnterprisePage').then((m) => ({ default: m.InterfacesEnterprisePage })),
@@ -32,13 +32,13 @@ const InterfaceDetailPage = lazy(() =>
   import('@/pages/InterfaceDetailPage').then((m) => ({ default: m.InterfaceDetailPage })),
 )
 const DiscoveryPage = lazy(() =>
-  import('@/pages/DiscoveryPage').then((m) => ({ default: m.DiscoveryPage })),
+  import('@/modules/ping/pages/DiscoveryPage').then((m) => ({ default: m.DiscoveryPage })),
 )
 const HistoryPage = lazy(() =>
-  import('@/pages/HistoryPage').then((m) => ({ default: m.HistoryPage })),
+  import('@/modules/ping/pages/HistoryPage').then((m) => ({ default: m.HistoryPage })),
 )
 const ReportsPage = lazy(() =>
-  import('@/pages/ReportsPage').then((m) => ({ default: m.ReportsPage })),
+  import('@/modules/ping/pages/ReportsPage').then((m) => ({ default: m.ReportsPage })),
 )
 const AccountPage = lazy(() =>
   import('@/pages/AccountPage').then((m) => ({ default: m.AccountPage })),
