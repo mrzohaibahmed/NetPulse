@@ -108,6 +108,41 @@
   }
 }
 
+/*
+ * Card hover glow — soft blue halo (not a border), same blue as the
+ * sidebar's active-item accent (--color-primary, #3b82f6). No border is
+ * added; only a blurred, spread box-shadow layered on top of each card's
+ * existing elevation shadow on :hover.
+ *
+ * Written as literal rgba box-shadow values, not Tailwind's shadow-[...]
+ * arbitrary syntax: that syntax reads a shared --tw-shadow-color custom
+ * property as its fallback color, and Card's own shadow-black/20 class
+ * already sets that property — which would silently leak into and recolor
+ * a shadow-[...] glow here. Literal values sidestep that entirely.
+ */
+.card-surface,
+.glass {
+  transition: box-shadow 0.2s ease-in-out, background-color 0.2s ease-in-out;
+}
+
+@media (hover: hover) {
+  .card-surface:hover,
+  .glass:hover {
+    box-shadow:
+      0 10px 15px -3px rgba(0, 0, 0, 0.2),
+      0 4px 6px -4px rgba(0, 0, 0, 0.2),
+      0 0 24px 2px rgba(59, 130, 246, 0.38);
+  }
+
+  .light .card-surface:hover,
+  .light .glass:hover {
+    box-shadow:
+      0 10px 15px -3px rgba(0, 0, 0, 0.12),
+      0 4px 6px -4px rgba(0, 0, 0, 0.12),
+      0 0 24px 2px rgba(59, 130, 246, 0.42);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

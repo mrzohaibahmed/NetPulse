@@ -1,4 +1,4 @@
-import type { DeviceStatus } from '@/types'
+import type { AlertItem, DeviceStatus } from '@/types'
 
 export const STATUS_COLORS: Record<string, string> = {
   Online: '#22C55E',
@@ -19,4 +19,10 @@ export function statusTone(status: string | null | undefined): 'online' | 'offli
 
 export function isOnlineStatus(status: DeviceStatus | string): boolean {
   return status === 'Online'
+}
+
+/** Distinguishes storm-protection alerts from device (reachability) alerts. */
+export function isStormAlert(alert: AlertItem): boolean {
+  const category = (alert.category || alert.alertType || alert.scanType || '').toLowerCase()
+  return category.includes('storm')
 }

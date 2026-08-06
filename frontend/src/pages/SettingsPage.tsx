@@ -1,19 +1,24 @@
-import { useEffect } from 'react'
-import { Navigate } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { Navigate, useSearchParams } from 'react-router-dom'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { Mail, Save, Timer, Activity } from 'lucide-react'
+import { Activity, Archive, CloudLightning, Mail, Save, Timer } from 'lucide-react'
 import { useAuth } from '@/auth/AuthContext'
 import { useSettingsMutation, useSettingsQuery } from '@/hooks/queries'
 import { ErrorState } from '@/components/shared/ErrorState'
 import { LoadingState } from '@/components/shared/LoadingState'
 import { PageHeader } from '@/components/shared/PageHeader'
+import { SegmentedTabs } from '@/components/shared/SegmentedTabs'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { cn } from '@/lib/utils'
+import { useNavMode } from '@/lib/navMode'
+
+type SettingsTab = 'monitoring' | 'storm'
 
 const schema = z.object({
   pingInterval: z.number().min(5),
@@ -44,6 +49,19 @@ type FormValues = z.infer<typeof schema>
 
 export function SettingsPage() {
   const { isAdmin } = useAuth()
+  const { mode } = useNavMode()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const tabParam = searchParams.get('tab')
+  const [activeTab, setActiveTab] = useState<SettingsTab>(() => {
+    if (tabParam === 'storm' || tabParam === 'monitoring') return tabParam
+    return mode === 'storm' ? 'storm' : 'monitoring'
+  })
+  const setTab = (next: SettingsTab) => {
+    setActiveTab(next)
+    const params = new URLSearchParams(searchParams)
+    params.set('tab', next)
+    setSearchParams(params, { replace: true })
+  }
   const settingsQuery = useSettingsQuery(isAdmin)
   const save = useSettingsMutation()
 
@@ -160,7 +178,19 @@ export function SettingsPage() {
         description="Configure global ping parameters, SMTP, and storm email notifications"
       />
 
+      <SegmentedTabs
+        value={activeTab}
+        onChange={setTab}
+        options={[
+          { value: 'monitoring', label: 'Monitoring Settings', icon: Activity },
+          { value: 'storm', label: 'Storm Protection Settings', icon: CloudLightning },
+        ]}
+      />
+
       <form className="space-y-6" onSubmit={(e) => void onSubmit(e)}>
+        {/* Kept mounted (not unmounted) on the inactive tab so react-hook-form
+            state for its fields is never lost when switching tabs. */}
+        <div className={cn('space-y-6', activeTab !== 'monitoring' && 'hidden')}>
         <Card className="glass">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -268,6 +298,33 @@ export function SettingsPage() {
         <Card className="glass">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
+              <Archive className="h-5 w-5 text-primary" />
+              Telemetry retention
+            </CardTitle>
+            <CardDescription>How long ping and interface-stats history is kept before TTL purge.</CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-4 sm:grid-cols-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="dataRetentionDays">Data retention (days)</Label>
+              <Input
+                id="dataRetentionDays"
+                type="number"
+                min={7}
+                max={3650}
+                {...form.register('dataRetentionDays', { valueAsNumber: true })}
+              />
+              <p className="text-xs text-muted-foreground">
+                Ping/stats and storm evaluation history older than this are removed via TTL.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+        </div>
+
+        <div className={cn('space-y-6', activeTab !== 'storm' && 'hidden')}>
+        <Card className="glass">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
               <Mail className="h-5 w-5 text-primary" />
               Storm email notifications
             </CardTitle>
@@ -328,7 +385,7 @@ export function SettingsPage() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Activity className="h-5 w-5 text-primary" />
-              Recovery protection
+              Storm recovery protection
             </CardTitle>
             <CardDescription>
               Adjust validation thresholds, recovery limits, and stabilization timing for port automatic recovery.
@@ -379,19 +436,6 @@ export function SettingsPage() {
               </p>
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="dataRetentionDays">Data retention (days)</Label>
-              <Input
-                id="dataRetentionDays"
-                type="number"
-                min={7}
-                max={3650}
-                {...form.register('dataRetentionDays', { valueAsNumber: true })}
-              />
-              <p className="text-xs text-muted-foreground">
-                Ping/stats and storm evaluation history older than this are removed via TTL.
-              </p>
-            </div>
-            <div className="space-y-1.5">
               <Label htmlFor="incidentRetentionDays">Incident action retention (days)</Label>
               <Input
                 id="incidentRetentionDays"
@@ -407,6 +451,7 @@ export function SettingsPage() {
             </div>
           </CardContent>
         </Card>
+        </div>
 
         <div className="flex justify-end">
           <Button type="submit" disabled={save.isPending}>

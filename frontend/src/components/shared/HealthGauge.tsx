@@ -1,16 +1,23 @@
 import { motion } from 'framer-motion'
-import { computeNetworkHealth, healthColor, type HealthLabel } from '@/lib/health'
-import type { DashboardSummary } from '@/types'
+import { healthColor, type HealthLabel } from '@/lib/health'
 import { cn } from '@/lib/utils'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 
 interface HealthGaugeProps {
-  summary: DashboardSummary | null | undefined
+  score: number
+  label: HealthLabel
+  title?: string
+  subtitle?: string
   className?: string
 }
 
-export function HealthGauge({ summary, className }: HealthGaugeProps) {
-  const { score, label } = computeNetworkHealth(summary)
+/**
+ * Generic score/label gauge — deliberately takes a plain score+label rather
+ * than computing it internally, so both the Ping Monitoring dashboard
+ * (device reachability) and the Storm Detection dashboard (storm safety)
+ * can reuse the exact same component instead of each reimplementing it.
+ */
+export function HealthGauge({ score, label, title = 'Network Health', subtitle = 'Overall health', className }: HealthGaugeProps) {
   const color = healthColor(label)
   const radius = 70
   const circumference = 2 * Math.PI * radius
@@ -19,7 +26,7 @@ export function HealthGauge({ summary, className }: HealthGaugeProps) {
   return (
     <Card className={cn('glass overflow-hidden', className)}>
       <CardHeader>
-        <CardTitle>Network Health</CardTitle>
+        <CardTitle>{title}</CardTitle>
       </CardHeader>
       <CardContent className="flex flex-col items-center gap-4 pb-6">
         <div className="relative flex h-44 w-44 items-center justify-center">
@@ -48,7 +55,7 @@ export function HealthGauge({ summary, className }: HealthGaugeProps) {
             >
               {score}%
             </motion.span>
-            <span className="text-xs text-muted-foreground">Overall health</span>
+            <span className="text-xs text-muted-foreground">{subtitle}</span>
           </div>
         </div>
         <HealthBadge label={label} />

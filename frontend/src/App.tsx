@@ -7,6 +7,7 @@ import { Layout } from '@/components/layout/Layout'
 import { ProtectedRoute } from '@/components/ProtectedRoute'
 import { LoadingState } from '@/components/shared/LoadingState'
 import { ThemeProvider } from '@/lib/theme'
+import { NavModeProvider } from '@/lib/navMode'
 import { TooltipProvider } from '@/components/ui/tooltip'
 
 const queryClient = new QueryClient({
@@ -52,6 +53,9 @@ const AlertsPage = lazy(() =>
 const StormProtectionPage = lazy(() =>
   import('@/pages/StormProtectionPage').then((m) => ({ default: m.StormProtectionPage })),
 )
+const StormDashboardPage = lazy(() =>
+  import('@/pages/StormDashboardPage').then((m) => ({ default: m.StormDashboardPage })),
+)
 const LoginPage = lazy(() =>
   import('@/pages/LoginPage').then((m) => ({ default: m.LoginPage })),
 )
@@ -64,6 +68,7 @@ export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
+        <NavModeProvider>
         <TooltipProvider delayDuration={200}>
           <AuthProvider>
             <BrowserRouter>
@@ -81,6 +86,7 @@ export default function App() {
                       />
                       <Route path="alerts" element={<AlertsPage />} />
                       <Route path="storm" element={<StormProtectionPage />} />
+                      <Route path="storm/dashboard" element={<StormDashboardPage />} />
                       <Route path="discovery" element={<DiscoveryPage />} />
                       <Route path="history" element={<HistoryPage />} />
                       <Route path="reports" element={<ReportsPage />} />
@@ -105,6 +111,7 @@ export default function App() {
             />
           </AuthProvider>
         </TooltipProvider>
+        </NavModeProvider>
       </ThemeProvider>
     </QueryClientProvider>
   )

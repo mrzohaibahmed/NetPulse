@@ -30,7 +30,7 @@ import {
 } from 'recharts'
 import { useAlertMutations, useDashboardQuery } from '@/hooks/queries'
 import { computeNetworkHealth } from '@/lib/health'
-import { STATUS_COLORS, TYPE_COLORS } from '@/lib/status'
+import { isStormAlert, STATUS_COLORS, TYPE_COLORS } from '@/lib/status'
 import { formatDateTime, formatMs, formatPercent, formatRelative } from '@/utils/format'
 import { useClientPagination } from '@/hooks/useClientPagination'
 import type { AlertItem, DeviceStatusRow } from '@/types'
@@ -276,9 +276,13 @@ export function DashboardPage() {
   const deviceGroups = useMemo(() => groupDevicesByType(dash.devices), [dash.devices])
   const chartTotal = dash.statusChart.reduce((sum, entry) => sum + entry.value, 0)
 
+  // This dashboard is device-reachability only — storm alerts belong on the
+  // Storm Dashboard / Alerts page's Storm Alerts tab instead.
+  const deviceAlerts = useMemo(() => dash.alerts.filter((a) => !isStormAlert(a)), [dash.alerts])
+
   const alertTrendData = useMemo(() => {
     const buckets = new Map<string, number>()
-    for (const alert of dash.alerts) {
+    for (const alert of deviceAlerts) {
       const day = (alert.createdAt || '').slice(0, 10) || 'unknown'
       buckets.set(day, (buckets.get(day) ?? 0) + 1)
     }
@@ -288,7 +292,7 @@ export function DashboardPage() {
     return [...buckets.entries()]
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([date, value]) => ({ date, value }))
-  }, [dash.alerts, dash.scanActivity])
+  }, [deviceAlerts, dash.scanActivity])
 
   if (dash.isLoading && !dash.summary) {
     return (
@@ -364,9 +368,9 @@ export function DashboardPage() {
         />
         <KpiCard
           label="Active Alerts"
-          value={dash.alerts.length}
+          value={deviceAlerts.length}
           icon={Bell}
-          tone={dash.alerts.length ? 'danger' : 'success'}
+          tone={deviceAlerts.length ? 'danger' : 'success'}
         />
         <KpiCard
           label="Health Score"
@@ -386,7 +390,7 @@ export function DashboardPage() {
       </section>
 
       <section className="grid gap-4 lg:grid-cols-3">
-        <HealthGauge summary={dash.summary} />
+        <HealthGauge score={health.score} label={health.label} />
         <Card className="glass lg:col-span-2">
           <CardHeader>
             <CardTitle>Response Time</CardTitle>
@@ -525,11 +529,11 @@ export function DashboardPage() {
             </Button>
           </CardHeader>
           <CardContent>
-            {dash.alerts.length === 0 ? (
+            {deviceAlerts.length === 0 ? (
               <EmptyState title="No active alerts" description="All clear — no outstanding alerts." icon={Activity} />
             ) : (
               <div className="space-y-3">
-                {dash.alerts.map((alert) => (
+                {deviceAlerts.map((alert) => (
                   <AlertRow
                     key={alert._id}
                     alert={alert}

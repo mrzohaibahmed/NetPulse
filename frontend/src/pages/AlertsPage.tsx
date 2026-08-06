@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { Check, CloudLightning, Search, X } from 'lucide-react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+import { Bell, Check, CloudLightning, Search, X } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { useAuth } from '@/auth/AuthContext'
 import { useAlertMutations, useAlertsQuery } from '@/hooks/queries'
@@ -12,6 +12,7 @@ import { ErrorState } from '@/components/shared/ErrorState'
 import { TableSkeleton } from '@/components/shared/LoadingState'
 import { PageHeader } from '@/components/shared/PageHeader'
 import { PaginationControls } from '@/components/shared/PaginationControls'
+import { SegmentedTabs } from '@/components/shared/SegmentedTabs'
 import { StatusBadge } from '@/components/shared/StatusBadge'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -25,11 +26,10 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
+import { isStormAlert } from '@/lib/status'
+import { useNavMode } from '@/lib/navMode'
 
-function isStormAlert(alert: AlertItem): boolean {
-  const category = (alert.category || alert.alertType || alert.scanType || '').toLowerCase()
-  return category.includes('storm')
-}
+type AlertTab = 'device' | 'storm'
 
 function alertSeverityTone(alert: AlertItem): 'danger' | 'warning' | 'info' | 'default' {
   const severity = (alert.severity || '').toUpperCase()
@@ -59,6 +59,19 @@ function SeverityBadge({ severity }: { severity: string }) {
 export function AlertsPage() {
   const { isOperator } = useAuth()
   const navigate = useNavigate()
+  const { mode } = useNavMode()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const tabParam = searchParams.get('tab')
+  const [activeTab, setActiveTab] = useState<AlertTab>(() => {
+    if (tabParam === 'storm' || tabParam === 'device') return tabParam
+    return mode === 'storm' ? 'storm' : 'device'
+  })
+  const setTab = (next: AlertTab) => {
+    setActiveTab(next)
+    const params = new URLSearchParams(searchParams)
+    params.set('tab', next)
+    setSearchParams(params, { replace: true })
+  }
   const [status, setStatus] = useState('active')
   const [query, setQuery] = useState('')
   const alertsQuery = useAlertsQuery(status, 100)
@@ -81,12 +94,19 @@ export function AlertsPage() {
     )
   }, [alerts, query])
 
-  const pagination = useClientPagination(filtered, 25)
+  const deviceCount = useMemo(() => filtered.filter((a) => !isStormAlert(a)).length, [filtered])
+  const stormCount = useMemo(() => filtered.filter(isStormAlert).length, [filtered])
+  const tabFiltered = useMemo(
+    () => filtered.filter((a) => (activeTab === 'storm' ? isStormAlert(a) : !isStormAlert(a))),
+    [filtered, activeTab],
+  )
+
+  const pagination = useClientPagination(tabFiltered, 25)
 
   useEffect(() => {
     pagination.reset()
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- reset on filter/status change
-  }, [query, status])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reset on filter/status/tab change
+  }, [query, status, activeTab])
 
   return (
     <div className="space-y-6">
@@ -98,6 +118,15 @@ export function AlertsPage() {
             Refresh
           </Button>
         }
+      />
+
+      <SegmentedTabs
+        value={activeTab}
+        onChange={setTab}
+        options={[
+          { value: 'device', label: 'Device Alerts', icon: Bell, count: deviceCount },
+          { value: 'storm', label: 'Storm Alerts', icon: CloudLightning, count: stormCount },
+        ]}
       />
 
       <div className="flex flex-wrap gap-3">
@@ -130,7 +159,7 @@ export function AlertsPage() {
           message={alertsQuery.error instanceof Error ? alertsQuery.error.message : 'Failed to load alerts'}
           onRetry={() => void alertsQuery.refetch()}
         />
-      ) : filtered.length === 0 ? (
+      ) : tabFiltered.length === 0 ? (
         <EmptyState title="No alerts" description="Nothing matches the current filters." />
       ) : (
         <>
