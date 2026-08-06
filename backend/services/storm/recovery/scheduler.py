@@ -13,6 +13,7 @@ from services.settings_service import get_settings
 from services.storm.incident import append_timeline_event
 from services.storm.recovery.audit import record_recovery_history
 from services.storm.recovery.engine import execute_recovery, trigger_re_mitigation
+from services.storm.recovery.reconciliation import try_reconcile_from_scheduler
 from services.storm.recovery.policy import validate_recovery_policy
 from services.storm.recovery.re_mitigation import (
     consume_re_mitigation_pending,
@@ -270,13 +271,28 @@ def run_recovery_cycle() -> None:
             # Recovery Safety first (SSH deferred until cheap gates pass).
             val_res = validate_recovery_policy(incident_id)
             if not val_res.get("passed"):
+                failed_rule = val_res.get("failedRule")
                 logger.info(
                     "[RECOVERY.SCHEDULER] Recovery safety blocked %s | rule=%s | %s",
                     incident_id,
-                    val_res.get("failedRule"),
+                    failed_rule,
                     val_res.get("reason"),
                 )
-                # Throttle BLOCKED history to avoid a row every 30s while cooling down.
+                # R6-only: reconcile out-of-sync MITIGATED incidents (port already UP).
+                if failed_rule == "R6":
+                    try:
+                        try_reconcile_from_scheduler(incident_id, val_res)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.error(
+                            "[RECOVERY.SCHEDULER] R6 reconciliation failed | %s | %s",
+                            incident_id,
+                            exc,
+                        )
+                    continue
+
+                # Throttle BLOCKED history: one row per incident / 5 minutes.
+                # Do not key only on failedRule — R1/R2/R3 can oscillate each
+                # 30s cycle and would otherwise spam identical-looking rows.
                 last_blocked = db.storm_recovery_history.find_one(
                     {"incidentId": incident_id, "recoveryStatus": "BLOCKED"},
                     sort=[("timestamp", -1)],
@@ -286,11 +302,7 @@ def run_recovery_cycle() -> None:
                     ts = last_blocked["timestamp"]
                     if getattr(ts, "tzinfo", None) is None:
                         ts = ts.replace(tzinfo=timezone.utc)
-                    prev_rule = (last_blocked.get("verificationResult") or {}).get(
-                        "failedRule"
-                    )
-                    same_rule = prev_rule == val_res.get("failedRule")
-                    if same_rule and (now - ts).total_seconds() < 300:
+                    if (now - ts).total_seconds() < 300:
                         should_record = False
                 if should_record:
                     record_recovery_history(
@@ -301,7 +313,7 @@ def run_recovery_cycle() -> None:
                         verification_result={
                             "success": False,
                             "error": val_res.get("reason"),
-                            "failedRule": val_res.get("failedRule"),
+                            "failedRule": failed_rule,
                             "checks": val_res.get("checks") or {},
                             "engine": "recovery_safety",
                         },
