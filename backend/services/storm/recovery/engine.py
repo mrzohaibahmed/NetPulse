@@ -357,6 +357,353 @@ def execute_recovery(
         LockService.release_recovery_locks(device_lock_id, interface_lock_id)
 
 
+def _manual_override_meta(
+    operator: str,
+    *,
+    execution_checks: str,
+) -> dict[str, str]:
+    """Audit metadata for Manual Recovery override history rows."""
+    return {
+        "recovery_type": "MANUAL",
+        "trigger": "OPERATOR",
+        "safety_rules": "BYPASSED",
+        "execution_checks": execution_checks,
+        "executed_by": operator,
+        "recovery_method": "Manual Override",
+    }
+
+
+def _record_manual_history(
+    *,
+    incident_id: str,
+    device_id: Any,
+    interface: str,
+    recovery_status: str,
+    reason: str,
+    operator: str,
+    execution_checks: str,
+    verification_result: dict[str, Any] | None = None,
+) -> None:
+    result = dict(verification_result or {})
+    if reason and "error" not in result:
+        result["error"] = reason
+    if reason and "reason" not in result:
+        result["reason"] = reason
+    meta = _manual_override_meta(operator, execution_checks=execution_checks)
+    record_recovery_history(
+        incident_id=incident_id,
+        device_id=device_id,
+        interface=interface,
+        recovery_status=recovery_status,
+        verification_result=result,
+        retry_count=0,
+        **meta,
+    )
+
+
+def execute_manual_recovery(
+    incident_id: str,
+    *,
+    operator: str,
+) -> dict[str, Any]:
+    """
+    Operator Manual Recovery override.
+
+    Bypasses the Recovery Safety Engine (R1–R8) entirely. Only execution
+    safety checks remain: recovery lock idle, mitigation lock idle, and SSH
+    connectivity before ``no shutdown``.
+
+    Automatic recovery must continue to use ``execute_recovery()`` with full
+    Recovery Safety validation — this path must not be used by the scheduler.
+    """
+    from services.storm.recovery.reconciliation import (  # noqa: PLC0415
+        is_recovery_active,
+    )
+
+    db = _db()
+    incident = get_incident(incident_id)
+    if not incident:
+        raise ValueError(f"Incident not found: {incident_id}")
+
+    device_id = incident.get("deviceId")
+    interface = incident.get("interface")
+    if not device_id or not interface:
+        raise ValueError(f"Incident {incident_id} is missing deviceId or interface")
+
+    settings = get_settings()
+    stabilization_seconds = int(settings.get("stabilizationSeconds", 60))
+    hostname = incident.get("hostname") or ""
+    executed_at = datetime.now(timezone.utc)
+
+    # ── Execution checks only (no Recovery Safety Engine) ──────────────
+    if is_recovery_active(device_id, interface):
+        reason = "Recovery already in progress."
+        logger.warning(
+            "Manual recovery blocked | incident=%s | recovery lock active",
+            incident_id,
+        )
+        _record_manual_history(
+            incident_id=incident_id,
+            device_id=device_id,
+            interface=interface,
+            recovery_status="BLOCKED",
+            reason=reason,
+            operator=operator,
+            execution_checks="FAILED",
+        )
+        append_timeline_event(
+            incident_id,
+            "Manual Recovery Blocked",
+            detail=reason,
+        )
+        return {
+            "success": False,
+            "status": "BLOCKED",
+            "incidentId": incident_id,
+            "error": reason,
+        }
+
+    if LockService.is_mitigation_active(device_id, interface):
+        reason = "Mitigation currently executing."
+        logger.warning(
+            "Manual recovery blocked | incident=%s | mitigation lock active",
+            incident_id,
+        )
+        _record_manual_history(
+            incident_id=incident_id,
+            device_id=device_id,
+            interface=interface,
+            recovery_status="BLOCKED",
+            reason=reason,
+            operator=operator,
+            execution_checks="FAILED",
+        )
+        append_timeline_event(
+            incident_id,
+            "Manual Recovery Blocked",
+            detail=reason,
+        )
+        return {
+            "success": False,
+            "status": "BLOCKED",
+            "incidentId": incident_id,
+            "error": reason,
+        }
+
+    device_lock_id: str | None = None
+    interface_lock_id: str | None = None
+    try:
+        device_lock_id, interface_lock_id = LockService.acquire_recovery_locks(
+            _oid(device_id), interface, owner=operator
+        )
+    except ValueError:
+        reason = "Recovery already in progress."
+        logger.warning(
+            "Manual recovery blocked | incident=%s | recovery lock race",
+            incident_id,
+        )
+        _record_manual_history(
+            incident_id=incident_id,
+            device_id=device_id,
+            interface=interface,
+            recovery_status="BLOCKED",
+            reason=reason,
+            operator=operator,
+            execution_checks="FAILED",
+        )
+        append_timeline_event(
+            incident_id,
+            "Manual Recovery Blocked",
+            detail=reason,
+        )
+        return {
+            "success": False,
+            "status": "BLOCKED",
+            "incidentId": incident_id,
+            "error": reason,
+        }
+
+    verification_output = ""
+    device: dict[str, Any] | None = None
+
+    try:
+        device = db.devices.find_one({"_id": _oid(device_id)})
+        if not device:
+            reason = "Unable to establish SSH connection."
+            _record_manual_history(
+                incident_id=incident_id,
+                device_id=device_id,
+                interface=interface,
+                recovery_status="FAILED",
+                reason=reason,
+                operator=operator,
+                execution_checks="FAILED",
+            )
+            append_timeline_event(
+                incident_id,
+                "Manual Recovery Failed",
+                detail=reason,
+            )
+            return {
+                "success": False,
+                "status": "FAILED",
+                "incidentId": incident_id,
+                "error": reason,
+            }
+
+        hostname = device.get("hostname") or hostname
+        strategy = NoShutdownRecoveryStrategy()
+
+        try:
+            with SSHMitigationExecutor(device) as executor:
+                vendor = executor.creds.vendor
+                cmds = strategy.get_commands(interface, vendor)
+                executor.execute_commands(cmds, interface)
+                verification_passed, verification_output = verify_interface_up(
+                    executor, interface
+                )
+        except Exception as exc:  # noqa: BLE001
+            msg = str(exc)
+            if "SSH reachability" in msg or "not connected" in msg.lower():
+                reason = "Unable to establish SSH connection."
+            else:
+                reason = "Switch rejected recovery command."
+            logger.warning(
+                "Manual recovery failed | incident=%s | %s | %s",
+                incident_id,
+                reason,
+                msg,
+            )
+            _record_manual_history(
+                incident_id=incident_id,
+                device_id=device_id,
+                interface=interface,
+                recovery_status="FAILED",
+                reason=reason,
+                operator=operator,
+                execution_checks="FAILED",
+                verification_result={"success": False, "output": verification_output},
+            )
+            append_timeline_event(
+                incident_id,
+                "Manual Recovery Failed",
+                detail=reason,
+            )
+            return {
+                "success": False,
+                "status": "FAILED",
+                "incidentId": incident_id,
+                "error": reason,
+            }
+
+        if not verification_passed:
+            reason = "Switch rejected recovery command."
+            logger.warning(
+                "Manual recovery verification failed | incident=%s", incident_id
+            )
+            _record_manual_history(
+                incident_id=incident_id,
+                device_id=device_id,
+                interface=interface,
+                recovery_status="FAILED",
+                reason=reason,
+                operator=operator,
+                execution_checks="PASSED",
+                verification_result={
+                    "success": False,
+                    "output": verification_output,
+                },
+            )
+            append_timeline_event(
+                incident_id,
+                "Manual Recovery Failed",
+                detail=reason,
+            )
+            return {
+                "success": False,
+                "status": "FAILED",
+                "incidentId": incident_id,
+                "error": reason,
+            }
+
+        # Success — restore port and enter stabilization (same incident state
+        # machine as automatic recovery; history records MANUAL / RECOVERED).
+        now = datetime.now(timezone.utc)
+        stab_end = now + timedelta(seconds=stabilization_seconds)
+
+        db.storm_incidents.update_one(
+            {"incidentId": incident_id},
+            {
+                "$set": {
+                    "status": "MONITORING",
+                    "stabilizationEnd": stab_end,
+                    "recoveredAt": now,
+                    "updatedAt": now,
+                    "postRecoveryReMitigationPending": True,
+                    "postRecoveryReMitigationAttempted": False,
+                }
+            },
+        )
+
+        from services.storm.recovery.post_recovery import (  # noqa: PLC0415
+            invalidate_pipeline_after_recovery,
+        )
+
+        invalidate_pipeline_after_recovery(
+            device_id,
+            interface,
+            incident_id=incident_id,
+            hostname=device.get("hostname") or incident.get("hostname"),
+            ip_address=device.get("ipAddress") or incident.get("ipAddress"),
+            reason=(
+                "Post-recovery reset — fresh stats/confirmation/safety "
+                "required before any new mitigation"
+            ),
+        )
+
+        stats = collect_post_recovery_stats(device, interface)
+
+        append_timeline_event(
+            incident_id,
+            "Manual Recovery Executed",
+            detail=(
+                f"user={operator}, device={hostname or device_id}, "
+                f"interface={interface}, time={executed_at.isoformat()}, "
+                f"safetyRules=BYPASSED, executionChecks=PASSED"
+            ),
+        )
+
+        record_recovery_history(
+            incident_id=incident_id,
+            device_id=device_id,
+            interface=interface,
+            recovery_status="RECOVERED",
+            verification_result={
+                "success": True,
+                "output": verification_output,
+                "stats": stats,
+            },
+            retry_count=0,
+            **_manual_override_meta(operator, execution_checks="PASSED"),
+        )
+
+        logger.info(
+            "Manual recovery succeeded | incident=%s | operator=%s",
+            incident_id,
+            operator,
+        )
+        return {
+            "success": True,
+            "status": "RECOVERED",
+            "incidentId": incident_id,
+            "stats": stats,
+        }
+
+    finally:
+        if device_lock_id is not None and interface_lock_id is not None:
+            LockService.release_recovery_locks(device_lock_id, interface_lock_id)
+
+
 def trigger_re_mitigation(
     incident_id: str,
     reason: str,

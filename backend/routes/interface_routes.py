@@ -41,7 +41,7 @@ from services.interface_collection.stats_collector import (
 from services.audit_service import log_audit
 from services.storm.incident import create_manual_incident, get_incident
 from services.storm.mitigation import execute_mitigation
-from services.storm.recovery import execute_recovery
+from services.storm.recovery import execute_manual_recovery
 from utils.auth import require_auth
 from utils.pagination import clamp_page, pagination_payload, parse_pagination
 from utils.serializers import serialize_interface, serialize_interface_stat
@@ -621,9 +621,9 @@ def manual_recover_interface(device_id: str, interface_name: str):
         username = (getattr(g, "user", {}) or {}).get("username") or "SYSTEM"
         role = (getattr(g, "user", {}) or {}).get("role") or "viewer"
 
-        res = execute_recovery(
+        # Operator override: bypass Recovery Safety (R1–R8); execution checks only.
+        res = execute_manual_recovery(
             str(incident["incidentId"]),
-            force=False,
             operator=username,
         )
 
@@ -636,6 +636,10 @@ def manual_recover_interface(device_id: str, interface_name: str):
                 "interface": name,
                 "role": role,
                 "incidentId": incident.get("incidentId"),
+                "recoveryType": "MANUAL",
+                "trigger": "OPERATOR",
+                "safetyRules": "BYPASSED",
+                "status": res.get("status"),
             },
         )
 
@@ -652,7 +656,11 @@ def manual_recover_interface(device_id: str, interface_name: str):
                 if res.get("success")
                 else (res.get("error") or "Manual recovery failed")
             ),
-            extra={"retryCount": res.get("retryCount")},
+            extra={
+                "retryCount": res.get("retryCount"),
+                "recoveryType": "MANUAL",
+                "safetyRules": "BYPASSED",
+            },
         )), status_code
 
     except Exception as error:

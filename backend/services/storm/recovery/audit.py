@@ -56,9 +56,16 @@ def record_recovery_history(
     recovery_status: str,
     verification_result: dict[str, Any],
     retry_count: int,
+    *,
+    recovery_type: Optional[str] = None,
+    trigger: Optional[str] = None,
+    safety_rules: Optional[str] = None,
+    execution_checks: Optional[str] = None,
+    executed_by: Optional[str] = None,
+    recovery_method: Optional[str] = None,
 ) -> dict[str, Any]:
     """Create an immutable recovery execution history record."""
-    doc = {
+    doc: dict[str, Any] = {
         "incidentId": incident_id,
         "deviceId": _oid(device_id),
         "interface": interface,
@@ -67,6 +74,19 @@ def record_recovery_history(
         "retryCount": retry_count,
         "timestamp": datetime.now(timezone.utc),
     }
+    # Optional Manual Override / audit metadata (backward compatible).
+    if recovery_type is not None:
+        doc["recoveryType"] = recovery_type
+    if trigger is not None:
+        doc["trigger"] = trigger
+    if safety_rules is not None:
+        doc["safetyRules"] = safety_rules
+    if execution_checks is not None:
+        doc["executionChecks"] = execution_checks
+    if executed_by is not None:
+        doc["executedBy"] = executed_by
+    if recovery_method is not None:
+        doc["recoveryMethod"] = recovery_method
 
     try:
         _db()[COLLECTION].insert_one(doc)
@@ -84,15 +104,25 @@ def record_recovery_history(
         )
 
     # Log in system audit table
+    audit_details: dict[str, Any] = {
+        "interface": interface,
+        "status": recovery_status,
+        "retryCount": retry_count,
+    }
+    if recovery_type is not None:
+        audit_details["recoveryType"] = recovery_type
+    if trigger is not None:
+        audit_details["trigger"] = trigger
+    if recovery_method is not None:
+        audit_details["recoveryMethod"] = recovery_method
+    if executed_by is not None:
+        audit_details["executedBy"] = executed_by
+
     log_audit(
         action="storm_recovery_execute",
         entity_type="incident",
         entity_id=incident_id,
-        details={
-            "interface": interface,
-            "status": recovery_status,
-            "retryCount": retry_count,
-        },
+        details=audit_details,
     )
 
     return doc
@@ -152,4 +182,15 @@ def serialize_recovery_log(doc: dict[str, Any]) -> dict[str, Any]:
     ):
         if verification.get(key) is not None:
             payload[key] = verification.get(key)
+    # Optional Manual Override audit fields (top-level on history docs)
+    for key in (
+        "recoveryType",
+        "trigger",
+        "safetyRules",
+        "executionChecks",
+        "executedBy",
+        "recoveryMethod",
+    ):
+        if doc.get(key) is not None:
+            payload[key] = doc.get(key)
     return payload

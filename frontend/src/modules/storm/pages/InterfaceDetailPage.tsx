@@ -1166,7 +1166,9 @@ export function InterfaceDetailPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Recover interface {interfaceName}?</AlertDialogTitle>
             <AlertDialogDescription>
-              This sends a live recovery command to re-enable the port and reuses the current mitigated incident.
+              This is an operator override. Recovery Safety rules (R1–R8) are
+              bypassed and a live &quot;no shutdown&quot; is sent immediately to restore
+              the port, reusing the current mitigated incident.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

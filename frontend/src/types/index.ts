@@ -741,5 +741,12 @@ export interface RecoveryLog {
   note?: string
   checks?: Record<string, boolean | null>
   engine?: string
+  /** Manual Recovery override audit fields */
+  recoveryType?: string | null
+  trigger?: string | null
+  safetyRules?: string | null
+  executionChecks?: string | null
+  executedBy?: string | null
+  recoveryMethod?: string | null
 }
 

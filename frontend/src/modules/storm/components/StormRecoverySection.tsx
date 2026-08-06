@@ -16,13 +16,47 @@ function isReconciledRow(row: RecoveryLog): boolean {
   return (row.recoveryStatus || '').toUpperCase() === 'RECONCILED'
 }
 
+function isManualOverrideRow(row: RecoveryLog): boolean {
+  return (
+    (row.recoveryType || '').toUpperCase() === 'MANUAL' ||
+    (row.recoveryMethod || '').toLowerCase().includes('manual')
+  )
+}
+
 function recoveryRuleFor(row: RecoveryLog): string | null {
+  if (isManualOverrideRow(row)) {
+    return row.safetyRules === 'BYPASSED' ? 'BYPASSED' : row.safetyRules || 'MANUAL'
+  }
   return (
     row.recoveryRule ||
     row.failedRule ||
     row.verificationResult?.recoveryRule ||
     row.verificationResult?.failedRule ||
     null
+  )
+}
+
+function ManualOverrideDetail({ row }: { row: RecoveryLog }) {
+  const v = row.verificationResult
+  const items: { label: string; value: string }[] = [
+    { label: 'Recovery Type', value: row.recoveryType || 'MANUAL' },
+    { label: 'Trigger', value: row.trigger || 'OPERATOR' },
+    { label: 'Safety Rules', value: row.safetyRules || 'BYPASSED' },
+    { label: 'Execution Checks', value: row.executionChecks || '—' },
+    { label: 'Executed By', value: row.executedBy || '—' },
+    { label: 'Recovery Method', value: row.recoveryMethod || 'Manual Override' },
+    { label: 'Reason', value: row.reason || v?.reason || v?.error || '—' },
+  ]
+
+  return (
+    <dl className="space-y-2 rounded-md border border-amber-400/30 bg-amber-400/10 p-3 text-sm">
+      {items.map(({ label, value }) => (
+        <div key={label} className="flex flex-col gap-0.5 sm:flex-row sm:gap-3">
+          <dt className="min-w-[7.5rem] shrink-0 font-medium text-muted-foreground">{label}</dt>
+          <dd className="font-mono text-xs text-foreground">{value}</dd>
+        </div>
+      ))}
+    </dl>
   )
 }
 
@@ -165,6 +199,16 @@ export function StormRecoverySection({
                 <>
                   <RecoveryStatusBadge status={selectedRecovery.recoveryStatus} />
                   <ReconciliationDetail row={selectedRecovery} />
+                </>
+              ) : isManualOverrideRow(selectedRecovery) ? (
+                <>
+                  <RecoveryStatusBadge status={selectedRecovery.recoveryStatus} />
+                  <ManualOverrideDetail row={selectedRecovery} />
+                  {selectedRecovery.verificationResult?.output ? (
+                    <pre className="max-h-32 overflow-auto rounded-md border border-border bg-zinc-950 p-3 font-mono text-xs text-zinc-300">
+                      {selectedRecovery.verificationResult.output}
+                    </pre>
+                  ) : null}
                 </>
               ) : (
                 <>
