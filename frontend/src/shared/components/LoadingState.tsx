@@ -1,6 +1,6 @@
 import { Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { Skeleton } from '@/components/ui/skeleton'
+import { Skeleton } from '@/shared/ui/skeleton'
 
 interface LoadingStateProps {
   label?: string

@@ -3,11 +3,11 @@ import { lazy, Suspense } from 'react'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { Toaster } from 'sonner'
 import { AuthProvider } from '@/auth/AuthContext'
-import { Layout } from '@/components/layout/Layout'
-import { ProtectedRoute } from '@/components/ProtectedRoute'
-import { LoadingState } from '@/components/shared/LoadingState'
+import { Layout } from '@/shared/layout/Layout'
+import { ProtectedRoute } from '@/shared/components/ProtectedRoute'
+import { LoadingState } from '@/shared/components/LoadingState'
 import { ThemeProvider } from '@/lib/theme'
-import { TooltipProvider } from '@/components/ui/tooltip'
+import { TooltipProvider } from '@/shared/ui/tooltip'
 
 const queryClient = new QueryClient({
   defaultOptions: {

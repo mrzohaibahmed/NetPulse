@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { Outlet } from 'react-router-dom'
-import { Sidebar } from '@/components/layout/Sidebar'
-import { TopNavbar } from '@/components/layout/TopNavbar'
-import { PageTransition } from '@/components/shared/PageTransition'
+import { Sidebar } from '@/shared/layout/Sidebar'
+import { TopNavbar } from '@/shared/layout/TopNavbar'
+import { PageTransition } from '@/shared/components/PageTransition'
 
 export function Layout() {
   const [pinned, setPinned] = useState(false)

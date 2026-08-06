@@ -7,23 +7,23 @@ import { useAlertMutations, useAlertsQuery } from '@/hooks/queries'
 import { useClientPagination } from '@/hooks/useClientPagination'
 import { formatDateTime } from '@/utils/format'
 import type { AlertItem } from '@/types'
-import { EmptyState } from '@/components/shared/EmptyState'
-import { ErrorState } from '@/components/shared/ErrorState'
-import { TableSkeleton } from '@/components/shared/LoadingState'
-import { PageHeader } from '@/components/shared/PageHeader'
-import { PaginationControls } from '@/components/shared/PaginationControls'
-import { StatusBadge } from '@/components/shared/StatusBadge'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
+import { EmptyState } from '@/shared/components/EmptyState'
+import { ErrorState } from '@/shared/components/ErrorState'
+import { TableSkeleton } from '@/shared/components/LoadingState'
+import { PageHeader } from '@/shared/components/PageHeader'
+import { PaginationControls } from '@/shared/components/PaginationControls'
+import { StatusBadge } from '@/shared/components/StatusBadge'
+import { Badge } from '@/shared/ui/badge'
+import { Button } from '@/shared/ui/button'
+import { Card, CardContent } from '@/shared/ui/card'
+import { Input } from '@/shared/ui/input'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select'
+} from '@/shared/ui/select'
 import { cn } from '@/lib/utils'
 
 function isStormAlert(alert: AlertItem): boolean {

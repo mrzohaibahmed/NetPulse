@@ -1,23 +1,23 @@
 import { useEffect, useState } from 'react'
 import { useHistoryQuery } from '@/hooks/queries'
 import { formatDateTime, formatMs } from '@/utils/format'
-import { EmptyState } from '@/components/shared/EmptyState'
-import { ErrorState } from '@/components/shared/ErrorState'
-import { TableSkeleton } from '@/components/shared/LoadingState'
-import { PageHeader } from '@/components/shared/PageHeader'
-import { PaginationControls } from '@/components/shared/PaginationControls'
-import { StatusBadge } from '@/components/shared/StatusBadge'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
+import { EmptyState } from '@/shared/components/EmptyState'
+import { ErrorState } from '@/shared/components/ErrorState'
+import { TableSkeleton } from '@/shared/components/LoadingState'
+import { PageHeader } from '@/shared/components/PageHeader'
+import { PaginationControls } from '@/shared/components/PaginationControls'
+import { StatusBadge } from '@/shared/components/StatusBadge'
+import { Button } from '@/shared/ui/button'
+import { Card, CardContent } from '@/shared/ui/card'
+import { Input } from '@/shared/ui/input'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+} from '@/shared/ui/select'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table'
 
 const DEFAULT_LIMIT = 25
 

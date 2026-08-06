@@ -4,21 +4,21 @@ import { toast } from 'sonner'
 import { useAuth } from '@/auth/AuthContext'
 import { useAccountMutation, useUserMutation, useUsersQuery } from '@/hooks/queries'
 import type { User, UserRole } from '@/types'
-import { PageHeader } from '@/components/shared/PageHeader'
-import { Avatar, AvatarFallback } from '@/components/ui/avatar'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
+import { PageHeader } from '@/shared/components/PageHeader'
+import { Avatar, AvatarFallback } from '@/shared/ui/avatar'
+import { Badge } from '@/shared/ui/badge'
+import { Button } from '@/shared/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/shared/ui/card'
+import { Input } from '@/shared/ui/input'
+import { Label } from '@/shared/ui/label'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+} from '@/shared/ui/select'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table'
 
 const ASSIGNABLE_ROLES: UserRole[] = ['viewer', 'operator', 'admin', 'super-admin']
 
