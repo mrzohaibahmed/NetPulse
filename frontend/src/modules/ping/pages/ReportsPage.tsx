@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Download, FileSpreadsheet, Calculator } from 'lucide-react'
 import { useExportReports, useUptimeReportQuery } from '@/hooks/queries'
-import { DEVICE_TYPES } from '@/constants/devices'
+import { DEVICE_TYPES } from '@/modules/ping/constants/devices'
 import { formatPercent } from '@/utils/format'
 import { EmptyState } from '@/shared/components/EmptyState'
 import { ErrorState } from '@/shared/components/ErrorState'
