@@ -66,19 +66,25 @@ type StormRecoverySectionProps = {
   rows: RecoveryLog[]
   selectedRecovery: RecoveryLog | null
   onSelectRecovery: (row: RecoveryLog) => void
+  sectionId?: string
+  isLoading?: boolean
 }
 
 export function StormRecoverySection({
   rows,
   selectedRecovery,
   onSelectRecovery,
+  sectionId,
+  isLoading = false,
 }: StormRecoverySectionProps) {
   const recoveryPagination = useClientPagination(rows, DEFAULT_SECTION_ROWS_PER_PAGE)
 
   return (
     <Subsection
+      id={sectionId}
       title="Recovery History"
       description="Recovery Safety (R1–R8) outcomes and stabilization for this switch."
+      loading={isLoading}
     >
       {rows.length === 0 ? (
         <p className="text-sm text-muted-foreground">No recovery logs yet.</p>

@@ -15,19 +15,25 @@ type StormMitigationSectionProps = {
   rows: MitigationLog[]
   selectedMitigation: MitigationLog | null
   onSelectMitigation: (row: MitigationLog) => void
+  sectionId?: string
+  isLoading?: boolean
 }
 
 export function StormMitigationSection({
   rows,
   selectedMitigation,
   onSelectMitigation,
+  sectionId,
+  isLoading = false,
 }: StormMitigationSectionProps) {
   const mitigationPagination = useClientPagination(rows, DEFAULT_SECTION_ROWS_PER_PAGE)
 
   return (
     <Subsection
+      id={sectionId}
       title="Mitigation History"
       description="Shutdown and rollback execution logs for this switch."
+      loading={isLoading}
     >
       {rows.length === 0 ? (
         <p className="text-sm text-muted-foreground">No mitigation logs yet.</p>

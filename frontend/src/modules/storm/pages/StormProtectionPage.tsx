@@ -493,33 +493,35 @@ export function StormProtectionPage() {
     setExpandedSections((prev) => ({ ...prev, [key]: !prev[key] }))
   }
 
-  const isLoading =
-    devicesQuery.isLoading ||
+  // Progressive loading:
+  // - Bootstrap load gates only on device inventory (required to render switch cards).
+  // - Storm pipeline datasets continue loading in background without blocking first paint.
+  const isBootstrapLoading = devicesQuery.isLoading && devices.length === 0
+  const isSecondaryLoading =
     eligibilityQuery.isLoading ||
     riskListQuery.isLoading ||
     confirmationQuery.isLoading ||
     safetyListQuery.isLoading ||
     incidentsQuery.isLoading
 
-  const isError =
-    devicesQuery.isError ||
-    eligibilityQuery.isError ||
-    riskListQuery.isError ||
-    confirmationQuery.isError ||
-    safetyListQuery.isError ||
-    incidentsQuery.isError
+  // Hard failure for page shell should only come from device inventory.
+  // Secondary query failures are reflected in their own sections / data states.
+  const hasCriticalError = devicesQuery.isError
 
-  const noSwitchesConfigured = !devicesQuery.isLoading && switchDevices.length === 0
+  const noSwitchesConfigured = !isBootstrapLoading && switchDevices.length === 0
 
   const showSwitchControls =
-    !noSwitchesConfigured && !isLoading && !isError && groupedSwitches.length > 0
+    !noSwitchesConfigured && !isBootstrapLoading && !hasCriticalError && groupedSwitches.length > 0
 
-  // Frontend-only deep links from sidebar: /storm?view=incidents|pipeline|overview
+  // Frontend-only deep links from sidebar: /storm?view=incidents|pipeline|mitigation|recovery|overview
   useEffect(() => {
     const normalized =
       !viewParam || viewParam === 'overview'
         ? 'overview'
-        : viewParam === 'incidents' || viewParam === 'pipeline'
+        : viewParam === 'incidents' ||
+            viewParam === 'pipeline' ||
+            viewParam === 'mitigation' ||
+            viewParam === 'recovery'
           ? viewParam
           : null
 
@@ -530,13 +532,19 @@ export function StormProtectionPage() {
       return
     }
 
-    // Expand switch cards so pipeline / incident subsections are visible.
+    // Expand switch cards so pipeline / incident / mitigation / recovery subsections are visible.
     setCollapsedDeviceIds((prev) => (prev.size === 0 ? prev : new Set()))
 
-    if (isLoading || noSwitchesConfigured) return
+    if (isBootstrapLoading || noSwitchesConfigured || pagedSwitches.length === 0) return
 
     const targetId =
-      normalized === 'incidents' ? 'incidents-section' : 'pipeline-section'
+      normalized === 'incidents'
+        ? 'incidents-section'
+        : normalized === 'mitigation'
+          ? 'mitigation-section'
+          : normalized === 'recovery'
+            ? 'recovery-section'
+            : 'pipeline-section'
 
     let attempts = 0
     let timer: number | undefined
@@ -556,7 +564,7 @@ export function StormProtectionPage() {
     return () => {
       if (timer !== undefined) window.clearTimeout(timer)
     }
-  }, [viewParam, isLoading, noSwitchesConfigured, pagedSwitches.length])
+  }, [viewParam, isBootstrapLoading, noSwitchesConfigured, pagedSwitches.length])
 
   return (
     <div id="overview-section" className="np-page scroll-mt-24">
@@ -628,14 +636,16 @@ export function StormProtectionPage() {
           title="No managed switches"
           description="Add a managed switch from Device Inventory to view per-switch storm protection details."
         />
-      ) : isLoading ? (
+      ) : isBootstrapLoading ? (
         <TableSkeleton rows={8} />
-      ) : isError ? (
+      ) : hasCriticalError ? (
         <ErrorState
           title="Unable to load storm protection data"
-          message="One or more storm datasets failed to load."
+          message="Unable to load switch inventory."
           onRetry={refreshAll}
         />
+      ) : isSecondaryLoading && groupedSwitches.length === 0 ? (
+        <TableSkeleton rows={6} />
       ) : groupedSwitches.length === 0 ? (
         <EmptyState
           icon={Shield}
@@ -657,6 +667,8 @@ export function StormProtectionPage() {
               requiredConfirmations={requiredConfirmations}
               pipelineSectionId={index === 0 ? 'pipeline-section' : undefined}
               incidentsSectionId={index === 0 ? 'incidents-section' : undefined}
+              mitigationSectionId={index === 0 ? 'mitigation-section' : undefined}
+              recoverySectionId={index === 0 ? 'recovery-section' : undefined}
               selectedRisk={
                 selectedRisk?.deviceId === device.deviceId ? selectedRisk : null
               }
@@ -679,6 +691,15 @@ export function StormProtectionPage() {
               trendLoading={
                 selectedRisk?.deviceId === device.deviceId && selectedHistoryQuery.isLoading
               }
+              sectionLoading={{
+                eligibility: eligibilityQuery.isLoading,
+                risk: riskListQuery.isLoading,
+                confirmation: confirmationQuery.isLoading,
+                safety: safetyListQuery.isLoading,
+                incidents: incidentsQuery.isLoading,
+                mitigation: mitigationHistoryQuery.isLoading,
+                recovery: recoveryHistoryQuery.isLoading,
+              }}
               mitigationPending={mitigationMutations.execute.isPending}
               rollbackPending={mitigationMutations.rollback.isPending}
               recoveryPending={recoveryMutations.execute.isPending}

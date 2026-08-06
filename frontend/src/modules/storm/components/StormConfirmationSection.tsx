@@ -14,11 +14,13 @@ import {
 type StormConfirmationSectionProps = {
   rows: ConfirmationResult[]
   requiredConfirmations: number
+  isLoading?: boolean
 }
 
 export function StormConfirmationSection({
   rows,
   requiredConfirmations,
+  isLoading = false,
 }: StormConfirmationSectionProps) {
   const confirmationPagination = useClientPagination(rows, DEFAULT_SECTION_ROWS_PER_PAGE)
 
@@ -26,6 +28,7 @@ export function StormConfirmationSection({
     <Subsection
       title="Confirmation"
       description={`High risk must persist across ${requiredConfirmations} consecutive polls.`}
+      loading={isLoading}
     >
       {rows.length === 0 ? (
         <p className="text-sm text-muted-foreground">No confirmation results yet.</p>
