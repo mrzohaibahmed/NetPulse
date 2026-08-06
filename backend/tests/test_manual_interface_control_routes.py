@@ -178,7 +178,7 @@ class ManualInterfaceControlRouteTests(unittest.TestCase):
         )
         mock_route_audit.assert_called_once()
 
-    @patch("routes.interface_routes.execute_recovery")
+    @patch("routes.interface_routes.execute_manual_recovery")
     def test_viewer_forbidden_for_manual_recover(self, mock_execute):
         res = self.client.post(
             f"/api/interfaces/{self.device_id}/{self.interface}/manual-recover",
@@ -189,7 +189,7 @@ class ManualInterfaceControlRouteTests(unittest.TestCase):
         self.assertEqual(res.status_code, 403)
         mock_execute.assert_not_called()
 
-    @patch("routes.interface_routes.execute_recovery")
+    @patch("routes.interface_routes.execute_manual_recovery")
     def test_manual_recover_missing_confirm_rejected(self, mock_execute):
         res = self.client.post(
             f"/api/interfaces/{self.device_id}/{self.interface}/manual-recover",
@@ -201,7 +201,7 @@ class ManualInterfaceControlRouteTests(unittest.TestCase):
         mock_execute.assert_not_called()
 
     @patch("routes.interface_routes.log_audit")
-    @patch("routes.interface_routes.execute_recovery")
+    @patch("routes.interface_routes.execute_manual_recovery")
     @patch("routes.interface_routes.db")
     def test_manual_recover_invalid_state_rejected(
         self, mock_db, mock_execute, mock_audit
@@ -222,7 +222,7 @@ class ManualInterfaceControlRouteTests(unittest.TestCase):
         mock_audit.assert_not_called()
 
     @patch("routes.interface_routes.log_audit")
-    @patch("routes.interface_routes.execute_recovery")
+    @patch("routes.interface_routes.execute_manual_recovery")
     @patch("routes.interface_routes.db")
     def test_manual_recover_success_path(self, mock_db, mock_execute, mock_audit):
         mitigated = dict(self.incident_doc, status="MITIGATED", recoveryRetryCount=0)
@@ -230,7 +230,7 @@ class ManualInterfaceControlRouteTests(unittest.TestCase):
         mock_db.storm_incidents.find_one.return_value = mitigated
         mock_execute.return_value = {
             "success": True,
-            "status": "MONITORING",
+            "status": "RECOVERED",
             "incidentId": self.incident_doc["incidentId"],
         }
 
@@ -245,13 +245,12 @@ class ManualInterfaceControlRouteTests(unittest.TestCase):
         self.assertTrue(payload["success"])
         mock_execute.assert_called_once_with(
             self.incident_doc["incidentId"],
-            force=False,
             operator="admin1",
         )
         mock_audit.assert_called_once()
 
     @patch("routes.interface_routes.log_audit")
-    @patch("routes.interface_routes.execute_recovery")
+    @patch("routes.interface_routes.execute_manual_recovery")
     @patch("routes.interface_routes.db")
     def test_manual_recover_failure_path(self, mock_db, mock_execute, mock_audit):
         mitigated = dict(self.incident_doc, status="MITIGATED", recoveryRetryCount=1)
@@ -259,10 +258,9 @@ class ManualInterfaceControlRouteTests(unittest.TestCase):
         mock_db.storm_incidents.find_one.return_value = mitigated
         mock_execute.return_value = {
             "success": False,
-            "status": "FAILURE",
+            "status": "FAILED",
             "incidentId": self.incident_doc["incidentId"],
-            "retryCount": 2,
-            "error": "Interface state is not administratively UP after command execution",
+            "error": "Unable to establish SSH connection.",
         }
 
         res = self.client.post(
@@ -274,7 +272,7 @@ class ManualInterfaceControlRouteTests(unittest.TestCase):
         self.assertEqual(res.status_code, 400)
         payload = res.get_json()
         self.assertFalse(payload["success"])
-        self.assertEqual(payload["retryCount"], 2)
+        self.assertIn("SSH", payload["message"])
         mock_audit.assert_called_once()
 
 

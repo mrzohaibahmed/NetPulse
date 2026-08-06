@@ -510,67 +510,125 @@ export function InterfacesEnterprisePage() {
         <>
           <Card className="border-border/70 bg-card/70 shadow-sm">
             <CardContent className="space-y-3 p-4">
-              <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
-                <Input
-                  type="search"
-                  className="lg:max-w-md"
-                  placeholder="Search name, host, IP, VLAN, neighbor…"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                />
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
+                <div className="min-w-0 space-y-1.5 lg:max-w-md lg:flex-1">
+                  <label
+                    className="text-xs font-medium text-muted-foreground"
+                    htmlFor="interface-inventory-search"
+                  >
+                    Search
+                  </label>
+                  <Input
+                    id="interface-inventory-search"
+                    type="search"
+                    placeholder="Search interfaces, host, IP, VLAN, neighbor..."
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                  />
+                </div>
                 <div className="grid flex-1 gap-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6">
-                  <Select value={vendorFilter} onValueChange={setVendorFilter}>
-                    <SelectTrigger><SelectValue placeholder="Vendor" /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All vendors</SelectItem>
-                      {vendorOptions.map((vendor) => (
-                        <SelectItem key={vendor} value={vendor}>{vendor}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <Select value={operFilter} onValueChange={setOperFilter}>
-                    <SelectTrigger><SelectValue placeholder="Status" /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All status</SelectItem>
-                      <SelectItem value="up">Up</SelectItem>
-                      <SelectItem value="down">Down</SelectItem>
-                      <SelectItem value="unknown">Unknown</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <Select value={modeFilter} onValueChange={setModeFilter}>
-                    <SelectTrigger><SelectValue placeholder="Mode" /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All modes</SelectItem>
-                      <SelectItem value="access">Access</SelectItem>
-                      <SelectItem value="trunk">Trunk</SelectItem>
-                      <SelectItem value="routed">Routed</SelectItem>
-                      <SelectItem value="unknown">Unknown</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <Select value={classificationFilter} onValueChange={setClassificationFilter}>
-                    <SelectTrigger><SelectValue placeholder="Classification" /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All classification</SelectItem>
-                      <SelectItem value="access">Access</SelectItem>
-                      <SelectItem value="trunk">Trunk</SelectItem>
-                      <SelectItem value="uplink">Uplink</SelectItem>
-                      <SelectItem value="infrastructure">Infrastructure</SelectItem>
-                      <SelectItem value="management">Management</SelectItem>
-                      <SelectItem value="protected">Protected</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <Select value={stormRiskFilter} onValueChange={setStormRiskFilter}>
-                    <SelectTrigger><SelectValue placeholder="Storm Risk" /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All risk</SelectItem>
-                      <SelectItem value="CRITICAL">Critical</SelectItem>
-                      <SelectItem value="HIGH">High</SelectItem>
-                      <SelectItem value="MEDIUM">Medium</SelectItem>
-                      <SelectItem value="LOW">Low</SelectItem>
-                      <SelectItem value="UNKNOWN">Unknown</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <Input placeholder="VLAN" value={vlanFilter} onChange={(e) => setVlanFilter(e.target.value)} />
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-medium text-muted-foreground" htmlFor="interface-status-filter">
+                      Status
+                    </label>
+                    <Select value={operFilter} onValueChange={setOperFilter}>
+                      <SelectTrigger id="interface-status-filter">
+                        <SelectValue placeholder="All Status" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All Status</SelectItem>
+                        <SelectItem value="up">Up</SelectItem>
+                        <SelectItem value="down">Down</SelectItem>
+                        <SelectItem value="unknown">Unknown</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-medium text-muted-foreground" htmlFor="interface-mode-filter">
+                      Mode
+                    </label>
+                    <Select value={modeFilter} onValueChange={setModeFilter}>
+                      <SelectTrigger id="interface-mode-filter">
+                        <SelectValue placeholder="All Modes" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All Modes</SelectItem>
+                        <SelectItem value="access">Access</SelectItem>
+                        <SelectItem value="trunk">Trunk</SelectItem>
+                        <SelectItem value="routed">Routed</SelectItem>
+                        <SelectItem value="unknown">Unknown</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label
+                      className="text-xs font-medium text-muted-foreground"
+                      htmlFor="interface-classification-filter"
+                    >
+                      Classification
+                    </label>
+                    <Select value={classificationFilter} onValueChange={setClassificationFilter}>
+                      <SelectTrigger id="interface-classification-filter">
+                        <SelectValue placeholder="All Types" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All Types</SelectItem>
+                        <SelectItem value="access">User</SelectItem>
+                        <SelectItem value="trunk">Trunk</SelectItem>
+                        <SelectItem value="uplink">Uplink</SelectItem>
+                        <SelectItem value="infrastructure">Infrastructure</SelectItem>
+                        <SelectItem value="management">Management</SelectItem>
+                        <SelectItem value="protected">Protected</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-medium text-muted-foreground" htmlFor="interface-risk-filter">
+                      Risk
+                    </label>
+                    <Select value={stormRiskFilter} onValueChange={setStormRiskFilter}>
+                      <SelectTrigger id="interface-risk-filter">
+                        <SelectValue placeholder="All Risks" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All Risks</SelectItem>
+                        <SelectItem value="CRITICAL">Critical</SelectItem>
+                        <SelectItem value="HIGH">High</SelectItem>
+                        <SelectItem value="MEDIUM">Medium</SelectItem>
+                        <SelectItem value="LOW">Low</SelectItem>
+                        <SelectItem value="UNKNOWN">None</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-medium text-muted-foreground" htmlFor="interface-vlan-filter">
+                      VLAN
+                    </label>
+                    <Input
+                      id="interface-vlan-filter"
+                      placeholder="All VLANs"
+                      value={vlanFilter}
+                      onChange={(e) => setVlanFilter(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-medium text-muted-foreground" htmlFor="interface-vendor-filter">
+                      Vendor
+                    </label>
+                    <Select value={vendorFilter} onValueChange={setVendorFilter}>
+                      <SelectTrigger id="interface-vendor-filter">
+                        <SelectValue placeholder="All Vendors" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All Vendors</SelectItem>
+                        {vendorOptions.map((vendor) => (
+                          <SelectItem key={vendor} value={vendor}>
+                            {vendor}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
               </div>
             </CardContent>
