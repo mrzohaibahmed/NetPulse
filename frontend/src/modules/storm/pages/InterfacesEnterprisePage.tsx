@@ -447,7 +447,7 @@ export function InterfacesEnterprisePage() {
     (interfacesQuery.isLoading && switchDevices.length === 0 && rows.length === 0)
 
   return (
-    <div className="mx-auto w-full max-w-[1600px] space-y-5">
+    <div className="np-page mx-auto w-full max-w-[1600px]">
       <PageHeader
         title="Interface Inventory"
         description="Switch Interface Manager — managed switches and their ports only"

@@ -122,7 +122,7 @@ export function AccountPage() {
   const initials = (user?.username || 'U').slice(0, 2).toUpperCase()
 
   return (
-    <div className="space-y-6">
+    <div className="np-page">
       <PageHeader title="Account" description="Manage your profile, security, and preferences" />
 
       {user?.mustChangePassword ? (

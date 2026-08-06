@@ -275,7 +275,7 @@ export function AlertsPage() {
   }
 
   return (
-    <div className="space-y-8">
+    <div className="np-page">
       <PageHeader
         title="Operations Center"
         description="Real-time monitoring of network events, alerts and system health."

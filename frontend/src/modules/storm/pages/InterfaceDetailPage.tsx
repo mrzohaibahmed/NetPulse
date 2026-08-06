@@ -358,7 +358,7 @@ export function InterfaceDetailPage() {
   const canManualRecover = latestIncident?.status === 'MITIGATED'
 
   return (
-    <div className="space-y-6">
+    <div className="np-page">
       <div className="flex flex-wrap items-center gap-3">
         <Button type="button" variant="ghost" size="sm" asChild>
           <Link to="/interfaces">

@@ -1,6 +1,7 @@
-import { Badge } from '@/shared/ui/badge'
+import { Badge, badgeVariants } from '@/shared/ui/badge'
 import { cn } from '@/lib/utils'
 import type { NetworkInterface } from '@/types'
+import type { VariantProps } from 'class-variance-authority'
 
 type StatusKind = 'admin' | 'oper'
 
@@ -51,26 +52,21 @@ interface PortModeBadgeProps {
 export function PortModeBadge({ mode, className }: PortModeBadgeProps) {
   const value = (mode || 'unknown').toLowerCase()
 
-  const styles: Record<string, string> = {
-    access: 'border-success/40 bg-success/15 text-success',
-    trunk: 'border-primary/40 bg-primary/15 text-primary',
-    routed: 'border-slate-400/40 bg-slate-500/15 text-slate-300',
-    unknown: 'border-border bg-muted/40 text-muted-foreground',
-  }
-
-  const dots: Record<string, string> = {
-    access: 'bg-success',
-    trunk: 'bg-primary',
-    routed: 'bg-slate-300',
-    unknown: 'bg-slate-500',
-  }
+  const variant: NonNullable<VariantProps<typeof badgeVariants>['variant']> =
+    value === 'access' ? 'success' : value === 'trunk' ? 'default' : value === 'routed' ? 'muted' : 'muted'
 
   return (
-    <Badge
-      variant="outline"
-      className={cn('capitalize', styles[value] || styles.unknown, className)}
-    >
-      <span className={cn('h-1.5 w-1.5 rounded-full', dots[value] || dots.unknown)} aria-hidden />
+    <Badge variant={variant} className={cn('capitalize', className)}>
+      <span
+        className={cn(
+          'h-1.5 w-1.5 rounded-full',
+          value === 'access' && 'bg-success',
+          value === 'trunk' && 'bg-primary',
+          value === 'routed' && 'bg-slate-300',
+          value === 'unknown' && 'bg-slate-500',
+        )}
+        aria-hidden
+      />
       {value}
     </Badge>
   )
@@ -84,13 +80,16 @@ type ClassificationFlag =
   | 'management'
   | 'protected'
 
-const CLASSIFICATION_STYLES: Record<ClassificationFlag, string> = {
-  access: 'border-success/40 bg-success/15 text-success',
-  trunk: 'border-primary/40 bg-primary/15 text-primary',
-  uplink: 'border-amber-400/40 bg-amber-500/15 text-amber-200',
-  infrastructure: 'border-sky-400/40 bg-sky-500/15 text-sky-200',
-  management: 'border-violet-400/40 bg-violet-500/15 text-violet-200',
-  protected: 'border-danger/40 bg-danger/15 text-danger',
+const CLASSIFICATION_STYLES: Record<
+  ClassificationFlag,
+  NonNullable<VariantProps<typeof badgeVariants>['variant']>
+> = {
+  access: 'success',
+  trunk: 'default',
+  uplink: 'warning',
+  infrastructure: 'info',
+  management: 'storm',
+  protected: 'critical',
 }
 
 interface ClassificationBadgeProps {
@@ -100,10 +99,7 @@ interface ClassificationBadgeProps {
 
 export function ClassificationBadge({ flag, className }: ClassificationBadgeProps) {
   return (
-    <Badge
-      variant="outline"
-      className={cn('capitalize', CLASSIFICATION_STYLES[flag], className)}
-    >
+    <Badge variant={CLASSIFICATION_STYLES[flag]} className={cn('capitalize', className)}>
       {flag}
     </Badge>
   )

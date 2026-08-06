@@ -18,7 +18,7 @@ export function Layout() {
       />
       <div className="flex min-w-0 flex-1 flex-col">
         <TopNavbar />
-        <main className="min-w-0 flex-1 overflow-x-auto p-4 pb-8 md:p-6 md:pb-10">
+        <main className="min-w-0 flex-1 overflow-x-auto px-4 pb-10 pt-4 md:px-6 md:pb-12 md:pt-6 lg:px-8">
           <PageTransition>
             <Outlet />
           </PageTransition>

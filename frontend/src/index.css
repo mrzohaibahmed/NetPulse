@@ -26,6 +26,7 @@
   --color-success: #22c55e;
   --color-warning: #f59e0b;
   --color-danger: #ef4444;
+  --color-info: #38bdf8;
   --color-sidebar: #0b1220;
   --color-sidebar-foreground: #e2e8f0;
   --color-sidebar-border: #1e293b;
@@ -36,6 +37,25 @@
   --radius-md: 0.5rem;
   --radius-lg: 0.75rem;
   --radius-xl: 1rem;
+
+  /* Enterprise spacing scale */
+  --spacing-page-x: 1.5rem;
+  --spacing-page-y: 2rem;
+  --spacing-section: 2rem;
+  --spacing-card: 1.25rem;
+  --spacing-stack: 1rem;
+  --spacing-inline: 0.75rem;
+
+  /* Icon scale */
+  --icon-sm: 0.875rem;
+  --icon-md: 1rem;
+  --icon-lg: 1.25rem;
+  --icon-xl: 1.5rem;
+
+  /* KPI */
+  --kpi-min-height: 7.5rem;
+  --table-row-height: 3rem;
+  --table-header-height: 2.75rem;
 }
 
 @layer base {
@@ -63,6 +83,7 @@
     --color-accent-foreground: #1e3a8a;
     --color-border: #cbd5e1;
     --color-input: #cbd5e1;
+    --color-info: #0284c7;
     --color-sidebar: #0f172a;
     --color-sidebar-foreground: #e2e8f0;
     --color-sidebar-border: #1e293b;
@@ -96,15 +117,126 @@
   :focus-visible {
     @apply outline-2 outline-offset-2 outline-ring;
   }
+
+  h1,
+  .np-h1 {
+    @apply text-2xl font-bold tracking-tight md:text-3xl;
+  }
+
+  h2,
+  .np-h2 {
+    @apply text-lg font-semibold tracking-tight md:text-xl;
+  }
+
+  h3,
+  .np-h3 {
+    @apply text-base font-semibold tracking-tight;
+  }
+
+  .np-body {
+    @apply text-sm leading-relaxed text-foreground;
+  }
+
+  .np-caption {
+    @apply text-xs text-muted-foreground;
+  }
+
+  .np-description {
+    @apply text-sm text-muted-foreground md:text-base;
+  }
+
+  .np-metric {
+    @apply text-2xl font-bold tracking-tight tabular-nums;
+  }
+
+  .np-table-text {
+    @apply text-sm;
+  }
+
+  .np-label {
+    @apply text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground;
+  }
+}
+
+@layer components {
+  .np-page {
+    @apply space-y-8;
+  }
+
+  .np-section {
+    @apply space-y-4;
+  }
+
+  .np-toolbar {
+    @apply flex flex-wrap items-center gap-2;
+  }
+
+  .np-table-shell {
+    @apply overflow-hidden rounded-xl border border-border/70 bg-card/80 shadow-sm backdrop-blur-md;
+  }
+
+  .np-table-toolbar {
+    @apply flex flex-wrap items-end gap-3 border-b border-border/60 bg-secondary/15 p-4;
+  }
+
+  .np-table-footer {
+    @apply border-t border-border/60 px-4 pb-2;
+  }
+
+  .np-icon-sm {
+    width: var(--icon-sm);
+    height: var(--icon-sm);
+  }
+
+  .np-icon-md {
+    width: var(--icon-md);
+    height: var(--icon-md);
+  }
+
+  .np-icon-lg {
+    width: var(--icon-lg);
+    height: var(--icon-lg);
+  }
+
+  .np-icon-box {
+    @apply flex h-10 w-10 shrink-0 items-center justify-center rounded-lg;
+  }
+
+  .np-icon-box-sm {
+    @apply flex h-8 w-8 shrink-0 items-center justify-center rounded-lg;
+  }
 }
 
 @layer utilities {
   .glass {
-    @apply border border-white/10 bg-card/80 shadow-lg backdrop-blur-md;
+    @apply border border-border/70 bg-card/80 shadow-lg shadow-black/10 backdrop-blur-md;
+  }
+
+  html.light .glass {
+    @apply border-border/80 bg-card/90 shadow-md shadow-slate-900/5;
   }
 
   .mono {
-    @apply font-mono text-[0.86em];
+    @apply font-mono text-[0.86em] tabular-nums;
+  }
+
+  .np-hover-lift {
+    @apply transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md;
+  }
+
+  .np-fade-in {
+    animation: np-fade-in 0.22s ease-out;
+  }
+}
+
+@keyframes np-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 
@@ -115,5 +247,9 @@
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+
+  .np-hover-lift:hover {
+    transform: none;
   }
 }
