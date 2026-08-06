@@ -22,6 +22,7 @@ import {
 } from 'lucide-react'
 import { useDeviceHistoryQuery, useDeviceMutations, useNmapScanMutation } from '@/hooks/queries'
 import { useAuth } from '@/auth/AuthContext'
+import { useTheme } from '@/lib/theme'
 import { formatDateTime, formatMs, formatPercent, formatRelative } from '@/utils/format'
 import { StatusBadge } from '@/components/shared/StatusBadge'
 import { EmptyState } from '@/components/shared/EmptyState'
@@ -51,8 +52,29 @@ interface DeviceDrawerProps {
 
 type TabId = 'overview' | 'network'
 
+function RttTooltip({
+  active,
+  payload,
+  label,
+}: {
+  active?: boolean
+  payload?: Array<{ value?: number; color?: string }>
+  label?: string
+}) {
+  if (!active || !payload?.length) return null
+  return (
+    <div className="rounded-lg border border-border bg-popover px-3 py-2 text-xs shadow-xl">
+      <p className="mb-1 font-medium text-foreground">{formatDateTime(label)}</p>
+      <p style={{ color: payload[0].color }} className="mono">
+        RTT: {Number(payload[0].value).toFixed(1)} ms
+      </p>
+    </div>
+  )
+}
+
 export function DeviceDrawer({ deviceId, open, onOpenChange }: DeviceDrawerProps) {
   const { isOperator } = useAuth()
+  const { theme } = useTheme()
   const [activeTab, setActiveTab] = useState<TabId>('overview')
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
@@ -215,18 +237,21 @@ export function DeviceDrawer({ deviceId, open, onOpenChange }: DeviceDrawerProps
                         <div className="h-56 rounded-lg border border-border/60 bg-secondary/20 p-2">
                           <ResponsiveContainer width="100%" height="100%">
                             <LineChart data={data?.responseTimeTrend}>
-                              <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                              <CartesianGrid
+                                strokeDasharray="3 3"
+                                stroke={theme === 'light' ? '#e2e8f0' : '#334155'}
+                              />
                               <XAxis
                                 dataKey="timestamp"
-                                tick={{ fill: '#94a3b8', fontSize: 10 }}
+                                tick={{ fill: theme === 'light' ? '#64748b' : '#94a3b8', fontSize: 10 }}
                                 tickFormatter={(value) => formatDateTime(String(value)).slice(5, 16)}
                               />
-                              <YAxis tick={{ fill: '#94a3b8', fontSize: 10 }} unit=" ms" width={48} />
-                              <Tooltip
-                                labelFormatter={(value) => formatDateTime(String(value))}
-                                formatter={(value) => [`${Number(value).toFixed(1)} ms`, 'RTT']}
-                                contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8 }}
+                              <YAxis
+                                tick={{ fill: theme === 'light' ? '#64748b' : '#94a3b8', fontSize: 10 }}
+                                unit=" ms"
+                                width={48}
                               />
+                              <Tooltip content={<RttTooltip />} />
                               <Line type="monotone" dataKey="responseTime" stroke="#3B82F6" strokeWidth={2} dot={false} />
                             </LineChart>
                           </ResponsiveContainer>

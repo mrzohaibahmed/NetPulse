@@ -34,7 +34,7 @@ export function InterfaceStatusBadge({
           variant === 'success' && 'bg-success',
           variant === 'danger' && 'bg-danger',
           variant === 'warning' && 'bg-warning',
-          variant === 'muted' && 'bg-slate-400',
+          variant === 'muted' && 'bg-slate-500 dark:bg-slate-400',
         )}
         aria-hidden
       />
@@ -54,14 +54,14 @@ export function PortModeBadge({ mode, className }: PortModeBadgeProps) {
   const styles: Record<string, string> = {
     access: 'border-success/40 bg-success/15 text-success',
     trunk: 'border-primary/40 bg-primary/15 text-primary',
-    routed: 'border-slate-400/40 bg-slate-500/15 text-slate-300',
+    routed: 'border-slate-400/40 bg-slate-500/15 text-slate-600 dark:text-slate-300',
     unknown: 'border-border bg-muted/40 text-muted-foreground',
   }
 
   const dots: Record<string, string> = {
     access: 'bg-success',
     trunk: 'bg-primary',
-    routed: 'bg-slate-300',
+    routed: 'bg-slate-600 dark:bg-slate-300',
     unknown: 'bg-slate-500',
   }
 
@@ -87,9 +87,9 @@ type ClassificationFlag =
 const CLASSIFICATION_STYLES: Record<ClassificationFlag, string> = {
   access: 'border-success/40 bg-success/15 text-success',
   trunk: 'border-primary/40 bg-primary/15 text-primary',
-  uplink: 'border-amber-400/40 bg-amber-500/15 text-amber-200',
-  infrastructure: 'border-sky-400/40 bg-sky-500/15 text-sky-200',
-  management: 'border-violet-400/40 bg-violet-500/15 text-violet-200',
+  uplink: 'border-amber-400/40 bg-amber-500/15 text-amber-700 dark:text-amber-200',
+  infrastructure: 'border-sky-400/40 bg-sky-500/15 text-sky-700 dark:text-sky-200',
+  management: 'border-violet-400/40 bg-violet-500/15 text-violet-700 dark:text-violet-200',
   protected: 'border-danger/40 bg-danger/15 text-danger',
 }
 

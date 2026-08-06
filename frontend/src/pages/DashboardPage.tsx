@@ -14,6 +14,7 @@ import {
   ChevronRight,
 } from 'lucide-react'
 import { useAuth } from '@/auth/AuthContext'
+import { useTheme } from '@/lib/theme'
 import {
   Area,
   AreaChart,
@@ -161,7 +162,7 @@ function DeviceTypePanel({ label, devices }: { label: string; devices: DeviceSta
                 </span>
               </CardTitle>
               <p className="mt-2 text-xs text-muted-foreground">
-                <span className="text-green-500 font-semibold">{online}</span> online · <span className="text-orange-500 font-semibold">{offline}</span> offline
+                <span className="text-success font-semibold">{online}</span> online · <span className="text-orange-700 font-semibold dark:text-orange-500">{offline}</span> offline
               </p>
             </div>
             <ChevronRight className="h-5 w-5 text-muted-foreground shrink-0" />
@@ -210,7 +211,7 @@ function DeviceTypePanel({ label, devices }: { label: string; devices: DeviceSta
           <div className="space-y-4">
             <div className="flex items-center justify-between text-sm">
               <div>
-                <span className="text-green-500 font-semibold">{online}</span> online · <span className="text-orange-500 font-semibold">{offline}</span> offline
+                <span className="text-success font-semibold">{online}</span> online · <span className="text-orange-700 font-semibold dark:text-orange-500">{offline}</span> offline
               </div>
               <span className="text-muted-foreground">Total: {devices.length}</span>
             </div>
@@ -264,6 +265,7 @@ function DeviceTypePanel({ label, devices }: { label: string; devices: DeviceSta
 
 export function DashboardPage() {
   const { isOperator } = useAuth()
+  const { theme } = useTheme()
   const dash = useDashboardQuery()
   const { acknowledge, dismiss } = useAlertMutations()
   const health = computeNetworkHealth(dash.summary)
@@ -402,9 +404,9 @@ export function DashboardPage() {
               <div className="h-64">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={dash.responseTime.slice(0, 12)}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
-                    <XAxis dataKey="hostname" tick={{ fill: '#94a3b8', fontSize: 11 }} interval={0} angle={-20} textAnchor="end" height={60} />
-                    <YAxis tick={{ fill: '#94a3b8', fontSize: 11 }} unit=" ms" width={56} />
+                    <CartesianGrid strokeDasharray="3 3" stroke={theme === 'light' ? '#e2e8f0' : '#334155'} vertical={false} />
+                    <XAxis dataKey="hostname" tick={{ fill: theme === 'light' ? '#64748b' : '#94a3b8', fontSize: 11 }} interval={0} angle={-20} textAnchor="end" height={60} />
+                    <YAxis tick={{ fill: theme === 'light' ? '#64748b' : '#94a3b8', fontSize: 11 }} unit=" ms" width={56} />
                     <Tooltip content={<ChartTooltip />} />
                     <Bar dataKey="responseTime" name="RTT" fill="#3B82F6" radius={[6, 6, 0, 0]} />
                   </BarChart>
@@ -507,9 +509,9 @@ export function DashboardPage() {
                         <stop offset="100%" stopColor="#3B82F6" stopOpacity={0} />
                       </linearGradient>
                     </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
-                    <XAxis dataKey="date" tick={{ fill: '#94a3b8', fontSize: 11 }} />
-                    <YAxis tick={{ fill: '#94a3b8', fontSize: 11 }} width={36} />
+                    <CartesianGrid strokeDasharray="3 3" stroke={theme === 'light' ? '#e2e8f0' : '#334155'} vertical={false} />
+                    <XAxis dataKey="date" tick={{ fill: theme === 'light' ? '#64748b' : '#94a3b8', fontSize: 11 }} />
+                    <YAxis tick={{ fill: theme === 'light' ? '#64748b' : '#94a3b8', fontSize: 11 }} width={36} />
                     <Tooltip content={<ChartTooltip />} />
                     <Area type="monotone" dataKey="scans" name="Scans" stroke="#3B82F6" fill="url(#scanFill)" strokeWidth={2} />
                   </AreaChart>
@@ -559,9 +561,9 @@ export function DashboardPage() {
               <div className="h-56">
                 <ResponsiveContainer width="100%" height="100%">
                   <AreaChart data={alertTrendData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
-                    <XAxis dataKey="date" tick={{ fill: '#94a3b8', fontSize: 11 }} />
-                    <YAxis tick={{ fill: '#94a3b8', fontSize: 11 }} width={36} />
+                    <CartesianGrid strokeDasharray="3 3" stroke={theme === 'light' ? '#e2e8f0' : '#334155'} vertical={false} />
+                    <XAxis dataKey="date" tick={{ fill: theme === 'light' ? '#64748b' : '#94a3b8', fontSize: 11 }} />
+                    <YAxis tick={{ fill: theme === 'light' ? '#64748b' : '#94a3b8', fontSize: 11 }} width={36} />
                     <Tooltip content={<ChartTooltip />} />
                     <Area type="monotone" dataKey="value" name="Count" stroke="#EF4444" fill="#EF444433" strokeWidth={2} />
                   </AreaChart>

@@ -11,6 +11,7 @@ import {
 } from 'recharts'
 import {
   Activity,
+  AlertOctagon,
   CheckCircle2,
   ChevronDown,
   ChevronUp,
@@ -20,10 +21,13 @@ import {
   RefreshCw,
   Shield,
   ShieldCheck,
+  Siren,
+  Zap,
 } from 'lucide-react'
 import { PortClassificationBadges } from '@/components/interfaces/InterfaceStatusBadge'
 import { EmptyState } from '@/components/shared/EmptyState'
 import { ErrorState } from '@/components/shared/ErrorState'
+import { KpiCard } from '@/components/shared/KpiCard'
 import { TableSkeleton } from '@/components/shared/LoadingState'
 import { PageHeader } from '@/components/shared/PageHeader'
 import { PaginationControls } from '@/components/shared/PaginationControls'
@@ -124,7 +128,11 @@ function severityTone(severity: string | undefined): {
     return { badge: 'danger', text: 'text-danger', bar: 'bg-danger' }
   }
   if (value === 'HIGH') {
-    return { badge: 'warning', text: 'text-orange-400', bar: 'bg-orange-400' }
+    return {
+      badge: 'warning',
+      text: 'text-orange-600 dark:text-orange-400',
+      bar: 'bg-orange-600 dark:bg-orange-400',
+    }
   }
   if (value === 'MEDIUM') {
     return { badge: 'warning', text: 'text-warning', bar: 'bg-warning' }
@@ -228,7 +236,7 @@ function ConfirmationStateBadge({ state }: { state: string }) {
   }
   return (
     <Badge variant="muted" className="font-semibold uppercase tracking-wide">
-      <span className="h-1.5 w-1.5 rounded-full bg-slate-400" aria-hidden />
+      <span className="h-1.5 w-1.5 rounded-full bg-slate-500 dark:bg-slate-400" aria-hidden />
       Not confirmed
     </Badge>
   )
@@ -1121,54 +1129,12 @@ export function StormProtectionPage() {
       />
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Switches</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-bold">{fleetKpis.switches}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Eligible</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-bold text-success">{fleetKpis.eligible}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Critical risk</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-bold text-danger">{fleetKpis.critical}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Confirmed</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-bold text-success">{fleetKpis.confirmed}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Safe</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-bold text-success">{fleetKpis.safe}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Incidents</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-bold">{fleetKpis.incidents}</p>
-          </CardContent>
-        </Card>
+        <KpiCard label="Switches" value={fleetKpis.switches} icon={Network} tone="default" />
+        <KpiCard label="Eligible" value={fleetKpis.eligible} icon={ShieldCheck} tone="success" />
+        <KpiCard label="Critical risk" value={fleetKpis.critical} icon={Zap} tone="danger" />
+        <KpiCard label="Confirmed" value={fleetKpis.confirmed} icon={Siren} tone="success" />
+        <KpiCard label="Safe" value={fleetKpis.safe} icon={CheckCircle2} tone="success" />
+        <KpiCard label="Incidents" value={fleetKpis.incidents} icon={AlertOctagon} tone="default" />
       </div>
 
       <Card className="border-primary/20 bg-secondary/10">
@@ -2348,7 +2314,7 @@ function SwitchStormSection({
                               {row.incidentId}
                             </TableCell>
                             <TableCell className="font-medium">{row.interface}</TableCell>
-                            <TableCell className="text-xs font-semibold uppercase text-sky-400">
+                            <TableCell className="text-xs font-semibold uppercase text-sky-700 dark:text-sky-400">
                               {row.strategy}
                             </TableCell>
                             <TableCell>

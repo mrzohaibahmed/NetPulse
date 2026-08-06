@@ -23,6 +23,7 @@ import {
   Radio,
 } from 'lucide-react'
 import { useAuth } from '@/auth/AuthContext'
+import { useTheme } from '@/lib/theme'
 import {
   InterfaceStatusBadge,
   PortClassificationBadges,
@@ -217,6 +218,7 @@ export function InterfaceDetailPage() {
   const { deviceId = '', interfaceName: rawName = '' } = useParams()
   const interfaceName = decodeURIComponent(rawName)
   const { isAdmin, isOperator } = useAuth()
+  const { theme } = useTheme()
   const mutations = useInterfaceMutations()
   const [historyLimit, setHistoryLimit] = useState('100')
   const [confirmAction, setConfirmAction] = useState<'shutdown' | 'recover' | null>(null)
@@ -786,15 +788,15 @@ export function InterfaceDetailPage() {
                         <stop offset="100%" stopColor="#3B82F6" stopOpacity={0.02} />
                       </linearGradient>
                     </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
+                    <CartesianGrid strokeDasharray="3 3" stroke={theme === 'light' ? '#e2e8f0' : '#334155'} vertical={false} />
                     <XAxis
                       dataKey="timestamp"
-                      tick={{ fill: '#94a3b8', fontSize: 10 }}
+                      tick={{ fill: theme === 'light' ? '#64748b' : '#94a3b8', fontSize: 10 }}
                       tickFormatter={(value) => formatDateTime(String(value)).slice(5, 16)}
                       minTickGap={28}
                     />
                     <YAxis
-                      tick={{ fill: '#94a3b8', fontSize: 11 }}
+                      tick={{ fill: theme === 'light' ? '#64748b' : '#94a3b8', fontSize: 11 }}
                       unit="%"
                       width={42}
                       domain={[0, 'auto']}
@@ -913,14 +915,14 @@ export function InterfaceDetailPage() {
               <div className="h-56">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={chartData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                    <CartesianGrid strokeDasharray="3 3" stroke={theme === 'light' ? '#e2e8f0' : '#334155'} />
                     <XAxis
                       dataKey="timestamp"
-                      tick={{ fill: '#94a3b8', fontSize: 10 }}
+                      tick={{ fill: theme === 'light' ? '#64748b' : '#94a3b8', fontSize: 10 }}
                       tickFormatter={(value) => formatDateTime(String(value)).slice(5, 16)}
                       minTickGap={28}
                     />
-                    <YAxis tick={{ fill: '#94a3b8', fontSize: 10 }} width={48} />
+                    <YAxis tick={{ fill: theme === 'light' ? '#64748b' : '#94a3b8', fontSize: 10 }} width={48} />
                     <RechartsTooltip content={<ChartTooltip />} />
                     <Legend />
                     <Line
@@ -993,14 +995,14 @@ export function InterfaceDetailPage() {
               <div className="h-56">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={chartData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                    <CartesianGrid strokeDasharray="3 3" stroke={theme === 'light' ? '#e2e8f0' : '#334155'} />
                     <XAxis
                       dataKey="timestamp"
-                      tick={{ fill: '#94a3b8', fontSize: 10 }}
+                      tick={{ fill: theme === 'light' ? '#64748b' : '#94a3b8', fontSize: 10 }}
                       tickFormatter={(value) => formatDateTime(String(value)).slice(5, 16)}
                       minTickGap={28}
                     />
-                    <YAxis tick={{ fill: '#94a3b8', fontSize: 10 }} width={48} />
+                    <YAxis tick={{ fill: theme === 'light' ? '#64748b' : '#94a3b8', fontSize: 10 }} width={48} />
                     <RechartsTooltip content={<ChartTooltip />} />
                     <Legend />
                     <Line
@@ -1040,7 +1042,7 @@ export function InterfaceDetailPage() {
                       type="monotone"
                       dataKey="txDiscards"
                       name="TX Discards"
-                      stroke="#CBD5E1"
+                      stroke={theme === 'light' ? '#475569' : '#CBD5E1'}
                       strokeWidth={1.5}
                       strokeDasharray="4 4"
                       dot={false}

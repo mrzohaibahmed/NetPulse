@@ -1,5 +1,8 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+@custom-variant light (&:where(.light, .light *));
+
 @theme {
   --font-sans: "Outfit", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, monospace;
@@ -49,20 +52,29 @@
 
   html.light {
     color-scheme: light;
-    --color-background: #f1f5f9;
-    --color-foreground: #0f172a;
-    --color-card: #ffffff;
-    --color-card-foreground: #0f172a;
+    /* Off-white page bg + a subtly brighter off-white card surface, so cards
+     * read as "raised" without needing a harsh border (design rule #1). */
+    --color-background: #f7f8fa;
+    --color-foreground: #1e293b;
+    --color-card: #fcfcfd;
+    --color-card-foreground: #1e293b;
     --color-popover: #ffffff;
-    --color-popover-foreground: #0f172a;
+    --color-popover-foreground: #1e293b;
     --color-secondary: #e2e8f0;
-    --color-secondary-foreground: #0f172a;
+    --color-secondary-foreground: #1e293b;
     --color-muted: #e2e8f0;
     --color-muted-foreground: #64748b;
     --color-accent: #dbeafe;
     --color-accent-foreground: #1e3a8a;
-    --color-border: #cbd5e1;
-    --color-input: #cbd5e1;
+    --color-border: #e2e8f0;
+    --color-input: #e2e8f0;
+    /* Dark mode's success/warning/danger are tuned to pop against navy and
+     * fall to ~2-3.6:1 contrast used as text on the new off-white background.
+     * Deepen them for light mode only; same hue family, darker so they read
+     * as text/icons at AA contrast instead of just as glow accents. */
+    --color-success: #15803d;
+    --color-warning: #b45309;
+    --color-danger: #b91c1c;
     --color-sidebar: #0f172a;
     --color-sidebar-foreground: #e2e8f0;
     --color-sidebar-border: #1e293b;
@@ -103,6 +115,14 @@
     @apply border border-white/10 bg-card/80 shadow-lg backdrop-blur-md;
   }
 
+  /* .glass's own border-white/10 wins the cascade over Card's border-border/80
+   * on every element that combines both classes, leaving cards borderless in
+   * light mode (there is no translucent-white hairline to see against an
+   * off-white page). Give it a deliberate, soft border in light mode instead. */
+  .light .glass {
+    border-color: var(--color-border);
+  }
+
   .mono {
     @apply font-mono text-[0.86em];
   }
@@ -123,6 +143,16 @@
 .card-surface,
 .glass {
   transition: box-shadow 0.2s ease-in-out, background-color 0.2s ease-in-out;
+}
+
+/* Soft, diffuse resting elevation for light mode — large blur, low opacity,
+ * cool-neutral (slate) shadow color instead of the harder shadow-black/20
+ * used in dark mode. Dark mode's own shadow is untouched. */
+.light .card-surface,
+.light .glass {
+  box-shadow:
+    0 1px 2px 0 rgba(15, 23, 42, 0.04),
+    0 8px 24px -4px rgba(15, 23, 42, 0.08);
 }
 
 @media (hover: hover) {

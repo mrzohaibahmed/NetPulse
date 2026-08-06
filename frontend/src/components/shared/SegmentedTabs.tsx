@@ -22,7 +22,7 @@ interface SegmentedTabsProps<T extends string> {
  */
 export function SegmentedTabs<T extends string>({ options, value, onChange, className }: SegmentedTabsProps<T>) {
   return (
-    <div className={cn('inline-flex items-center gap-1 rounded-lg border border-border bg-secondary/40 p-1', className)} role="tablist">
+    <div className={cn('inline-flex items-center gap-1 rounded-lg border border-border bg-secondary/70 p-1 dark:bg-secondary/40', className)} role="tablist">
       {options.map((option) => {
         const Icon = option.icon
         const active = option.value === value

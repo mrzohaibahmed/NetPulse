@@ -12,20 +12,27 @@ interface KpiCardProps {
   className?: string
 }
 
+// Light mode gets a deliberately stronger tint (via the `light:` variant,
+// scoped to `html.light` — see index.css) than dark mode: on a near-black
+// card a 15% tint already reads clearly, but on the new off-white card
+// surface the same 15% all but disappears. Bumping it to ~26% for light
+// mode only keeps the tone clearly legible as a category cue without
+// tipping into a garish, saturated block of color. Dark mode's classes are
+// left byte-for-byte identical to before.
 const toneStyles = {
-  default: 'from-slate-500/10 to-transparent border-l-slate-400',
-  success: 'from-success/15 to-transparent border-l-success',
-  warning: 'from-warning/15 to-transparent border-l-warning',
-  danger: 'from-danger/15 to-transparent border-l-danger',
-  accent: 'from-primary/15 to-transparent border-l-primary',
+  default: 'from-slate-500/10 to-transparent border-l-slate-500 dark:border-l-slate-400',
+  success: 'from-success/15 light:from-success/25 to-transparent border-l-success',
+  warning: 'from-warning/15 light:from-warning/25 to-transparent border-l-warning',
+  danger: 'from-danger/15 light:from-danger/25 to-transparent border-l-danger',
+  accent: 'from-primary/15 light:from-primary/25 to-transparent border-l-primary',
 }
 
 const iconTone = {
-  default: 'bg-slate-500/15 text-slate-300',
-  success: 'bg-success/15 text-success',
-  warning: 'bg-warning/15 text-warning',
-  danger: 'bg-danger/15 text-danger',
-  accent: 'bg-primary/15 text-primary',
+  default: 'bg-slate-500/15 light:bg-slate-500/20 text-slate-600 dark:text-slate-300',
+  success: 'bg-success/15 light:bg-success/20 text-success',
+  warning: 'bg-warning/15 light:bg-warning/20 text-warning',
+  danger: 'bg-danger/15 light:bg-danger/20 text-danger',
+  accent: 'bg-primary/15 light:bg-primary/20 text-primary',
 }
 
 export function KpiCard({

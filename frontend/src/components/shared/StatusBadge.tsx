@@ -28,7 +28,7 @@ export function StatusBadge({ status, className, pulse = true }: StatusBadgeProp
             'h-1.5 w-1.5 rounded-full',
             tone === 'warn' && 'bg-warning',
             tone === 'offline' && 'bg-danger',
-            tone === 'unknown' && 'bg-slate-400',
+            tone === 'unknown' && 'bg-slate-500 dark:bg-slate-400',
           )}
         />
       )}
