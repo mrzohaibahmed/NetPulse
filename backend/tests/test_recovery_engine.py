@@ -313,6 +313,8 @@ class RecoveryEngineTests(unittest.TestCase):
                     "stabilizationEnd": ANY,
                     "recoveredAt": ANY,
                     "updatedAt": ANY,
+                    "postRecoveryReMitigationPending": True,
+                    "postRecoveryReMitigationAttempted": False,
                 }
             },
         )
@@ -487,11 +489,12 @@ class RecoveryEngineTests(unittest.TestCase):
             execute_recovery(self.incident_id)
 
     @patch("services.storm.recovery.scheduler.get_settings")
-    @patch("services.storm.recovery.scheduler.record_recovery_history")
+    @patch("services.storm.recovery.scheduler.handle_storm_reappearance")
+    @patch("services.storm.recovery.scheduler.consume_re_mitigation_pending")
     @patch("services.storm.recovery.scheduler.db")
     @patch("services.storm.recovery.scheduler.trigger_re_mitigation")
     def test_scheduler_stabilization_re_mitigates_if_storm_reappears(
-        self, mock_trigger, mock_db, mock_record_history, mock_settings
+        self, mock_trigger, mock_db, mock_consume, mock_handle, mock_settings
     ):
         """Test that scheduling cycle triggers re-mitigation if storm reappears during stabilization."""
         mock_settings.return_value = {
@@ -505,6 +508,7 @@ class RecoveryEngineTests(unittest.TestCase):
         inc["status"] = "MONITORING"
         inc["recoveredAt"] = recovered_at
         inc["stabilizationEnd"] = datetime.now(timezone.utc) + timedelta(seconds=30)
+        inc["postRecoveryReMitigationPending"] = True
 
         def find_side_effect(query):
             if query.get("status") == "MONITORING":
@@ -532,25 +536,16 @@ class RecoveryEngineTests(unittest.TestCase):
             "status": "SUCCESS",
         }
         run_recovery_cycle()
-        # Verify trigger_re_mitigation called
         mock_trigger.assert_called_with(
             self.incident_id,
             "Storm confirmed by confirmation engine after recovery.",
+            post_recovery_allowance=True,
         )
-        mock_record_history.assert_called_with(
-            incident_id="storm-2026-000099",
-            device_id=self.device_id,
-            interface=self.interface,
-            recovery_status="REMITIGATED",
-            verification_result={
-                "success": False,
-                "error": (
-                    "Storm re-mitigated: Storm confirmed by confirmation "
-                    "engine after recovery."
-                ),
-            },
-            retry_count=0,
-        )
+        mock_consume.assert_called_once()
+        mock_handle.assert_called_once()
+        handle_kwargs = mock_handle.call_args.kwargs
+        self.assertEqual(handle_kwargs["trigger_result"]["success"], True)
+        self.assertEqual(handle_kwargs["trigger_result"]["incidentId"], "storm-2026-000099")
 
     @patch("services.storm.recovery.scheduler.execute_recovery")
     @patch("services.storm.recovery.scheduler.validate_recovery_policy")

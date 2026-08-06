@@ -14,6 +14,12 @@ from services.storm.incident import append_timeline_event
 from services.storm.recovery.audit import record_recovery_history
 from services.storm.recovery.engine import execute_recovery, trigger_re_mitigation
 from services.storm.recovery.policy import validate_recovery_policy
+from services.storm.recovery.re_mitigation import (
+    consume_re_mitigation_pending,
+    handle_consumed_re_mitigation_opportunity,
+    handle_storm_reappearance,
+    is_post_recovery_re_mitigation_pending,
+)
 from utils.monitor_logger import get_monitor_logger
 
 logger = get_monitor_logger("storm.recovery.scheduler")
@@ -170,19 +176,23 @@ def run_recovery_cycle() -> None:
                 )
 
             if storm_reappeared:
-                res = trigger_re_mitigation(incident_id, reason)
-                history_incident_id = res.get("incidentId") or incident_id
-                record_recovery_history(
-                    incident_id=history_incident_id,
-                    device_id=device_id,
-                    interface=interface,
-                    recovery_status="REMITIGATED",
-                    verification_result={
-                        "success": False,
-                        "error": f"Storm re-mitigated: {reason}",
-                    },
-                    retry_count=inc.get("recoveryRetryCount", 0),
+                if not is_post_recovery_re_mitigation_pending(inc):
+                    handle_consumed_re_mitigation_opportunity(inc, reason=reason, now=now)
+                    continue
+
+                logger.info(
+                    "[RECOVERY.SCHEDULER] Storm reappeared — attempting post-recovery "
+                    "re-mitigation | incident=%s | %s",
+                    incident_id,
+                    reason,
                 )
+                res = trigger_re_mitigation(
+                    incident_id,
+                    reason,
+                    post_recovery_allowance=True,
+                )
+                consume_re_mitigation_pending(incident_id, now=now)
+                handle_storm_reappearance(inc, reason=reason, trigger_result=res, now=now)
                 continue
 
             # Check if stabilization period has completed cleanly

@@ -302,3 +302,30 @@ def create_storm_recovery_failure_alert(
         status=action_status or "RECOVERY_FAILED",
         email_sent=email_sent,
     )
+
+
+def create_storm_remitigation_blocked_alert(
+    incident: dict,
+    *,
+    device: Optional[dict] = None,
+    reason: str,
+    failed_rule: Optional[str] = None,
+    email_sent: bool = False,
+) -> Optional[str]:
+    """CRITICAL alert when post-recovery automatic re-mitigation is blocked."""
+    interface = (incident or {}).get("interface") or "unknown"
+    message = reason or (
+        f"Storm remains active on interface {interface} after recovery.\n"
+        "Automatic re-mitigation was blocked.\n"
+        "Manual intervention is required."
+    )
+    return _insert_storm_alert(
+        incident=incident,
+        device=device,
+        title="Re-Mitigation Blocked — Manual Intervention Required",
+        message=message,
+        severity="CRITICAL",
+        action="SHUTDOWN",
+        status="ESCALATED",
+        email_sent=email_sent,
+    )

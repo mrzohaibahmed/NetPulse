@@ -25,6 +25,9 @@ SUBJECT_SHUTDOWN = "🚨 CRITICAL: Storm Detected - Port Automatically Shut Down
 SUBJECT_RECOVERY = "✅ INFO: Port Automatically Restored"
 SUBJECT_MITIGATION_FAILURE = "❌ WARNING: Automatic Port Shutdown Failed"
 SUBJECT_RECOVERY_FAILURE = "⚠ WARNING: Automatic Port Recovery Failed"
+SUBJECT_REMITIGATION_BLOCKED = (
+    "🚨 CRITICAL: Re-Mitigation Blocked — Manual Intervention Required"
+)
 
 
 def _smtp_ready(smtp: dict) -> bool:
@@ -562,6 +565,33 @@ def send_storm_recovery_failure(
         action_status=action_status,
         reason=reason,
         verification_result=verification_result if verification_result is not None else {"success": False},
+        operator=operator,
+        setting_flag="failureEmails",
+    )
+
+
+def send_storm_remitigation_blocked_notification(
+    incident: dict,
+    *,
+    reason: str,
+    failed_rule: Optional[str] = None,
+    operator: str = "SYSTEM",
+) -> bool:
+    """Email when post-recovery automatic re-mitigation is blocked."""
+    detail = reason
+    if failed_rule:
+        detail = f"{reason}\n\nFailed rule: {failed_rule}"
+    return _dispatch_storm_email(
+        kind="remitigation_blocked",
+        subject=SUBJECT_REMITIGATION_BLOCKED,
+        incident=incident,
+        banner_color="#c23b3b",
+        banner_label="CRITICAL",
+        event_type="Re-Mitigation Blocked",
+        action_performed="SHUTDOWN",
+        action_status="ESCALATED",
+        reason=detail,
+        verification_result={"success": False, "failedRule": failed_rule},
         operator=operator,
         setting_flag="failureEmails",
     )

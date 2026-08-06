@@ -131,12 +131,18 @@ def check_interface_unlocked(ctx: SafetyContext, _cfg: SafetyConfig) -> tuple[bo
 
 def check_max_attempts(ctx: SafetyContext, cfg: SafetyConfig) -> tuple[bool, str]:
     attempts = int(ctx.mitigation_attempts or 0)
-    if attempts >= int(cfg.maximum_attempts):
+    allowance = bool((ctx.extras or {}).get("post_recovery_remitigation"))
+    limit = int(cfg.maximum_attempts) + (1 if allowance else 0)
+    if attempts >= limit:
         return False, (
             f"Maximum mitigation attempts reached "
             f"({attempts}/{cfg.maximum_attempts})"
         )
-    return True, f"Attempts remaining ({attempts}/{cfg.maximum_attempts})"
+    remaining = limit - attempts
+    label = f"{attempts}/{cfg.maximum_attempts}"
+    if allowance:
+        label = f"{attempts}/{cfg.maximum_attempts} (+1 post-recovery)"
+    return True, f"Attempts remaining ({label}, {remaining} left)"
 
 
 def check_device_healthy(ctx: SafetyContext, cfg: SafetyConfig) -> tuple[bool, str]:
