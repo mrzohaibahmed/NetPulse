@@ -14,10 +14,12 @@ import {
   Pin,
   PinOff,
   Radar,
+  RotateCcw,
   Server,
   Settings,
   Shield,
   ShieldAlert,
+  ShieldCheck,
   Users,
   X,
 } from 'lucide-react'
@@ -57,7 +59,9 @@ type NavGroup = {
 
 const GROUP_STORAGE_KEY = 'netpulse.sidebar.groups'
 
-function stormViewActive(expected: 'overview' | 'incidents' | 'pipeline') {
+type StormView = 'overview' | 'incidents' | 'pipeline' | 'mitigation' | 'recovery'
+
+function stormViewActive(expected: StormView) {
   return (pathname: string, search: string) => {
     if (pathname !== '/storm') return false
     const view = new URLSearchParams(search).get('view')
@@ -77,24 +81,28 @@ export function Sidebar({ pinned, onPinnedChange, mobileOpen, onMobileOpenChange
   const apiOk = health.isError ? false : health.data ? true : null
   const dbOk = health.data ? health.data.database === 'Connected' : health.isError ? false : null
 
-  const topItems: NavItem[] = [
-    { id: 'home-dashboard', to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
-  ]
-
   const groups: NavGroup[] = [
+    {
+      id: 'dashboard',
+      title: 'Dashboard',
+      icon: LayoutDashboard,
+      defaultOpen: true,
+      items: [
+        {
+          id: 'dashboard-overview',
+          to: '/',
+          label: 'Enterprise Overview',
+          icon: LayoutDashboard,
+          end: true,
+        },
+      ],
+    },
     {
       id: 'ping',
       title: 'Ping Monitoring',
       icon: Activity,
       defaultOpen: true,
       items: [
-        {
-          id: 'ping-dashboard',
-          to: '/',
-          label: 'Dashboard',
-          icon: LayoutDashboard,
-          end: true,
-        },
         { id: 'ping-devices', to: '/devices', label: 'Devices', icon: Server },
         {
           id: 'ping-discovery',
@@ -122,6 +130,13 @@ export function Sidebar({ pinned, onPinnedChange, mobileOpen, onMobileOpenChange
         },
         { id: 'storm-interfaces', to: '/interfaces', label: 'Interfaces', icon: Network },
         {
+          id: 'storm-pipeline',
+          to: '/storm?view=pipeline',
+          label: 'Risk Analysis',
+          icon: GitBranch,
+          isActive: stormViewActive('pipeline'),
+        },
+        {
           id: 'storm-incidents',
           to: '/storm?view=incidents',
           label: 'Incidents',
@@ -129,11 +144,18 @@ export function Sidebar({ pinned, onPinnedChange, mobileOpen, onMobileOpenChange
           isActive: stormViewActive('incidents'),
         },
         {
-          id: 'storm-pipeline',
-          to: '/storm?view=pipeline',
-          label: 'Pipeline',
-          icon: GitBranch,
-          isActive: stormViewActive('pipeline'),
+          id: 'storm-mitigation',
+          to: '/storm?view=mitigation',
+          label: 'Mitigation',
+          icon: ShieldCheck,
+          isActive: stormViewActive('mitigation'),
+        },
+        {
+          id: 'storm-recovery',
+          to: '/storm?view=recovery',
+          label: 'Recovery',
+          icon: RotateCcw,
+          isActive: stormViewActive('recovery'),
         },
       ],
     },
@@ -340,15 +362,7 @@ export function Sidebar({ pinned, onPinnedChange, mobileOpen, onMobileOpenChange
         </AnimatePresence>
       </div>
 
-      <nav className="flex-1 space-y-4 overflow-y-auto px-2 pb-4" aria-label="Primary">
-        <div className="space-y-1">{filterItems(topItems).map((item) => renderNavLink(item))}</div>
-
-        {!collapsed ? (
-          <div className="mx-3 border-t border-sidebar-border/80" aria-hidden />
-        ) : (
-          <div className="mx-2 border-t border-sidebar-border/80" aria-hidden />
-        )}
-
+      <nav className="np-sidebar-scroll flex-1 space-y-4 overflow-y-auto px-2 pb-4" aria-label="Primary">
         {groups.map((group) => (
           <NavGroupSection key={group.id} group={group} />
         ))}

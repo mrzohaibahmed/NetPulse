@@ -504,18 +504,28 @@ export function Subsection({
   description,
   children,
   id,
+  loading = false,
 }: {
   title: string
   description?: string
   children: ReactNode
   id?: string
+  loading?: boolean
 }) {
   return (
     <div id={id} className="scroll-mt-24 space-y-3 border-t border-border/60 px-4 py-4">
-      <div>
-        <h4 className="text-sm font-semibold tracking-tight">{title}</h4>
-        {description ? (
-          <p className="text-xs text-muted-foreground">{description}</p>
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <h4 className="text-sm font-semibold tracking-tight">{title}</h4>
+          {description ? (
+            <p className="text-xs text-muted-foreground">{description}</p>
+          ) : null}
+        </div>
+        {loading ? (
+          <span className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-secondary/30 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-primary" aria-hidden="true" />
+            Loading…
+          </span>
         ) : null}
       </div>
       {children}

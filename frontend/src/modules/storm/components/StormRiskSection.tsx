@@ -32,6 +32,7 @@ type StormRiskSectionProps = {
   trendData: Array<{ time: string; label: string; riskScore: number; severity: string }>
   trendLoading: boolean
   sectionId?: string
+  isLoading?: boolean
 }
 
 export function StormRiskSection({
@@ -41,6 +42,7 @@ export function StormRiskSection({
   trendData,
   trendLoading,
   sectionId,
+  isLoading = false,
 }: StormRiskSectionProps) {
   const riskPagination = useClientPagination(rows, DEFAULT_SECTION_ROWS_PER_PAGE)
 
@@ -49,6 +51,7 @@ export function StormRiskSection({
       id={sectionId}
       title="Risk Score"
       description="Rate-based storm probability for eligible access ports on this switch."
+      loading={isLoading}
     >
       {rows.length === 0 ? (
         <p className="text-sm text-muted-foreground">No risk scores for this switch yet.</p>

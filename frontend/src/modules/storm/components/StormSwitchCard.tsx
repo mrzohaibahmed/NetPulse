@@ -27,6 +27,8 @@ type StormSwitchCardProps = {
   requiredConfirmations: number
   pipelineSectionId?: string
   incidentsSectionId?: string
+  mitigationSectionId?: string
+  recoverySectionId?: string
   selectedRisk: RiskResult | null
   selectedSafety: SafetyResult | null
   selectedIncident: StormIncident | null
@@ -35,6 +37,15 @@ type StormSwitchCardProps = {
   expandedSections: Record<string, boolean>
   trendData: Array<{ time: string; label: string; riskScore: number; severity: string }>
   trendLoading: boolean
+  sectionLoading: {
+    eligibility: boolean
+    risk: boolean
+    confirmation: boolean
+    safety: boolean
+    incidents: boolean
+    mitigation: boolean
+    recovery: boolean
+  }
   mitigationPending: boolean
   rollbackPending: boolean
   recoveryPending: boolean
@@ -61,6 +72,8 @@ export function StormSwitchCard({
   requiredConfirmations,
   pipelineSectionId,
   incidentsSectionId,
+  mitigationSectionId,
+  recoverySectionId,
   selectedRisk,
   selectedSafety,
   selectedIncident,
@@ -69,6 +82,7 @@ export function StormSwitchCard({
   expandedSections,
   trendData,
   trendLoading,
+  sectionLoading,
   mitigationPending,
   rollbackPending,
   recoveryPending,
@@ -157,16 +171,19 @@ export function StormSwitchCard({
             trendData={trendData}
             trendLoading={trendLoading}
             sectionId={pipelineSectionId}
+            isLoading={sectionLoading.risk}
           />
-          <StormEligibilitySection rows={device.eligibility} />
+          <StormEligibilitySection rows={device.eligibility} isLoading={sectionLoading.eligibility} />
           <StormConfirmationSection
             rows={device.confirmation}
             requiredConfirmations={requiredConfirmations}
+            isLoading={sectionLoading.confirmation}
           />
           <StormSafetySection
             rows={device.safety}
             selectedSafety={selectedSafety}
             onSelectSafety={onSelectSafety}
+            isLoading={sectionLoading.safety}
           />
           <StormIncidentSection
             rows={device.incidents}
@@ -178,6 +195,7 @@ export function StormSwitchCard({
             recoveryPending={recoveryPending}
             retryPending={retryPending}
             sectionId={incidentsSectionId}
+            isLoading={sectionLoading.incidents}
             onSelectIncident={onSelectIncident}
             onViewIncident={onViewIncident}
             onExportIncident={onExportIncident}
@@ -191,11 +209,15 @@ export function StormSwitchCard({
             rows={device.mitigation}
             selectedMitigation={selectedMitigation}
             onSelectMitigation={onSelectMitigation}
+            sectionId={mitigationSectionId}
+            isLoading={sectionLoading.mitigation}
           />
           <StormRecoverySection
             rows={device.recovery}
             selectedRecovery={selectedRecovery}
             onSelectRecovery={onSelectRecovery}
+            sectionId={recoverySectionId}
+            isLoading={sectionLoading.recovery}
           />
         </CardContent>
       ) : null}

@@ -26,6 +26,7 @@ type StormIncidentSectionProps = {
   recoveryPending: boolean
   retryPending: boolean
   sectionId?: string
+  isLoading?: boolean
   onSelectIncident: (row: StormIncident) => void
   onViewIncident: (row: StormIncident) => void
   onExportIncident: (incident: StormIncident) => void
@@ -46,6 +47,7 @@ export function StormIncidentSection({
   recoveryPending,
   retryPending,
   sectionId,
+  isLoading = false,
   onSelectIncident,
   onViewIncident,
   onExportIncident,
@@ -62,6 +64,7 @@ export function StormIncidentSection({
       id={sectionId}
       title="Storm Incidents"
       description="Pre-mitigation evidence packages for this switch."
+      loading={isLoading}
     >
       {rows.length === 0 ? (
         <p className="text-sm text-muted-foreground">No storm incidents for this switch.</p>

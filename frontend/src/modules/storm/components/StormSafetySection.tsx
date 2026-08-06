@@ -18,12 +18,14 @@ type StormSafetySectionProps = {
   rows: SafetyResult[]
   selectedSafety: SafetyResult | null
   onSelectSafety: (row: SafetyResult) => void
+  isLoading?: boolean
 }
 
 export function StormSafetySection({
   rows,
   selectedSafety,
   onSelectSafety,
+  isLoading = false,
 }: StormSafetySectionProps) {
   const safetyPagination = useClientPagination(rows, DEFAULT_SECTION_ROWS_PER_PAGE)
 
@@ -31,6 +33,7 @@ export function StormSafetySection({
     <Subsection
       title="Mitigation Safety"
       description="Final pre-mitigation gate for confirmed storms on this switch."
+      loading={isLoading}
     >
       {rows.length === 0 ? (
         <p className="text-sm text-muted-foreground">No safety results yet.</p>

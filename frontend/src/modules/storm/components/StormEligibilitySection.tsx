@@ -15,15 +15,17 @@ import {
 
 type StormEligibilitySectionProps = {
   rows: EligibilityResult[]
+  isLoading?: boolean
 }
 
-export function StormEligibilitySection({ rows }: StormEligibilitySectionProps) {
+export function StormEligibilitySection({ rows, isLoading = false }: StormEligibilitySectionProps) {
   const eligibilityPagination = useClientPagination(rows, DEFAULT_SECTION_ROWS_PER_PAGE)
 
   return (
     <Subsection
       title="Port Eligibility"
       description="Which access ports on this switch may enter risk scoring."
+      loading={isLoading}
     >
       {rows.length === 0 ? (
         <p className="text-sm text-muted-foreground">No eligibility results yet.</p>
