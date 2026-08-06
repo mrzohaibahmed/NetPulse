@@ -1,10 +1,12 @@
-import { useState } from 'react'
-import { NavLink } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { NavLink, useLocation } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Activity,
   Bell,
+  ChevronDown,
   FileBarChart,
+  GitBranch,
   History,
   LayoutDashboard,
   Menu,
@@ -15,7 +17,8 @@ import {
   Server,
   Settings,
   Shield,
-  UserCircle,
+  ShieldAlert,
+  Users,
   X,
 } from 'lucide-react'
 import { useAuth } from '@/shared/auth/AuthContext'
@@ -31,99 +34,267 @@ interface SidebarProps {
   onMobileOpenChange: (value: boolean) => void
 }
 
+type NavIcon = typeof LayoutDashboard
+
+type NavItem = {
+  id: string
+  to: string
+  label: string
+  icon: NavIcon
+  end?: boolean
+  adminOnly?: boolean
+  /** Custom active matching for shared paths / query variants */
+  isActive?: (pathname: string, search: string) => boolean
+}
+
+type NavGroup = {
+  id: string
+  title: string
+  icon: NavIcon
+  items: NavItem[]
+  defaultOpen?: boolean
+}
+
+const GROUP_STORAGE_KEY = 'netpulse.sidebar.groups'
+
+function stormViewActive(expected: 'overview' | 'incidents' | 'pipeline') {
+  return (pathname: string, search: string) => {
+    if (pathname !== '/storm') return false
+    const view = new URLSearchParams(search).get('view')
+    if (expected === 'overview') {
+      return !view || view === 'overview'
+    }
+    return view === expected
+  }
+}
+
 export function Sidebar({ pinned, onPinnedChange, mobileOpen, onMobileOpenChange }: SidebarProps) {
   const [hovered, setHovered] = useState(false)
   const collapsed = !pinned && !hovered
   const { isAdmin, user, logout } = useAuth()
+  const location = useLocation()
   const health = useHealthQuery()
   const apiOk = health.isError ? false : health.data ? true : null
   const dbOk = health.data ? health.data.database === 'Connected' : health.isError ? false : null
 
-  type NavItem = {
-    to: string
-    label: string
-    icon: typeof LayoutDashboard
-    end?: boolean
-    adminOnly?: boolean
-  }
-
-  const monitorItems: NavItem[] = [
-    { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
-    { to: '/devices', label: 'Devices', icon: Server },
-    { to: '/interfaces', label: 'Interfaces', icon: Network },
-    { to: '/storm', label: 'Storm Protection', icon: Shield },
-    { to: '/alerts', label: 'Alerts', icon: Bell },
-    { to: '/discovery', label: 'Discovery', icon: Radar, adminOnly: true },
+  const topItems: NavItem[] = [
+    { id: 'home-dashboard', to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
   ]
 
-  const analyzeItems: NavItem[] = [
-    { to: '/history', label: 'History', icon: History },
-    { to: '/reports', label: 'Reports', icon: FileBarChart },
+  const groups: NavGroup[] = [
+    {
+      id: 'ping',
+      title: 'Ping Monitoring',
+      icon: Activity,
+      defaultOpen: true,
+      items: [
+        {
+          id: 'ping-dashboard',
+          to: '/',
+          label: 'Dashboard',
+          icon: LayoutDashboard,
+          end: true,
+        },
+        { id: 'ping-devices', to: '/devices', label: 'Devices', icon: Server },
+        {
+          id: 'ping-discovery',
+          to: '/discovery',
+          label: 'Discovery',
+          icon: Radar,
+          adminOnly: true,
+        },
+        { id: 'ping-history', to: '/history', label: 'History', icon: History },
+        { id: 'ping-reports', to: '/reports', label: 'Reports', icon: FileBarChart },
+      ],
+    },
+    {
+      id: 'storm',
+      title: 'Storm Protection',
+      icon: Shield,
+      defaultOpen: true,
+      items: [
+        {
+          id: 'storm-overview',
+          to: '/storm',
+          label: 'Overview',
+          icon: Shield,
+          isActive: stormViewActive('overview'),
+        },
+        { id: 'storm-interfaces', to: '/interfaces', label: 'Interfaces', icon: Network },
+        {
+          id: 'storm-incidents',
+          to: '/storm?view=incidents',
+          label: 'Incidents',
+          icon: ShieldAlert,
+          isActive: stormViewActive('incidents'),
+        },
+        {
+          id: 'storm-pipeline',
+          to: '/storm?view=pipeline',
+          label: 'Pipeline',
+          icon: GitBranch,
+          isActive: stormViewActive('pipeline'),
+        },
+      ],
+    },
+    {
+      id: 'operations',
+      title: 'Operations',
+      icon: Bell,
+      defaultOpen: true,
+      items: [{ id: 'ops-alerts', to: '/alerts', label: 'Alerts', icon: Bell }],
+    },
+    {
+      id: 'admin',
+      title: 'Administration',
+      icon: Settings,
+      defaultOpen: true,
+      items: [
+        { id: 'admin-users', to: '/account', label: 'Users', icon: Users },
+        {
+          id: 'admin-settings',
+          to: '/settings',
+          label: 'Settings',
+          icon: Settings,
+          adminOnly: true,
+        },
+      ],
+    },
   ]
 
-  const adminItems: NavItem[] = [
-    { to: '/account', label: 'Account', icon: UserCircle },
-    { to: '/settings', label: 'Settings', icon: Settings, adminOnly: true },
-  ]
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() => {
+    try {
+      const raw = localStorage.getItem(GROUP_STORAGE_KEY)
+      if (raw) return JSON.parse(raw) as Record<string, boolean>
+    } catch {
+      /* ignore */
+    }
+    return Object.fromEntries(groups.map((g) => [g.id, g.defaultOpen !== false]))
+  })
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(GROUP_STORAGE_KEY, JSON.stringify(openGroups))
+    } catch {
+      /* ignore */
+    }
+  }, [openGroups])
 
   const filterItems = (items: NavItem[]) => items.filter((item) => !item.adminOnly || isAdmin)
 
-  const NavSection = ({
-    title,
-    items,
-  }: {
-    title: string
-    items: NavItem[]
-  }) => (
-    <div className="space-y-1">
-      {!collapsed ? (
-        <p className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-          {title}
-        </p>
-      ) : null}
-      {items.map((item) => {
-        const Icon = item.icon
-        const link = (
-          <NavLink
-            key={item.to}
-            to={item.to}
-            end={item.end}
-            onClick={() => onMobileOpenChange(false)}
-            className={({ isActive }) =>
-              cn(
-                'group relative flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
-                isActive && 'bg-primary/15 text-white',
-                collapsed && 'justify-center px-2',
-              )
-            }
-          >
-            {({ isActive }) => (
-              <>
-                {isActive ? (
-                  <motion.span
-                    layoutId="nav-indicator"
-                    className="absolute left-0 top-1/2 h-6 w-1 -translate-y-1/2 rounded-r-full bg-primary"
-                  />
-                ) : null}
-                <Icon className="h-4.5 w-4.5 shrink-0" />
-                {!collapsed ? <span>{item.label}</span> : null}
-              </>
-            )}
-          </NavLink>
-        )
+  const toggleGroup = (id: string) => {
+    setOpenGroups((prev) => ({ ...prev, [id]: !prev[id] }))
+  }
 
-        if (collapsed) {
-          return (
-            <Tooltip key={item.to} delayDuration={0}>
-              <TooltipTrigger asChild>{link}</TooltipTrigger>
-              <TooltipContent side="right">{item.label}</TooltipContent>
-            </Tooltip>
-          )
-        }
-        return link
-      })}
-    </div>
-  )
+  const itemIsActive = (item: NavItem) => {
+    if (item.isActive) {
+      return item.isActive(location.pathname, location.search)
+    }
+    if (item.end) {
+      return location.pathname === item.to.split('?')[0]
+    }
+    const path = item.to.split('?')[0]
+    return location.pathname === path || location.pathname.startsWith(`${path}/`)
+  }
+
+  const renderNavLink = (item: NavItem) => {
+    const Icon = item.icon
+    const active = itemIsActive(item)
+    const link = (
+      <NavLink
+        key={item.id}
+        to={item.to}
+        end={item.end}
+        onClick={() => onMobileOpenChange(false)}
+        className={cn(
+          'group relative flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
+          active && 'bg-primary/15 text-white',
+          collapsed && 'justify-center px-2',
+        )}
+      >
+        {active ? (
+          <motion.span
+            layoutId="nav-indicator"
+            className="absolute left-0 top-1/2 h-6 w-1 -translate-y-1/2 rounded-r-full bg-primary"
+          />
+        ) : null}
+        <Icon className="h-4.5 w-4.5 shrink-0" />
+        {!collapsed ? <span>{item.label}</span> : null}
+      </NavLink>
+    )
+
+    if (collapsed) {
+      return (
+        <Tooltip key={item.id} delayDuration={0}>
+          <TooltipTrigger asChild>{link}</TooltipTrigger>
+          <TooltipContent side="right">{item.label}</TooltipContent>
+        </Tooltip>
+      )
+    }
+    return link
+  }
+
+  const NavGroupSection = ({ group }: { group: NavGroup }) => {
+    const items = filterItems(group.items)
+    if (items.length === 0) return null
+
+    const isOpen = collapsed ? true : openGroups[group.id] !== false
+    const GroupIcon = group.icon
+    const groupHasActive = items.some((item) => itemIsActive(item))
+
+    if (collapsed) {
+      return (
+        <div className="space-y-1">
+          {items.map((item) => renderNavLink(item))}
+        </div>
+      )
+    }
+
+    return (
+      <div className="space-y-1">
+        <button
+          type="button"
+          onClick={() => toggleGroup(group.id)}
+          className={cn(
+            'flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left transition-colors hover:bg-sidebar-accent/60',
+            groupHasActive && 'text-white',
+          )}
+          aria-expanded={isOpen}
+        >
+          <GroupIcon
+            className={cn(
+              'h-3.5 w-3.5 shrink-0 text-muted-foreground',
+              groupHasActive && 'text-primary',
+            )}
+          />
+          <span className="flex-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            {group.title}
+          </span>
+          <ChevronDown
+            className={cn(
+              'h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform duration-200',
+              isOpen && 'rotate-180',
+            )}
+          />
+        </button>
+
+        <AnimatePresence initial={false}>
+          {isOpen ? (
+            <motion.div
+              key={`${group.id}-items`}
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.18 }}
+              className="overflow-hidden"
+            >
+              <div className="space-y-0.5 pl-0.5">{items.map((item) => renderNavLink(item))}</div>
+            </motion.div>
+          ) : null}
+        </AnimatePresence>
+      </div>
+    )
+  }
 
   const content = (
     <aside
@@ -169,10 +340,18 @@ export function Sidebar({ pinned, onPinnedChange, mobileOpen, onMobileOpenChange
         </AnimatePresence>
       </div>
 
-      <nav className="flex-1 space-y-5 overflow-y-auto px-2 pb-4" aria-label="Primary">
-        <NavSection title="Monitor" items={filterItems(monitorItems)} />
-        <NavSection title="Analyze" items={filterItems(analyzeItems)} />
-        <NavSection title="Admin" items={filterItems(adminItems)} />
+      <nav className="flex-1 space-y-4 overflow-y-auto px-2 pb-4" aria-label="Primary">
+        <div className="space-y-1">{filterItems(topItems).map((item) => renderNavLink(item))}</div>
+
+        {!collapsed ? (
+          <div className="mx-3 border-t border-sidebar-border/80" aria-hidden />
+        ) : (
+          <div className="mx-2 border-t border-sidebar-border/80" aria-hidden />
+        )}
+
+        {groups.map((group) => (
+          <NavGroupSection key={group.id} group={group} />
+        ))}
       </nav>
 
       <div className="space-y-3 border-t border-sidebar-border p-3">
@@ -192,7 +371,6 @@ export function Sidebar({ pinned, onPinnedChange, mobileOpen, onMobileOpenChange
             </Button>
           </div>
         ) : null}
-
       </div>
     </aside>
   )
@@ -280,7 +458,16 @@ function HealthRow({
       />
       {!collapsed ? (
         <span className="text-sidebar-foreground/80">
-          {label} {ok === null ? '…' : ok ? (label === 'API' ? 'online' : 'connected') : label === 'API' ? 'down' : 'disconnected'}
+          {label}{' '}
+          {ok === null
+            ? '…'
+            : ok
+              ? label === 'API'
+                ? 'online'
+                : 'connected'
+              : label === 'API'
+                ? 'down'
+                : 'disconnected'}
         </span>
       ) : null}
     </div>

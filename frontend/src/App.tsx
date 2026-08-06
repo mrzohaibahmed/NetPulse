@@ -26,10 +26,14 @@ const DevicesPage = lazy(() =>
   import('@/modules/ping/pages/DevicesPage').then((m) => ({ default: m.DevicesPage })),
 )
 const InterfacesPage = lazy(() =>
-  import('@/pages/InterfacesEnterprisePage').then((m) => ({ default: m.InterfacesEnterprisePage })),
+  import('@/modules/storm/pages/InterfacesEnterprisePage').then((m) => ({
+    default: m.InterfacesEnterprisePage,
+  })),
 )
 const InterfaceDetailPage = lazy(() =>
-  import('@/pages/InterfaceDetailPage').then((m) => ({ default: m.InterfaceDetailPage })),
+  import('@/modules/storm/pages/InterfaceDetailPage').then((m) => ({
+    default: m.InterfaceDetailPage,
+  })),
 )
 const DiscoveryPage = lazy(() =>
   import('@/modules/ping/pages/DiscoveryPage').then((m) => ({ default: m.DiscoveryPage })),
@@ -50,7 +54,9 @@ const AlertsPage = lazy(() =>
   import('@/pages/AlertsPage').then((m) => ({ default: m.AlertsPage })),
 )
 const StormProtectionPage = lazy(() =>
-  import('@/pages/StormProtectionPage').then((m) => ({ default: m.StormProtectionPage })),
+  import('@/modules/storm/pages/StormProtectionPage').then((m) => ({
+    default: m.StormProtectionPage,
+  })),
 )
 const LoginPage = lazy(() =>
   import('@/pages/LoginPage').then((m) => ({ default: m.LoginPage })),

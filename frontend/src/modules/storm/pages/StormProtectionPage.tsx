@@ -21,7 +21,7 @@ import {
   Shield,
   ShieldCheck,
 } from 'lucide-react'
-import { PortClassificationBadges } from '@/components/interfaces/InterfaceStatusBadge'
+import { PortClassificationBadges } from '@/modules/storm/components/InterfaceStatusBadge'
 import { EmptyState } from '@/shared/components/EmptyState'
 import { ErrorState } from '@/shared/components/ErrorState'
 import { TableSkeleton } from '@/shared/components/LoadingState'
@@ -560,13 +560,15 @@ function Subsection({
   title,
   description,
   children,
+  id,
 }: {
   title: string
   description?: string
   children: ReactNode
+  id?: string
 }) {
   return (
-    <div className="space-y-3 border-t border-border/60 px-4 py-4">
+    <div id={id} className="scroll-mt-24 space-y-3 border-t border-border/60 px-4 py-4">
       <div>
         <h4 className="text-sm font-semibold tracking-tight">{title}</h4>
         {description ? (
@@ -576,6 +578,23 @@ function Subsection({
       {children}
     </div>
   )
+}
+
+const NAV_SCROLL_OFFSET_PX = 88
+
+function scrollToStormSection(targetId: string) {
+  window.requestAnimationFrame(() => {
+    window.setTimeout(() => {
+      if (targetId === 'overview-section') {
+        window.scrollTo({ top: 0, behavior: 'smooth' })
+        return
+      }
+      const el = document.getElementById(targetId)
+      if (!el) return
+      const top = el.getBoundingClientRect().top + window.scrollY - NAV_SCROLL_OFFSET_PX
+      window.scrollTo({ top: Math.max(0, top), behavior: 'smooth' })
+    }, 80)
+  })
 }
 
 function matchesText(haystack: Array<string | null | undefined>, needle: string): boolean {
@@ -649,6 +668,8 @@ export function StormProtectionPage() {
   useEffect(() => {
     sessionStorage.setItem(COLLAPSE_KEY, JSON.stringify([...collapsedDeviceIds]))
   }, [collapsedDeviceIds])
+
+  const viewParam = (searchParams.get('view') || '').trim().toLowerCase()
 
   const devicesQuery = useDevicesQuery({ page: 1, limit: FETCH_LIMIT })
   const devices = devicesQuery.data?.data ?? []
@@ -1050,8 +1071,52 @@ export function StormProtectionPage() {
 
   const noSwitchesConfigured = !devicesQuery.isLoading && switchDevices.length === 0
 
+  // Frontend-only deep links from sidebar: /storm?view=incidents|pipeline|overview
+  useEffect(() => {
+    const normalized =
+      !viewParam || viewParam === 'overview'
+        ? 'overview'
+        : viewParam === 'incidents' || viewParam === 'pipeline'
+          ? viewParam
+          : null
+
+    if (!normalized) return
+
+    if (normalized === 'overview') {
+      scrollToStormSection('overview-section')
+      return
+    }
+
+    // Expand switch cards so pipeline / incident subsections are visible.
+    setCollapsedDeviceIds((prev) => (prev.size === 0 ? prev : new Set()))
+
+    if (isLoading || noSwitchesConfigured) return
+
+    const targetId =
+      normalized === 'incidents' ? 'incidents-section' : 'pipeline-section'
+
+    let attempts = 0
+    let timer: number | undefined
+
+    const tryScroll = () => {
+      attempts += 1
+      if (document.getElementById(targetId)) {
+        scrollToStormSection(targetId)
+        return
+      }
+      if (attempts < 12) {
+        timer = window.setTimeout(tryScroll, 100)
+      }
+    }
+
+    timer = window.setTimeout(tryScroll, 50)
+    return () => {
+      if (timer !== undefined) window.clearTimeout(timer)
+    }
+  }, [viewParam, isLoading, noSwitchesConfigured, pagedSwitches.length])
+
   return (
-    <div className="space-y-8">
+    <div id="overview-section" className="scroll-mt-24 space-y-8">
       <PageHeader
         title="Storm Protection"
         description="Per-switch eligibility → risk → confirmation → safety → diagnostics → mitigation → recovery."
@@ -1382,13 +1447,15 @@ export function StormProtectionPage() {
           ) : null}
 
           <div className="space-y-4">
-            {pagedSwitches.map((device) => (
+            {pagedSwitches.map((device, index) => (
               <SwitchStormSection
                 key={device.deviceId}
                 device={device}
                 collapsed={collapsedDeviceIds.has(device.deviceId)}
                 isAdmin={isAdmin}
                 requiredConfirmations={requiredConfirmations}
+                pipelineSectionId={index === 0 ? 'pipeline-section' : undefined}
+                incidentsSectionId={index === 0 ? 'incidents-section' : undefined}
                 selectedRisk={
                   selectedRisk?.deviceId === device.deviceId ? selectedRisk : null
                 }
@@ -1465,6 +1532,8 @@ function SwitchStormSection({
   collapsed,
   isAdmin,
   requiredConfirmations,
+  pipelineSectionId,
+  incidentsSectionId,
   selectedRisk,
   selectedSafety,
   selectedIncident,
@@ -1495,6 +1564,8 @@ function SwitchStormSection({
   collapsed: boolean
   isAdmin: boolean
   requiredConfirmations: number
+  pipelineSectionId?: string
+  incidentsSectionId?: string
   selectedRisk: RiskResult | null
   selectedSafety: SafetyResult | null
   selectedIncident: StormIncident | null
@@ -1591,8 +1662,9 @@ function SwitchStormSection({
 
       {!collapsed ? (
         <CardContent className="space-y-0 p-0">
-          {/* Risk */}
+          {/* Risk — pipeline starts here (risk → confirmation → safety → mitigation → recovery) */}
           <Subsection
+            id={pipelineSectionId}
             title="Risk Score"
             description="Rate-based storm probability for eligible access ports on this switch."
           >
@@ -2066,6 +2138,7 @@ function SwitchStormSection({
 
           {/* Incidents */}
           <Subsection
+            id={incidentsSectionId}
             title="Storm Incidents"
             description="Pre-mitigation evidence packages for this switch."
           >
