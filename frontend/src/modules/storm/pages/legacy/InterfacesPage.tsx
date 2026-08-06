@@ -11,7 +11,7 @@ import {
   UtilizationBar,
   formatAllowedVlans,
   neighborRemotePort,
-} from '@/components/interfaces/InterfaceStatusBadge'
+} from '@/modules/storm/components/InterfaceStatusBadge'
 import { EmptyState } from '@/shared/components/EmptyState'
 import { ErrorState } from '@/shared/components/ErrorState'
 import { TableSkeleton } from '@/shared/components/LoadingState'
