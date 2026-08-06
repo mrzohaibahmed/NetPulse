@@ -40,7 +40,7 @@ import {
   SelectValue,
 } from '@/shared/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table'
-import { useAuth } from '@/auth/AuthContext'
+import { useAuth } from '@/shared/auth/AuthContext'
 import { getStormIncident } from '@/api'
 import { useClientPagination } from '@/hooks/useClientPagination'
 import {

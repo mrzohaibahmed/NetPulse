@@ -11,7 +11,7 @@ import {
   Radar,
 } from 'lucide-react'
 import { getDeviceInterfaceStats } from '@/api'
-import { useAuth } from '@/auth/AuthContext'
+import { useAuth } from '@/shared/auth/AuthContext'
 import {
   InterfaceStatusBadge,
   PortClassificationBadges,

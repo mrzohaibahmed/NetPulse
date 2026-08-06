@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useQueries } from '@tanstack/react-query'
 import { Network, RefreshCw, Radar } from 'lucide-react'
 import { getDeviceInterfaceStats } from '@/api'
-import { useAuth } from '@/auth/AuthContext'
+import { useAuth } from '@/shared/auth/AuthContext'
 import {
   InterfaceStatusBadge,
   PortClassificationBadges,
