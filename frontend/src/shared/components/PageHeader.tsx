@@ -26,18 +26,20 @@ export function PageHeader({
   return (
     <header
       className={cn(
-        'flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between',
+        // flex-wrap: when the action toolbar is wide, it drops below the title
+        // instead of crushing the title column to a few pixels.
+        'flex flex-wrap items-start justify-between gap-x-6 gap-y-4',
         className,
       )}
     >
-      <div className="min-w-0 space-y-2">
+      <div className="min-w-[min(100%,20rem)] max-w-3xl flex-1 space-y-2">
         {meta ? <div className="flex flex-wrap items-center gap-2">{meta}</div> : null}
         <h1 className="np-h1 text-foreground">{title}</h1>
-        {description ? <p className="np-description max-w-3xl">{description}</p> : null}
+        {description ? <p className="np-description">{description}</p> : null}
       </div>
       {hasToolbar ? (
         <div
-          className="np-toolbar shrink-0 sm:justify-end"
+          className="np-toolbar ml-auto w-full max-w-full flex-wrap justify-start sm:w-auto sm:justify-end"
           role="toolbar"
           aria-label="Page actions"
         >
