@@ -30,6 +30,7 @@ import { EmptyState } from '@/shared/components/EmptyState'
 import { ErrorState } from '@/shared/components/ErrorState'
 import { DashboardSkeleton } from '@/shared/components/LoadingState'
 import { PageHeader } from '@/shared/components/PageHeader'
+import { SectionHeading } from '@/shared/components/SectionHeading'
 import { Badge } from '@/shared/ui/badge'
 import { Button } from '@/shared/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/shared/ui/card'
@@ -184,7 +185,7 @@ export function DashboardPage() {
 
   if (dash.isLoading && !dash.summary) {
     return (
-      <div className="space-y-8">
+      <div className="np-page">
         <PageHeader
           title="Enterprise Dashboard"
           description="Choose a workspace or monitor the overall health of your network."
@@ -196,7 +197,7 @@ export function DashboardPage() {
 
   if (dash.error && !dash.summary) {
     return (
-      <div className="space-y-8">
+      <div className="np-page">
         <PageHeader title="Enterprise Dashboard" />
         <ErrorState message={dash.error} onRetry={() => void dash.refetchAll()} />
       </div>
@@ -205,7 +206,7 @@ export function DashboardPage() {
 
   return (
     <motion.div
-      className="space-y-10"
+      className="np-page"
       initial="hidden"
       animate="show"
       variants={{ show: { transition: { staggerChildren: 0.06 } } }}
@@ -528,15 +529,6 @@ export function DashboardPage() {
         </div>
       </motion.section>
     </motion.div>
-  )
-}
-
-function SectionHeading({ title, description }: { title: string; description: string }) {
-  return (
-    <div>
-      <h2 className="text-lg font-semibold tracking-tight">{title}</h2>
-      <p className="text-sm text-muted-foreground">{description}</p>
-    </div>
   )
 }
 

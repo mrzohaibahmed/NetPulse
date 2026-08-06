@@ -38,6 +38,7 @@ import { KpiCard } from '@/shared/components/KpiCard'
 import { TableSkeleton } from '@/shared/components/LoadingState'
 import { PageHeader } from '@/shared/components/PageHeader'
 import { PaginationControls } from '@/shared/components/PaginationControls'
+import { SectionHeading } from '@/shared/components/SectionHeading'
 import { StatusBadge } from '@/shared/components/StatusBadge'
 import {
   AlertDialog,
@@ -322,7 +323,7 @@ export function DevicesPage() {
   }
 
   return (
-    <div className="space-y-8">
+    <div className="np-page">
       <PageHeader
         title="Ping Monitoring · Devices"
         description="Enterprise inventory of monitored hosts — reachability, latency, and critical flags at a glance."
@@ -418,7 +419,7 @@ export function DevicesPage() {
           </p>
         ) : null}
 
-        <Card className="glass rounded-xl">
+        <Card variant="section" className="glass rounded-xl">
           <CardHeader className="pb-3">
             <CardTitle className="flex items-center gap-2 text-base">
               <Filter className="h-4 w-4 text-primary" />
@@ -480,7 +481,7 @@ export function DevicesPage() {
             }
           />
         ) : (
-          <Card className="glass overflow-hidden rounded-xl">
+          <Card variant="primary" className="glass overflow-hidden rounded-xl">
             <CardContent className="p-0">
               <div className="overflow-auto p-1 sm:p-2">
                 <Table>
@@ -575,15 +576,6 @@ export function DevicesPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
-  )
-}
-
-function SectionHeading({ title, description }: { title: string; description: string }) {
-  return (
-    <div>
-      <h2 className="text-lg font-semibold tracking-tight">{title}</h2>
-      <p className="text-sm text-muted-foreground">{description}</p>
     </div>
   )
 }

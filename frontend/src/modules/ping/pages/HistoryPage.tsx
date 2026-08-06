@@ -9,6 +9,7 @@ import { ErrorState } from '@/shared/components/ErrorState'
 import { TableSkeleton } from '@/shared/components/LoadingState'
 import { PageHeader } from '@/shared/components/PageHeader'
 import { PaginationControls } from '@/shared/components/PaginationControls'
+import { SectionHeading } from '@/shared/components/SectionHeading'
 import { StatusBadge } from '@/shared/components/StatusBadge'
 import { Button } from '@/shared/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/shared/ui/card'
@@ -69,7 +70,7 @@ export function HistoryPage() {
     total === 0 && !debouncedQuery && statusFilter === 'all' && typeFilter === 'all'
 
   return (
-    <div className="space-y-8">
+    <div className="np-page">
       <PageHeader
         title="Ping Monitoring · History"
         description="Manual and automatic ping results across the monitored fleet."
@@ -256,15 +257,6 @@ export function HistoryPage() {
           </Card>
         )}
       </section>
-    </div>
-  )
-}
-
-function SectionHeading({ title, description }: { title: string; description: string }) {
-  return (
-    <div>
-      <h2 className="text-lg font-semibold tracking-tight">{title}</h2>
-      <p className="text-sm text-muted-foreground">{description}</p>
     </div>
   )
 }

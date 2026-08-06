@@ -33,8 +33,8 @@ export function PaginationControls({
   const to = Math.min(page * limit, total)
 
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 pt-4">
-      <p className="text-sm text-muted-foreground">
+    <div className="flex flex-wrap items-center justify-between gap-3 py-3">
+      <p className="np-caption">
         Showing {from}–{to} of {total}
       </p>
       <div className="flex flex-wrap items-center gap-2">

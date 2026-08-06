@@ -18,6 +18,7 @@ import { ErrorState } from '@/shared/components/ErrorState'
 import { KpiCard } from '@/shared/components/KpiCard'
 import { LoadingState } from '@/shared/components/LoadingState'
 import { PageHeader } from '@/shared/components/PageHeader'
+import { SectionHeading } from '@/shared/components/SectionHeading'
 import { StatusBadge } from '@/shared/components/StatusBadge'
 import { Button } from '@/shared/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/shared/ui/card'
@@ -77,7 +78,7 @@ export function ReportsPage() {
   }
 
   return (
-    <div className="space-y-8">
+    <div className="np-page">
       <PageHeader
         title="Ping Monitoring · Reports"
         description="Uptime analytics, offline hotspots, and inventory / history exports."
@@ -438,13 +439,4 @@ function deriveAvailability(rows: UptimeRow[]) {
     downtimeChecks: rows.reduce((sum, r) => sum + (r.downtimeChecks ?? 0), 0),
     withDowntime: rows.filter((r) => (r.downtimePercentage ?? 0) > 0).length,
   }
-}
-
-function SectionHeading({ title, description }: { title: string; description: string }) {
-  return (
-    <div>
-      <h2 className="text-lg font-semibold tracking-tight">{title}</h2>
-      <p className="text-sm text-muted-foreground">{description}</p>
-    </div>
-  )
 }

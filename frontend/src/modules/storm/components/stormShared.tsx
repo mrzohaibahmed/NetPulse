@@ -118,7 +118,7 @@ export function IncidentTypeBadge({ incidentType }: { incidentType?: string | nu
   const value = (incidentType || 'STORM').toUpperCase()
   if (value === 'EMERGENCY') {
     return (
-      <Badge variant="danger" className="font-semibold uppercase tracking-wide">
+      <Badge variant="critical" className="font-semibold uppercase tracking-wide">
         EMERGENCY
       </Badge>
     )
@@ -131,7 +131,7 @@ export function IncidentTypeBadge({ incidentType }: { incidentType?: string | nu
     )
   }
   return (
-    <Badge variant="secondary" className="font-semibold uppercase tracking-wide">
+    <Badge variant="storm" className="font-semibold uppercase tracking-wide">
       STORM
     </Badge>
   )
@@ -267,7 +267,7 @@ export function MitigationStatusBadge({ status }: { status: string }) {
   const value = (status || '').toUpperCase()
   if (value === 'SUCCESS') {
     return (
-      <Badge variant="success" className="font-semibold uppercase tracking-wide">
+      <Badge variant="mitigation" className="font-semibold uppercase tracking-wide">
         Success
       </Badge>
     )
@@ -281,13 +281,13 @@ export function MitigationStatusBadge({ status }: { status: string }) {
   }
   if (value === 'ROLLBACK_FAILURE') {
     return (
-      <Badge variant="danger" className="font-semibold uppercase tracking-wide">
+      <Badge variant="critical" className="font-semibold uppercase tracking-wide">
         Rollback Failed
       </Badge>
     )
   }
   return (
-    <Badge variant="danger" className="font-semibold uppercase tracking-wide">
+    <Badge variant="mitigation" className="font-semibold uppercase tracking-wide">
       {status}
     </Badge>
   )
@@ -297,7 +297,7 @@ export function RecoveryStatusBadge({ status }: { status: string }) {
   const value = (status || '').toUpperCase()
   if (value === 'RECOVERED' || value === 'SUCCESS') {
     return (
-      <Badge variant="success" className="font-semibold uppercase tracking-wide">
+      <Badge variant="recovery" className="font-semibold uppercase tracking-wide">
         Recovered
       </Badge>
     )
@@ -311,7 +311,7 @@ export function RecoveryStatusBadge({ status }: { status: string }) {
   }
   if (value === 'WAITING') {
     return (
-      <Badge variant="secondary" className="font-semibold uppercase tracking-wide">
+      <Badge variant="info" className="font-semibold uppercase tracking-wide">
         Waiting
       </Badge>
     )
@@ -325,7 +325,7 @@ export function RecoveryStatusBadge({ status }: { status: string }) {
   }
   if (value === 'REMITIGATED') {
     return (
-      <Badge variant="danger" className="font-semibold uppercase tracking-wide">
+      <Badge variant="mitigation" className="font-semibold uppercase tracking-wide">
         Re-Mitigated
       </Badge>
     )

@@ -154,7 +154,7 @@ export function SettingsPage() {
   })
 
   return (
-    <div className="space-y-6">
+    <div className="np-page">
       <PageHeader
         title="Settings"
         description="Configure global ping parameters, SMTP, and storm email notifications"
