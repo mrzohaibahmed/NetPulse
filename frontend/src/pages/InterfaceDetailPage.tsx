@@ -22,7 +22,7 @@ import {
   AlertTriangle,
   Radio,
 } from 'lucide-react'
-import { useAuth } from '@/auth/AuthContext'
+import { useAuth } from '@/shared/auth/AuthContext'
 import {
   InterfaceStatusBadge,
   PortClassificationBadges,

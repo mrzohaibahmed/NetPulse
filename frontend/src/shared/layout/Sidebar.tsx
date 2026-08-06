@@ -18,7 +18,7 @@ import {
   UserCircle,
   X,
 } from 'lucide-react'
-import { useAuth } from '@/auth/AuthContext'
+import { useAuth } from '@/shared/auth/AuthContext'
 import { useHealthQuery } from '@/hooks/queries'
 import { cn } from '@/lib/utils'
 import { Button } from '@/shared/ui/button'

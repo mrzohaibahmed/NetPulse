@@ -18,7 +18,7 @@ import {
   Eye,
   ArrowUpDown,
 } from 'lucide-react'
-import { useAuth } from '@/auth/AuthContext'
+import { useAuth } from '@/shared/auth/AuthContext'
 import { useDeviceMutations, useDevicesQuery } from '@/hooks/queries'
 import { deviceTypeIcon } from '@/lib/device-icons'
 import { formatMs, formatRelative } from '@/utils/format'

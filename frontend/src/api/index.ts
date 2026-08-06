@@ -1,4 +1,4 @@
-import { apiRequest, downloadFile } from './client'
+import { apiRequest, downloadFile } from '@/shared/api/client'
 import type {
   AlertItem,
   ApiItemResponse,

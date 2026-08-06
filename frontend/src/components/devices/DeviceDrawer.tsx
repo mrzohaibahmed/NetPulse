@@ -21,7 +21,7 @@ import {
   Wifi,
 } from 'lucide-react'
 import { useDeviceHistoryQuery, useDeviceMutations, useNmapScanMutation } from '@/hooks/queries'
-import { useAuth } from '@/auth/AuthContext'
+import { useAuth } from '@/shared/auth/AuthContext'
 import { formatDateTime, formatMs, formatPercent, formatRelative } from '@/utils/format'
 import { StatusBadge } from '@/shared/components/StatusBadge'
 import { EmptyState } from '@/shared/components/EmptyState'

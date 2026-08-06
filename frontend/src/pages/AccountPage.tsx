@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { KeyRound, Shield, User as UserIcon, Users } from 'lucide-react'
 import { toast } from 'sonner'
-import { useAuth } from '@/auth/AuthContext'
+import { useAuth } from '@/shared/auth/AuthContext'
 import { useAccountMutation, useUserMutation, useUsersQuery } from '@/hooks/queries'
 import type { User, UserRole } from '@/types'
 import { PageHeader } from '@/shared/components/PageHeader'

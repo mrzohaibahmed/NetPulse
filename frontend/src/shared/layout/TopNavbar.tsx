@@ -10,7 +10,7 @@ import {
   User,
 } from 'lucide-react'
 import { useEffect, useState, type FormEvent } from 'react'
-import { useAuth } from '@/auth/AuthContext'
+import { useAuth } from '@/shared/auth/AuthContext'
 import { useAlertsQuery, useHealthQuery } from '@/hooks/queries'
 import { useTheme } from '@/lib/theme'
 import { formatRelative } from '@/utils/format'

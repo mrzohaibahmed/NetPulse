@@ -7,9 +7,9 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { getMe, login as loginRequest } from '../api'
-import { getStoredToken, setAuthExpiredHandler, setStoredToken } from '../api/client'
-import type { User } from '../types'
+import { getMe, login as loginRequest } from '@/api'
+import { getStoredToken, setAuthExpiredHandler, setStoredToken } from '@/shared/api/client'
+import type { User } from '@/types'
 
 interface AuthContextValue {
   user: User | null
