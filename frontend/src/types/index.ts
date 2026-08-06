@@ -704,11 +704,18 @@ export interface RecoveryLog {
   recoveryStatus: string
   verificationResult: {
     success?: boolean
-    error?: string
+    error?: string | null
+    note?: string
     output?: string
     failedRule?: string | null
-    checks?: Record<string, boolean | null>
+    recoveryRule?: string | null
+    previousStatus?: string
+    newStatus?: string
+    reason?: string
     engine?: string
+    reconciled?: boolean
+    detectedBy?: string
+    checks?: Record<string, boolean | null>
     stats?: {
       adminStatus?: string
       operStatus?: string
@@ -725,6 +732,13 @@ export interface RecoveryLog {
   timestamp: string
   /** Recovery Safety Engine — present on BLOCKED logs */
   failedRule?: string | null
+  recoveryRule?: string | null
+  previousStatus?: string
+  newStatus?: string
+  reason?: string
+  reconciled?: boolean
+  detectedBy?: string
+  note?: string
   checks?: Record<string, boolean | null>
   engine?: string
 }

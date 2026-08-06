@@ -295,6 +295,13 @@ export function MitigationStatusBadge({ status }: { status: string }) {
 
 export function RecoveryStatusBadge({ status }: { status: string }) {
   const value = (status || '').toUpperCase()
+  if (value === 'RECONCILED') {
+    return (
+      <Badge variant="info" className="font-semibold uppercase tracking-wide">
+        Reconciled
+      </Badge>
+    )
+  }
   if (value === 'RECOVERED' || value === 'SUCCESS') {
     return (
       <Badge variant="recovery" className="font-semibold uppercase tracking-wide">

@@ -588,6 +588,53 @@ class RecoveryEngineTests(unittest.TestCase):
         mock_validate.assert_not_called()
         mock_execute.assert_not_called()
 
+    @patch("services.storm.recovery.scheduler.try_reconcile_from_scheduler")
+    @patch("services.storm.recovery.scheduler.record_recovery_history")
+    @patch("services.storm.recovery.scheduler.execute_recovery")
+    @patch("services.storm.recovery.scheduler.validate_recovery_policy")
+    @patch("services.storm.recovery.scheduler.get_settings")
+    @patch("services.storm.recovery.scheduler.db")
+    def test_sweep_r6_reconciles_already_up_instead_of_blocked(
+        self,
+        mock_db,
+        mock_settings,
+        mock_validate,
+        mock_execute,
+        mock_record,
+        mock_try_reconcile,
+    ):
+        """R6 (port already up) must reconcile MITIGATED → MONITORING, not spam BLOCKED."""
+        mock_settings.return_value = {
+            "autoRecovery": True,
+            "reMitigationThreshold": 75.0,
+            "maximumRecoveryAttempts": 3,
+        }
+        mitigated = dict(self.incident_doc)
+        mitigated["status"] = "MITIGATED"
+
+        def find_side_effect(query):
+            if query.get("status") == "MONITORING":
+                return []
+            if query.get("status") == "MITIGATED":
+                return [mitigated]
+            return []
+
+        mock_db.storm_incidents.find.side_effect = find_side_effect
+        mock_validate.return_value = {
+            "passed": False,
+            "safe": False,
+            "failedRule": "R6",
+            "reason": "Interface already up (admin=up) — nothing to recover",
+            "checks": {"sshReachable": True, "interfaceAdminDown": False},
+        }
+        mock_try_reconcile.return_value = True
+
+        run_recovery_cycle()
+
+        mock_try_reconcile.assert_called_once()
+        mock_execute.assert_not_called()
+        mock_record.assert_not_called()
+
     @patch("services.storm.recovery.scheduler.execute_recovery")
     @patch("services.storm.recovery.scheduler.validate_recovery_policy")
     @patch("services.storm.recovery.scheduler.get_settings")

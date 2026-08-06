@@ -12,6 +12,56 @@ import {
   Subsection,
 } from './stormShared'
 
+function isReconciledRow(row: RecoveryLog): boolean {
+  return (row.recoveryStatus || '').toUpperCase() === 'RECONCILED'
+}
+
+function recoveryRuleFor(row: RecoveryLog): string | null {
+  return (
+    row.recoveryRule ||
+    row.failedRule ||
+    row.verificationResult?.recoveryRule ||
+    row.verificationResult?.failedRule ||
+    null
+  )
+}
+
+function ReconciliationDetail({ row }: { row: RecoveryLog }) {
+  const v = row.verificationResult
+  const items: { label: string; value: string }[] = [
+    {
+      label: 'Recovery Rule',
+      value: row.recoveryRule || v?.recoveryRule || row.failedRule || v?.failedRule || '—',
+    },
+    { label: 'Reason', value: row.reason || v?.reason || '—' },
+    { label: 'Previous Status', value: row.previousStatus || v?.previousStatus || '—' },
+    { label: 'New Status', value: row.newStatus || v?.newStatus || '—' },
+    { label: 'Engine', value: row.engine || v?.engine || '—' },
+    {
+      label: 'Detected By',
+      value: row.detectedBy || v?.detectedBy || '—',
+    },
+    {
+      label: 'Reconciled',
+      value: row.reconciled === true || v?.reconciled === true ? 'Yes' : 'No',
+    },
+  ]
+
+  return (
+    <dl className="space-y-2 rounded-md border border-sky-400/30 bg-sky-400/10 p-3 text-sm">
+      {v?.note ? (
+        <p className="mb-2 text-muted-foreground">{v.note}</p>
+      ) : null}
+      {items.map(({ label, value }) => (
+        <div key={label} className="flex flex-col gap-0.5 sm:flex-row sm:gap-3">
+          <dt className="min-w-[7.5rem] shrink-0 font-medium text-muted-foreground">{label}</dt>
+          <dd className="font-mono text-xs text-foreground">{value}</dd>
+        </div>
+      ))}
+    </dl>
+  )
+}
+
 type StormRecoverySectionProps = {
   rows: RecoveryLog[]
   selectedRecovery: RecoveryLog | null
@@ -42,6 +92,7 @@ export function StormRecoverySection({
                     <TableHead>Incident</TableHead>
                     <TableHead>Interface</TableHead>
                     <TableHead>Status</TableHead>
+                    <TableHead>Rule</TableHead>
                     <TableHead>Attempts</TableHead>
                     <TableHead>Time</TableHead>
                   </TableRow>
@@ -49,11 +100,14 @@ export function StormRecoverySection({
                 <TableBody>
                   {recoveryPagination.pageItems.map((row) => {
                     const active = selectedRecovery?._id === row._id
+                    const rule = recoveryRuleFor(row)
+                    const blockReason = row.verificationResult?.error || null
                     return (
                       <TableRow
-                        key={row._id || row.incidentId}
+                        key={row._id || `${row.incidentId}-${row.timestamp}`}
                         className={cn('cursor-pointer', active && 'bg-primary/10')}
                         onClick={() => onSelectRecovery(row)}
+                        title={blockReason || row.verificationResult?.note || undefined}
                       >
                         <TableCell className="mono text-xs font-medium">
                           {row.incidentId}
@@ -61,6 +115,9 @@ export function StormRecoverySection({
                         <TableCell className="font-medium">{row.interface}</TableCell>
                         <TableCell>
                           <RecoveryStatusBadge status={row.recoveryStatus} />
+                        </TableCell>
+                        <TableCell className="mono text-xs text-muted-foreground">
+                          {rule || '—'}
                         </TableCell>
                         <TableCell className="text-sm">{row.retryCount} attempts</TableCell>
                         <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
@@ -98,9 +155,19 @@ export function StormRecoverySection({
                 <p className="text-sm text-muted-foreground">
                   Click a row for recovery verification detail.
                 </p>
+              ) : isReconciledRow(selectedRecovery) ? (
+                <>
+                  <RecoveryStatusBadge status={selectedRecovery.recoveryStatus} />
+                  <ReconciliationDetail row={selectedRecovery} />
+                </>
               ) : (
                 <>
                   <RecoveryStatusBadge status={selectedRecovery.recoveryStatus} />
+                  {selectedRecovery.verificationResult?.error ? (
+                    <p className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-warning">
+                      {selectedRecovery.verificationResult.error}
+                    </p>
+                  ) : null}
                   <RecoveryChecksList
                     checks={
                       selectedRecovery.checks &&
