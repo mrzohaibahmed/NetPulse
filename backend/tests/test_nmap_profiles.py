@@ -114,7 +114,13 @@ def test_scan_and_update_device_defaults_to_deep():
     ):
         result = scan_and_update_device(device)
         assert result["success"] is True
-        nmap_fn.assert_called_once_with("10.0.0.2", profile=SCAN_PROFILE_DEEP)
+        nmap_fn.assert_called_once_with(
+            "10.0.0.2",
+            profile=SCAN_PROFILE_DEEP,
+            force=False,
+            existing_network_info=None,
+            device_label="sw1/10.0.0.2",
+        )
 
 
 def test_scan_and_update_device_accepts_quick():
@@ -156,4 +162,10 @@ def test_scan_and_update_device_accepts_quick():
     ):
         result = scan_and_update_device(device, profile=SCAN_PROFILE_QUICK)
         assert result["success"] is True
-        nmap_fn.assert_called_once_with("10.0.0.3", profile=SCAN_PROFILE_QUICK)
+        nmap_fn.assert_called_once_with(
+            "10.0.0.3",
+            profile=SCAN_PROFILE_QUICK,
+            force=False,
+            existing_network_info=None,
+            device_label="pc1/10.0.0.3",
+        )

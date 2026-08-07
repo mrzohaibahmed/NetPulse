@@ -82,8 +82,8 @@ def scan_device_details(device_id: str):
                 ),
             }), 409
 
-        # Delegate all scan logic to the service layer.
-        result = scan_and_update_device(device)
+        # Delegate all scan logic to the service layer (force bypasses TTL cache).
+        result = scan_and_update_device(device, force=True)
 
         if not result["success"]:
             return jsonify({
@@ -140,7 +140,7 @@ def scan_all_device_details():
     }
     """
     try:
-        summary = scan_all_online_devices(profile=SCAN_PROFILE_DEEP)
+        summary = scan_all_online_devices(profile=SCAN_PROFILE_DEEP, force=True)
         return jsonify({
             "success": True,
             "message": (
