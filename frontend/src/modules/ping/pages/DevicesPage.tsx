@@ -28,6 +28,7 @@ import {
 import { useAuth } from '@/shared/auth/AuthContext'
 import { useDashboardQuery, useDeviceMutations, useDevicesQuery } from '@/hooks/queries'
 import { deviceTypeIcon } from '@/lib/device-icons'
+import { displayDeviceType } from '@/modules/ping/constants/devices'
 import { formatMs, formatRelative } from '@/utils/format'
 import type { Device } from '@/types'
 import { DeviceDrawer } from '@/modules/ping/components/DeviceDrawer'
@@ -189,12 +190,34 @@ export function DevicesPage() {
       {
         accessorKey: 'deviceType',
         header: 'Type',
+        cell: ({ row }) =>
+          displayDeviceType(row.original.deviceType, row.original.classificationConfidence),
       },
       {
         id: 'vendor',
         header: 'Vendor',
         cell: ({ row }) => (
-          <span className="text-muted-foreground">{row.original.credentials?.sshVendor || '—'}</span>
+          <span className="text-muted-foreground">
+            {row.original.vendor || row.original.credentials?.sshVendor || '—'}
+          </span>
+        ),
+      },
+      {
+        id: 'operatingSystem',
+        header: 'OS',
+        cell: ({ row }) => (
+          <span className="text-muted-foreground">{row.original.operatingSystem || '—'}</span>
+        ),
+      },
+      {
+        id: 'confidence',
+        header: 'Confidence',
+        cell: ({ row }) => (
+          <span className="mono text-muted-foreground">
+            {row.original.classificationConfidence != null
+              ? `${row.original.classificationConfidence}%`
+              : '—'}
+          </span>
         ),
       },
       {

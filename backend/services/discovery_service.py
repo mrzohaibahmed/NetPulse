@@ -1,10 +1,8 @@
 import ipaddress
 import socket
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone
 
 from config.database import db
-from models.device import create_device
 from services.ping_service import ping_device
 
 
@@ -22,7 +20,7 @@ def get_hostname(ip_address, timeout=1.0):
 
 def resolve_hostname_for_device(ip_address):
     """Best-effort hostname lookup when saving a single discovered device."""
-    return get_hostname(ip_address) or "Unknown Device"
+    return get_hostname(ip_address) or "Unknown"
 
 
 def get_local_network_hint():
@@ -64,52 +62,22 @@ def scan_single_ip(ip_address):
                 "status": "Offline",
                 "responseTime": None,
                 "saved": False,
+                "deviceType": None,
+                "vendor": None,
+                "operatingSystem": None,
+                "classificationConfidence": None,
             }
 
         existing = db.devices.find_one({"ipAddress": ip_address})
-        saved = False
-        now = datetime.now(timezone.utc)
 
-        if existing is None:
-            hostname = resolve_hostname_for_device(ip_address)
-        else:
-            hostname = existing.get("hostname") or "Unknown Device"
+        # Nmap → classify → save/update (automatic hostname & device type).
+        from services.discovery.apply import enrich_online_host  # noqa: PLC0415
 
-        if existing is None:
-            device = create_device(
-                hostname=hostname,
-                ip_address=ip_address,
-                device_type="Unknown",
-                critical=False,
-                monitor=True,
-            )
-            device["status"] = "Online"
-            device["responseTime"] = result["responseTime"]
-            device["lastSeen"] = result["lastSeen"]
-            device["updatedAt"] = now
-
-            db.devices.insert_one(device)
-            saved = True
-        else:
-            db.devices.update_one(
-                {"_id": existing["_id"]},
-                {
-                    "$set": {
-                        "status": "Online",
-                        "responseTime": result["responseTime"],
-                        "lastSeen": result["lastSeen"],
-                        "updatedAt": now,
-                    }
-                },
-            )
-
-        return {
-            "hostname": hostname,
-            "ipAddress": ip_address,
-            "status": "Online",
-            "responseTime": result["responseTime"],
-            "saved": saved,
-        }
+        return enrich_online_host(
+            ip_address,
+            ping_result=result,
+            existing=existing,
+        )
 
     except Exception:
         return {
@@ -118,6 +86,10 @@ def scan_single_ip(ip_address):
             "status": "Offline",
             "responseTime": None,
             "saved": False,
+            "deviceType": None,
+            "vendor": None,
+            "operatingSystem": None,
+            "classificationConfidence": None,
         }
 
 

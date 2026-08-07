@@ -209,6 +209,12 @@ def serialize_device(device):
         "pingRetries": device.get("pingRetries"),
         "createdAt": format_datetime(device.get("createdAt")),
         "updatedAt": format_datetime(device.get("updatedAt")),
+        # Optional auto-classification fields (absent on older documents).
+        "vendor": device.get("vendor"),
+        "operatingSystem": device.get("operatingSystem"),
+        "classificationConfidence": device.get("classificationConfidence"),
+        "classificationMethod": device.get("classificationMethod"),
+        "discoverySource": device.get("discoverySource"),
         # Nmap metadata — present after the first successful scan, None before.
         "networkInfo": serialize_network_info(device.get("networkInfo")),
         # SSH credentials metadata (secrets never returned).

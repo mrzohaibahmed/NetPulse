@@ -40,12 +40,13 @@ from bson import ObjectId
 # python-nmap wraps the nmap binary; import is deferred so Flask starts even if
 # nmap is not yet installed, and errors are reported only when a scan is
 # requested.
+nmap_lib: Any
 try:
     import nmap as nmap_lib  # package: python-nmap
     _NMAP_AVAILABLE = True
 except ImportError:
+    nmap_lib = None
     _NMAP_AVAILABLE = False
-    nmap_lib = None  # type: ignore[assignment]
 
 from config.database import (
     MAX_SCAN_THREADS,
@@ -83,7 +84,7 @@ def _get_scanner() -> Any:
     """
     global _scanner
 
-    if not _NMAP_AVAILABLE:
+    if not _NMAP_AVAILABLE or nmap_lib is None:
         raise RuntimeError(
             "python-nmap is not installed. "
             "Run: pip install python-nmap"
@@ -442,7 +443,25 @@ def scan_and_update_device(device: dict) -> dict:
 
     try:
         network_info = scan_device_nmap(ip_address)
-        update_device_network_info(device_id, network_info)
+
+        # Automatic hostname / device-type classification (does not redesign scan flow).
+        from services.discovery.apply import (  # noqa: PLC0415
+            apply_classification_to_device,
+            classify_network_info,
+        )
+
+        classification, _evidence = classify_network_info(
+            network_info,
+            ip_address=ip_address,
+            existing=device,
+            try_ssh=True,
+        )
+        apply_classification_to_device(
+            device_id,
+            classification,
+            network_info=network_info,
+            existing=device,
+        )
         return {"success": True, "ip": ip_address, "error": None}
 
     except RuntimeError as exc:

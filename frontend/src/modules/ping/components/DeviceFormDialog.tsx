@@ -194,10 +194,28 @@ export function DeviceFormDialog({ open, onOpenChange, device }: DeviceFormDialo
                       {type}
                     </SelectItem>
                   ))}
+                  {/* Preserve legacy/custom types not in the canonical list */}
+                  {device?.deviceType &&
+                  !(DEVICE_TYPES as readonly string[]).includes(device.deviceType) ? (
+                    <SelectItem value={device.deviceType}>{device.deviceType}</SelectItem>
+                  ) : null}
                 </SelectContent>
               </Select>
               {form.formState.errors.deviceType ? (
                 <p className="text-xs text-danger">{form.formState.errors.deviceType.message}</p>
+              ) : null}
+              {device?.classificationConfidence != null && device.classificationConfidence < 50 ? (
+                <p className="text-xs text-muted-foreground">
+                  Auto-detection confidence is low ({device.classificationConfidence}%). Please
+                  confirm or set the device type manually.
+                </p>
+              ) : device?.classificationConfidence != null ? (
+                <p className="text-xs text-muted-foreground">
+                  Auto-detected
+                  {device.operatingSystem ? ` · OS: ${device.operatingSystem}` : ''}
+                  {device.vendor ? ` · Vendor: ${device.vendor}` : ''}
+                  {` · ${device.classificationConfidence}% confidence`}
+                </p>
               ) : null}
             </div>
           </fieldset>
