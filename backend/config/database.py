@@ -32,6 +32,10 @@ MAX_SCAN_THREADS = int(os.getenv("MAX_SCAN_THREADS", 5))
 # after this duration to prevent hangs on unresponsive targets.
 NMAP_TIMEOUT = int(os.getenv("NMAP_TIMEOUT", 300))
 
+# Reuse recent Nmap results when networkInfo.lastScan is younger than this (seconds).
+# Set to 0 to disable TTL caching. Default: 6 hours.
+NMAP_CACHE_TTL = int(os.getenv("NMAP_CACHE_TTL", 21600))
+
 # Absolute path to the nmap binary. Empty → python-nmap auto-detects from PATH.
 # Windows users typically need: C:\Program Files (x86)\Nmap\nmap.exe
 NMAP_PATH = os.getenv("NMAP_PATH", "") or None

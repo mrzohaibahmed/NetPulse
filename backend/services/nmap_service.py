@@ -50,6 +50,7 @@ except ImportError:
 from config.database import (
     MAX_SCAN_THREADS,
     NMAP_ARGUMENTS,
+    NMAP_CACHE_TTL,
     NMAP_PATH,
     NMAP_QUICK_ARGUMENTS,
     NMAP_TIMEOUT,
@@ -90,6 +91,83 @@ def normalize_scan_profile(profile: str | None) -> str:
     if key in _SCAN_PROFILES:
         return key
     return SCAN_PROFILE_DEEP
+
+
+def _device_log_label(device: dict | None, ip_address: str) -> str:
+    if device:
+        hostname = device.get("hostname")
+        if hostname and str(hostname).strip():
+            return f"{hostname}/{ip_address}"
+    return ip_address
+
+
+def _parse_last_scan(value: Any) -> datetime | None:
+    """Parse ``networkInfo.lastScan`` from MongoDB (datetime or ISO string)."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value
+    if isinstance(value, str) and value.strip():
+        text = value.strip()
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed
+    return None
+
+
+def _network_info_cache_age(network_info: dict | None) -> int | None:
+    """
+    Return age of ``lastScan`` in seconds, or None when unavailable.
+    """
+    if not network_info:
+        return None
+    last_scan = _parse_last_scan(network_info.get("lastScan"))
+    if last_scan is None:
+        return None
+    return int((datetime.now(timezone.utc) - last_scan).total_seconds())
+
+
+def is_network_info_cache_fresh(network_info: dict | None) -> bool:
+    """True when ``lastScan`` exists and is younger than ``NMAP_CACHE_TTL``."""
+    if NMAP_CACHE_TTL <= 0:
+        return False
+    age = _network_info_cache_age(network_info)
+    if age is None:
+        return False
+    return age < NMAP_CACHE_TTL
+
+
+def get_cached_network_info(
+    device: dict | None,
+    *,
+    force: bool = False,
+) -> dict | None:
+    """
+    Return stored ``networkInfo`` when cache is fresh and ``force`` is False.
+
+    Logs ``[NMAP CACHE HIT]`` when a fresh cached result is returned.
+    """
+    if force:
+        return None
+
+    ip_address = (device or {}).get("ipAddress", "unknown")
+    label = _device_log_label(device, ip_address)
+    network_info = (device or {}).get("networkInfo") if device else None
+
+    if not is_network_info_cache_fresh(network_info):
+        return None
+
+    age = _network_info_cache_age(network_info)
+    logger.info("[NMAP CACHE HIT] device=%s age=%s", label, age)
+    return network_info
 
 # ---------------------------------------------------------------------------
 # Module-level scanner singleton (created once, reused across calls).
@@ -352,9 +430,16 @@ def _build_network_info(scan_result: dict, ip_address: str) -> dict:
 def scan_device_nmap(
     ip_address: str,
     profile: str = SCAN_PROFILE_DEEP,
+    *,
+    force: bool = False,
+    existing_network_info: dict | None = None,
+    device_label: str | None = None,
 ) -> dict:
     """
     Execute an Nmap scan against a single IP address and return parsed results.
+
+    When ``existing_network_info`` is supplied and the TTL cache is fresh,
+    returns the cached document without running Nmap unless ``force`` is True.
 
     Parameters
     ----------
@@ -362,6 +447,12 @@ def scan_device_nmap(
         Valid IPv4 address of the target host.
     profile : str
         ``quick`` for inventory or ``deep`` for diagnostics (default).
+    force : bool
+        When True, always execute Nmap and ignore cache.
+    existing_network_info : dict, optional
+        Prior ``networkInfo`` used for TTL cache decisions.
+    device_label : str, optional
+        Hostname/IP label for cache log lines.
 
     Returns
     -------
@@ -375,6 +466,17 @@ def scan_device_nmap(
     ValueError
         If the IP address string is invalid / not found in nmap results.
     """
+    label = device_label or ip_address
+    if not force and existing_network_info and is_network_info_cache_fresh(existing_network_info):
+        age = _network_info_cache_age(existing_network_info)
+        logger.info("[NMAP CACHE HIT] device=%s age=%s", label, age)
+        return existing_network_info
+
+    if force:
+        logger.info("[NMAP FORCE SCAN] device=%s", label)
+    elif existing_network_info and _network_info_cache_age(existing_network_info) is not None:
+        logger.info("[NMAP CACHE EXPIRED] device=%s", label)
+
     scanner = _get_scanner()
     scan_profile = normalize_scan_profile(profile)
     arguments = resolve_nmap_arguments(scan_profile)
@@ -456,9 +558,14 @@ def update_device_network_info(device_id: ObjectId, network_info: dict) -> None:
 def scan_and_update_device(
     device: dict,
     profile: str = SCAN_PROFILE_DEEP,
+    *,
+    force: bool = False,
 ) -> dict:
     """
     Orchestrate an Nmap scan for one device: scan -> parse -> classify -> persist.
+
+    When a fresh ``networkInfo.lastScan`` exists and ``force`` is False, skips
+    Nmap execution and classification and returns success immediately.
 
     Parameters
     ----------
@@ -467,6 +574,8 @@ def scan_and_update_device(
         and optionally hostname for logging.
     profile : str
         ``quick`` (inventory) or ``deep`` (diagnostics, default).
+    force : bool
+        When True, bypass TTL cache and always run Nmap + classification.
 
     Returns
     -------
@@ -491,8 +600,18 @@ def scan_and_update_device(
         )
         return {"success": False, "ip": ip_address, "error": "Device is not online"}
 
+    cached = get_cached_network_info(device, force=force)
+    if cached is not None:
+        return {"success": True, "ip": ip_address, "error": None}
+
     try:
-        network_info = scan_device_nmap(ip_address, profile=scan_profile)
+        network_info = scan_device_nmap(
+            ip_address,
+            profile=scan_profile,
+            force=force,
+            existing_network_info=device.get("networkInfo"),
+            device_label=_device_log_label(device, ip_address),
+        )
 
         # Automatic hostname / device-type classification (does not redesign scan flow).
         from services.discovery.apply import (  # noqa: PLC0415
@@ -530,12 +649,16 @@ def scan_and_update_device(
         return {"success": False, "ip": ip_address, "error": str(exc)}
 
 
-def scan_all_online_devices(profile: str = SCAN_PROFILE_QUICK) -> dict:
+def scan_all_online_devices(
+    profile: str = SCAN_PROFILE_QUICK,
+    *,
+    force: bool = False,
+) -> dict:
     """
     Scan every currently-online device using a bounded thread pool.
 
-    Default profile is ``quick`` (scheduled inventory). Pass ``deep`` for
-    explicit administrator bulk diagnostics.
+    Default profile is ``quick`` (scheduled inventory) with ``force=False``.
+    Pass ``force=True`` for explicit administrator bulk diagnostics.
 
     Fetches all devices with status == "Online" from MongoDB, then runs
     scan_and_update_device concurrently up to MAX_SCAN_THREADS workers.
@@ -549,7 +672,11 @@ def scan_all_online_devices(profile: str = SCAN_PROFILE_QUICK) -> dict:
     All per-device errors are captured; the function itself never raises.
     """
     scan_profile = normalize_scan_profile(profile)
-    logger.info("[NMAP] Bulk scan started | profile=%s", scan_profile)
+    logger.info(
+        "[NMAP] Bulk scan started | profile=%s | force=%s",
+        scan_profile,
+        force,
+    )
     start_time = time.monotonic()
 
     # Pre-filter to online devices: offline devices are also guarded inside
@@ -575,7 +702,12 @@ def scan_all_online_devices(profile: str = SCAN_PROFILE_QUICK) -> dict:
     # network with too many simultaneous nmap processes at once.
     with ThreadPoolExecutor(max_workers=MAX_SCAN_THREADS) as executor:
         future_map = {
-            executor.submit(scan_and_update_device, device, scan_profile): device
+            executor.submit(
+                scan_and_update_device,
+                device,
+                scan_profile,
+                force=force,
+            ): device
             for device in online_devices
         }
 
