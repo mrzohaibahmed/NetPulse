@@ -60,6 +60,14 @@ export interface Device {
   pingRetries?: number | null
   createdAt: string
   updatedAt: string
+  /** Auto-detected hardware / OUI vendor (optional; older docs may omit). */
+  vendor?: string | null
+  /** Auto-detected OS name from Nmap (optional). */
+  operatingSystem?: string | null
+  /** 0–100 classification confidence (optional). */
+  classificationConfidence?: number | null
+  classificationMethod?: string | null
+  discoverySource?: string | null
   networkInfo?: NetworkInfo | null
   /**
    * SSH/SNMP credentials metadata.
@@ -270,6 +278,11 @@ export interface DiscoveryDevice {
   status: 'Online' | 'Offline'
   responseTime: number | null
   saved: boolean
+  deviceType?: string | null
+  vendor?: string | null
+  operatingSystem?: string | null
+  classificationConfidence?: number | null
+  classificationMethod?: string | null
 }
 
 export interface DiscoverySummary {

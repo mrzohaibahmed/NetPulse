@@ -42,6 +42,7 @@ import {
 } from '@/shared/ui/sheet'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table'
 import type { NetworkInfo, NetworkPort } from '@/types'
+import { displayDeviceType } from '@/modules/ping/constants/devices'
 
 interface DeviceDrawerProps {
   deviceId: string | null
@@ -79,7 +80,9 @@ export function DeviceDrawer({ deviceId, open, onOpenChange }: DeviceDrawerProps
             {device?.hostname ?? 'Device details'}
           </SheetTitle>
           <SheetDescription className="mono text-sm">
-            {device ? `${device.ipAddress} · ${device.deviceType}` : 'Loading device telemetry…'}
+            {device
+              ? `${device.ipAddress} · ${displayDeviceType(device.deviceType, device.classificationConfidence)}`
+              : 'Loading device telemetry…'}
           </SheetDescription>
         </SheetHeader>
 
@@ -174,8 +177,26 @@ export function DeviceDrawer({ deviceId, open, onOpenChange }: DeviceDrawerProps
                       <div className="grid gap-3 sm:grid-cols-2">
                         <Meta label="Hostname" value={device.hostname} />
                         <Meta label="IP address" value={device.ipAddress} mono />
-                        <Meta label="Device type" value={device.deviceType} />
-                        <Meta label="Vendor" value={device.credentials?.sshVendor || '—'} />
+                        <Meta
+                          label="Device type"
+                          value={displayDeviceType(
+                            device.deviceType,
+                            device.classificationConfidence,
+                          )}
+                        />
+                        <Meta
+                          label="Vendor"
+                          value={device.vendor || device.credentials?.sshVendor || '—'}
+                        />
+                        <Meta label="Operating system" value={device.operatingSystem || '—'} />
+                        <Meta
+                          label="Confidence"
+                          value={
+                            device.classificationConfidence != null
+                              ? `${device.classificationConfidence}%`
+                              : '—'
+                          }
+                        />
                         <Meta
                           label="SSH Username"
                           value={device.credentials?.sshUsername || '—'}

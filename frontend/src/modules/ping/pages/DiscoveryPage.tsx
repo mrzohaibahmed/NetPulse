@@ -15,6 +15,7 @@ import { useClientPagination } from '@/hooks/useClientPagination'
 import { useDiscoveryMutation, useNetworkHintQuery } from '@/hooks/queries'
 import { formatMs } from '@/utils/format'
 import type { DiscoveryDevice, DiscoverySummary } from '@/types'
+import { displayDeviceType } from '@/modules/ping/constants/devices'
 import { EmptyState } from '@/shared/components/EmptyState'
 import { KpiCard } from '@/shared/components/KpiCard'
 import { PageHeader } from '@/shared/components/PageHeader'
@@ -276,6 +277,10 @@ export function DiscoveryPage() {
                       <TableRow>
                         <TableHead>IP</TableHead>
                         <TableHead>Hostname</TableHead>
+                        <TableHead>Vendor</TableHead>
+                        <TableHead>OS</TableHead>
+                        <TableHead>Device type</TableHead>
+                        <TableHead>Confidence</TableHead>
                         <TableHead>Status</TableHead>
                         <TableHead>RTT</TableHead>
                         <TableHead>Saved</TableHead>
@@ -286,6 +291,25 @@ export function DiscoveryPage() {
                         <TableRow key={device.ipAddress}>
                           <TableCell className="mono">{device.ipAddress}</TableCell>
                           <TableCell className="font-medium">{device.hostname ?? '—'}</TableCell>
+                          <TableCell className="text-muted-foreground">
+                            {device.vendor || '—'}
+                          </TableCell>
+                          <TableCell className="text-muted-foreground">
+                            {device.operatingSystem || '—'}
+                          </TableCell>
+                          <TableCell>
+                            {device.status === 'Online'
+                              ? displayDeviceType(
+                                  device.deviceType,
+                                  device.classificationConfidence,
+                                )
+                              : '—'}
+                          </TableCell>
+                          <TableCell className="mono text-muted-foreground">
+                            {device.classificationConfidence != null
+                              ? `${device.classificationConfidence}%`
+                              : '—'}
+                          </TableCell>
                           <TableCell>
                             <StatusBadge status={device.status} />
                           </TableCell>
