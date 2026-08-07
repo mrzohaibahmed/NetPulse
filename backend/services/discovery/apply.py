@@ -26,7 +26,13 @@ from services.discovery.identity_management import (
     apply_identity_fields_to_classification_update,
     ownership_for_device_edit,
 )
-from services.discovery.ssh_hostname import fetch_ssh_hostname
+from services.discovery.ssh_hostname import (
+    fetch_ssh_hostname,
+    log_ssh_hostname_fallback,
+    log_ssh_hostname_skip,
+    nmap_hostname_from_network_info,
+    should_attempt_ssh_hostname,
+)
 from utils.monitor_logger import get_monitor_logger
 
 logger = get_monitor_logger("discovery")
@@ -113,12 +119,47 @@ def classify_network_info(
     """
     Build evidence from nmap results (+ optional SSH hostname) and classify.
     """
+    info = network_info
     hostname_ssh = ""
+    reverse_dns_hostname = ""
+
     if try_ssh and existing is not None:
-        hostname_ssh = fetch_ssh_hostname(existing)
+        ip = ip_address or existing.get("ipAddress") or ""
+        nmap_ptr, nmap_service = nmap_hostname_from_network_info(network_info)
+
+        if not nmap_ptr and not nmap_service:
+            from services.discovery_service import get_hostname  # noqa: PLC0415
+
+            reverse_dns_hostname = get_hostname(ip) or ""
+            if reverse_dns_hostname and not is_unknown_hostname(reverse_dns_hostname):
+                info = dict(network_info or {})
+                if not (info.get("hostname") or "").strip():
+                    info["hostname"] = reverse_dns_hostname
+
+        if should_attempt_ssh_hostname(
+            existing,
+            network_info,
+            ip_address=ip,
+            reverse_dns_hostname=reverse_dns_hostname,
+        ):
+            log_ssh_hostname_fallback(existing, ip_address=ip)
+            hostname_ssh = fetch_ssh_hostname(existing)
+        elif (
+            nmap_ptr
+            or nmap_service
+            or (
+                reverse_dns_hostname
+                and not is_unknown_hostname(reverse_dns_hostname)
+            )
+            or (
+                (existing.get("hostname") or "")
+                and not is_unknown_hostname(existing.get("hostname"))
+            )
+        ):
+            log_ssh_hostname_skip(existing, ip_address=ip)
 
     evidence = evidence_from_network_info(
-        network_info,
+        info,
         ip_address=ip_address,
         existing_hostname=(existing or {}).get("hostname") or "",
         hostname_ssh=hostname_ssh,
