@@ -58,7 +58,7 @@ def test_scan_device_nmap_passes_profile_arguments():
     }
 
     with (
-        patch("services.nmap_service._get_scanner", return_value=fake_scanner),
+        patch("services.nmap_service._create_scanner", return_value=fake_scanner),
         patch(
             "services.nmap_service.NMAP_QUICK_ARGUMENTS",
             "-O -sV -T4 --top-ports 100",
