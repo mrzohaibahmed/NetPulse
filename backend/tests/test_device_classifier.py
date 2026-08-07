@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from unittest.mock import MagicMock
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
@@ -15,6 +16,7 @@ from services.discovery.classifier import (
     classify_device,
     evidence_from_network_info,
     is_unknown_hostname,
+    log_classification,
     resolve_hostname,
 )
 
@@ -164,7 +166,7 @@ def test_is_unknown_hostname():
 def test_linux_server():
     evidence = ClassificationEvidence(
         hostname_ptr="app-server-01",
-        vendor="",
+        vendor="Dell Inc.",
         os_name="Linux 5.15",
         os_family="Linux",
         ports=[_port(22, "ssh"), _port(80, "http"), _port(443, "https")],
@@ -172,7 +174,7 @@ def test_linux_server():
     )
     result = classify_device(evidence)
     assert result.device_type == "Linux Server"
-    assert result.confidence >= 70
+    assert 80 <= result.confidence <= 95
 
 
 def test_hypervisor_esxi():
@@ -214,3 +216,120 @@ def test_rescan_does_not_require_duplicate_logic():
     result = classify_device(evidence)
     merged = merge_hostname(existing, result.hostname)
     assert merged == "kept-hostname"
+
+
+def test_cisco_mixed_routing_classifies_as_router():
+    """routing_hints + switch_hints must hit cisco-mixed-routing, not cisco-switch."""
+    evidence = ClassificationEvidence(
+        ip_address="10.0.0.20",
+        hostname_ptr="core-rtr-sw",
+        vendor="Cisco Systems",
+        os_name="Cisco IOS",
+        os_family="IOS",
+        nmap_device_type="router",
+        ports=[_port(22, "ssh"), _port(161, "snmp")],
+        services=["ssh", "snmp"],
+        products=["Cisco Catalyst Switch Router"],
+    )
+    result = classify_device(evidence)
+    assert result.device_type == "Router"
+    assert result.classification_method == "cisco-mixed-routing"
+    assert 80 <= result.confidence <= 95
+
+
+def test_confidence_vendor_only_band():
+    evidence = ClassificationEvidence(
+        vendor="Cisco Systems",
+        ports=[],
+        services=[],
+    )
+    result = classify_device(evidence)
+    assert result.classification_method == "vendor-only"
+    assert 40 <= result.confidence <= 60
+
+
+def test_confidence_vendor_os_ports_services_band():
+    evidence = ClassificationEvidence(
+        vendor="Cisco Systems",
+        os_name="Cisco IOS XE",
+        os_family="IOS",
+        nmap_device_type="switch",
+        ports=[_port(22, "ssh"), _port(161, "snmp")],
+        services=["ssh", "snmp"],
+    )
+    result = classify_device(evidence)
+    assert result.classification_method == "cisco-switch"
+    assert 92 <= result.confidence <= 95
+
+
+def test_confidence_vendor_os_band():
+    evidence = ClassificationEvidence(
+        vendor="Cisco",
+        os_name="Cisco IOS",
+        os_family="IOS",
+        nmap_device_type="router",
+        products=["Cisco ISR Router"],
+        ports=[],
+        services=[],
+    )
+    result = classify_device(evidence)
+    assert result.classification_method == "cisco-router"
+    assert 65 <= result.confidence <= 80
+
+
+def test_competing_rules_highest_score_wins():
+    evidence = ClassificationEvidence(
+        vendor="VMware",
+        os_name="VMware ESXi 7.0",
+        ports=[
+            _port(9100, "jetdirect"),
+            _port(443, "https"),
+            _port(902, "vmware-auth"),
+        ],
+        services=["jetdirect", "https"],
+        products=["HP JetDirect", "VMware ESXi"],
+        nmap_device_type="specialized",
+    )
+    result = classify_device(evidence)
+    assert result.device_type == "Hypervisor"
+    assert result.classification_method == "hypervisor-fingerprint"
+
+
+def test_tie_break_preserves_first_highest_rule():
+    """Equal scores: stable sort keeps the first-appended match."""
+    from services.discovery.classifier import _RuleMatch
+
+    matches = [
+        _RuleMatch("Router", 88, "cisco-mixed-routing", ("routing", "switch")),
+        _RuleMatch("Managed Switch", 88, "cisco-switch", ("switch-or-cisco",)),
+    ]
+    matches.sort(key=lambda m: m.score, reverse=True)
+    assert matches[0].method == "cisco-mixed-routing"
+    assert matches[0].device_type == "Router"
+
+
+def test_log_classification_includes_metadata():
+    evidence = ClassificationEvidence(
+        ip_address="10.0.0.5",
+        hostname_ptr="sw1.local",
+        vendor="Cisco Systems",
+        os_name="Cisco IOS",
+        ports=[_port(22, "ssh")],
+        services=["ssh"],
+    )
+    result = classify_device(evidence)
+    mock_logger = MagicMock()
+
+    log_classification(mock_logger, "10.0.0.5", evidence, result)
+
+    mock_logger.info.assert_called_once()
+    fmt, device_label, rule, confidence, signals, host_source, dtype = (
+        mock_logger.info.call_args[0]
+    )
+    assert "[CLASSIFICATION]" in fmt
+    assert device_label == "sw1.local/10.0.0.5"
+    assert rule == "cisco-switch"
+    assert confidence == result.confidence
+    assert "ssh" in signals
+    assert host_source == "nmap-ptr"
+    assert dtype == result.device_type

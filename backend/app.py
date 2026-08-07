@@ -18,6 +18,7 @@ from routes.scan_routes import scan_bp
 from routes.settings_routes import settings_bp
 from routes.storm_routes import storm_bp
 from scheduler import start_scheduler
+from services.device_indexes import ensure_device_indexes
 from services.interface_collection.collector import ensure_interface_indexes
 from services.interface_collection.stats_collector import ensure_interface_stats_indexes
 from services.settings_service import ensure_settings
@@ -112,11 +113,7 @@ def bootstrap():
     # Database-level uniqueness constraints (idempotent).
     # MongoDB enforces these under concurrency; application checks are kept
     # for user-friendly errors.
-    db.devices.create_index(
-        [("ipAddress", 1)],
-        unique=True,
-        name="uniq_devices_ipAddress",
-    )
+    ensure_device_indexes()
     db.users.create_index(
         [("username", 1)],
         unique=True,

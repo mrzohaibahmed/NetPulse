@@ -91,6 +91,17 @@ class _RuleMatch:
     signals: tuple[str, ...]
 
 
+# Rule methods with highly unique device fingerprints (may exceed 95% confidence).
+_HIGH_FINGERPRINT_METHODS = frozenset({
+    "printer-fingerprint",
+    "ip-camera-fingerprint",
+    "nas-fingerprint",
+    "hypervisor-fingerprint",
+    "firewall-fingerprint",
+    "access-point-fingerprint",
+})
+
+
 def _norm(value: Any) -> str:
     if value is None:
         return ""
@@ -103,6 +114,19 @@ def _lower(value: Any) -> str:
 
 def is_unknown_hostname(hostname: str | None) -> bool:
     return _lower(hostname) in UNKNOWN_HOSTNAMES
+
+
+def _products_from_ports(ports: list[dict]) -> list[str]:
+    """Collect product and extraInfo strings from port scan rows."""
+    products: list[str] = []
+    for port in ports:
+        product = _norm(port.get("product"))
+        if product:
+            products.append(product)
+        extra_info = _norm(port.get("extraInfo"))
+        if extra_info:
+            products.append(extra_info)
+    return products
 
 
 def evidence_from_network_info(
@@ -118,14 +142,7 @@ def evidence_from_network_info(
     os_block = info.get("os") or {}
     ports = list(info.get("ports") or [])
     services = list(info.get("services") or [])
-    products: list[str] = []
-    for port in ports:
-        product = _norm(port.get("product"))
-        if product:
-            products.append(product)
-        extra_info = _norm(port.get("extraInfo"))
-        if extra_info:
-            products.append(extra_info)
+    products = _products_from_ports(ports)
 
     hostname_service = _hostname_from_services(ports, services, products)
 
@@ -158,12 +175,11 @@ def _hostname_from_services(
 
     Looks for common patterns in product + extraInfo (e.g. SSL CN=, SMB name).
     """
-    blobs: list[str] = []
+    blobs: list[str] = list(_products_from_ports(ports))
     for port in ports:
-        for key in ("product", "extraInfo", "version"):
-            value = _norm(port.get(key))
-            if value:
-                blobs.append(value)
+        version = _norm(port.get("version"))
+        if version:
+            blobs.append(version)
     blobs.extend(_norm(s) for s in services)
     blobs.extend(_norm(p) for p in products)
 
@@ -226,6 +242,96 @@ def _service_names(evidence: ClassificationEvidence) -> set[str]:
     return names
 
 
+def _has_vendor_signal(evidence: ClassificationEvidence) -> bool:
+    return bool(_norm(evidence.vendor or evidence.mac_vendor))
+
+
+def _has_os_signal(evidence: ClassificationEvidence) -> bool:
+    return bool(_norm(evidence.os_name or evidence.os_family))
+
+
+def _has_port_signal(evidence: ClassificationEvidence) -> bool:
+    return bool(_open_ports(evidence))
+
+
+def _has_service_signal(evidence: ClassificationEvidence) -> bool:
+    return bool(_service_names(evidence))
+
+
+def _generic_confidence_ceiling(evidence: ClassificationEvidence) -> int:
+    """Maximum confidence for non-fingerprint rules based on evidence depth."""
+    if (
+        _has_vendor_signal(evidence)
+        and _has_os_signal(evidence)
+        and _has_port_signal(evidence)
+        and _has_service_signal(evidence)
+    ):
+        return 95
+    if (
+        _has_vendor_signal(evidence)
+        and _has_os_signal(evidence)
+        and _has_port_signal(evidence)
+    ):
+        return 92
+    if _has_vendor_signal(evidence) and _has_os_signal(evidence):
+        return 80
+    if _has_vendor_signal(evidence):
+        return 60
+    return 40
+
+
+def _generic_confidence_floor(evidence: ClassificationEvidence) -> int:
+    """Minimum confidence tier for matched generic rules."""
+    if (
+        _has_vendor_signal(evidence)
+        and _has_os_signal(evidence)
+        and _has_port_signal(evidence)
+        and _has_service_signal(evidence)
+    ):
+        return 92
+    if (
+        _has_vendor_signal(evidence)
+        and _has_os_signal(evidence)
+        and _has_port_signal(evidence)
+    ):
+        return 80
+    if _has_vendor_signal(evidence) and _has_os_signal(evidence):
+        return 65
+    if _has_vendor_signal(evidence):
+        return 40
+    return 20
+
+
+def _calibrate_confidence(
+    raw: int,
+    match: _RuleMatch,
+    evidence: ClassificationEvidence,
+) -> int:
+    """
+    Map raw rule scores into calibrated bands.
+
+    Vendor-only: 40–60. Generic rules cap at 95 unless a high-fingerprint
+    method produced very strong evidence.
+    """
+    method = match.method
+
+    if method == "vendor-only-unknown":
+        return 40
+
+    if method == "vendor-only":
+        return min(60, max(40, raw))
+
+    if method in _HIGH_FINGERPRINT_METHODS:
+        if raw >= 90:
+            return min(99, max(96, raw))
+        return min(95, max(20, raw))
+
+    ceiling = _generic_confidence_ceiling(evidence)
+    floor = _generic_confidence_floor(evidence)
+    calibrated = min(raw, ceiling)
+    return max(floor, min(ceiling, calibrated))
+
+
 def _haystack(evidence: ClassificationEvidence) -> str:
     parts = [
         evidence.vendor,
@@ -279,7 +385,7 @@ def _evaluate_rules(evidence: ClassificationEvidence) -> _RuleMatch | None:
         if printer_service:
             score += 5
             signals.append("service")
-        matches.append(_RuleMatch(DEVICE_TYPE_PRINTER, min(score, 98), "printer-fingerprint", tuple(signals)))
+        matches.append(_RuleMatch(DEVICE_TYPE_PRINTER, min(score, 96), "printer-fingerprint", tuple(signals)))
 
     # --- IP Camera ---
     camera_vendor = _contains_any(
@@ -299,7 +405,7 @@ def _evaluate_rules(evidence: ClassificationEvidence) -> _RuleMatch | None:
         if "camera" in hay or "rtsp" in services:
             score += 5
             signals.append("fingerprint")
-        matches.append(_RuleMatch(DEVICE_TYPE_IP_CAMERA, min(score, 98), "ip-camera-fingerprint", tuple(signals or ["ports"])))
+        matches.append(_RuleMatch(DEVICE_TYPE_IP_CAMERA, min(score, 96), "ip-camera-fingerprint", tuple(signals or ["ports"])))
 
     # --- NAS ---
     nas_vendor = _contains_any(
@@ -315,7 +421,7 @@ def _evaluate_rules(evidence: ClassificationEvidence) -> _RuleMatch | None:
         if bool(services & {"nfs", "afp", "smb", "microsoft-ds"}):
             score += 10
             signals.append("services")
-        matches.append(_RuleMatch(DEVICE_TYPE_NAS, min(score, 98), "nas-fingerprint", tuple(signals)))
+        matches.append(_RuleMatch(DEVICE_TYPE_NAS, min(score, 96), "nas-fingerprint", tuple(signals)))
 
     # --- Hypervisor ---
     if _contains_any(hay, ("vmware", "esxi", "esx ", "vsphere", "proxmox", "xenserver", "hyper-v")):
@@ -364,7 +470,16 @@ def _evaluate_rules(evidence: ClassificationEvidence) -> _RuleMatch | None:
     has_snmp = 161 in ports or "snmp" in services
 
     if cisco_like or switch_hints or routing_hints:
-        if routing_hints and not switch_hints:
+        if routing_hints and switch_hints:
+            matches.append(
+                _RuleMatch(
+                    DEVICE_TYPE_ROUTER,
+                    88,
+                    "cisco-mixed-routing",
+                    ("routing", "switch", "vendor"),
+                )
+            )
+        elif routing_hints and not switch_hints:
             score = 70
             signals = ["routing-features"]
             if cisco_like:
@@ -373,7 +488,7 @@ def _evaluate_rules(evidence: ClassificationEvidence) -> _RuleMatch | None:
             if has_ssh:
                 score += 10
                 signals.append("ssh")
-            matches.append(_RuleMatch(DEVICE_TYPE_ROUTER, min(score, 98), "cisco-router", tuple(signals)))
+            matches.append(_RuleMatch(DEVICE_TYPE_ROUTER, min(score, 92), "cisco-router", tuple(signals)))
         elif switch_hints or (cisco_like and (has_ssh or has_snmp)):
             score = 65
             signals = ["switch-or-cisco"]
@@ -389,12 +504,8 @@ def _evaluate_rules(evidence: ClassificationEvidence) -> _RuleMatch | None:
             if has_snmp:
                 score += 5
                 signals.append("snmp")
-            # Managed switch when Cisco IOS + SSH (or SNMP)
             dtype = DEVICE_TYPE_MANAGED_SWITCH if cisco_like and (has_ssh or has_snmp) else DEVICE_TYPE_SWITCH
-            matches.append(_RuleMatch(dtype, min(score, 98), "cisco-switch", tuple(signals)))
-        elif routing_hints and switch_hints:
-            # Prefer router when both, unless clearly L2-only
-            matches.append(_RuleMatch(DEVICE_TYPE_ROUTER, 88, "cisco-mixed-routing", ("routing", "switch", "vendor")))
+            matches.append(_RuleMatch(dtype, min(score, 92), "cisco-switch", tuple(signals)))
 
     # Generic router / switch from nmap class alone
     nmap_type = evidence.nmap_device_type.lower()
@@ -500,14 +611,8 @@ def classify_device(evidence: ClassificationEvidence) -> ClassificationResult:
             signals_matched=[],
         )
 
-    confidence = int(match.score)
-    # Soft floor/ceiling
+    confidence = _calibrate_confidence(int(match.score), match, evidence)
     confidence = max(20, min(99, confidence))
-
-    # Vendor-only agreement adjustment already encoded in rules.
-    # Boost slightly when vendor + OS + ports all contributed.
-    if len(match.signals) >= 3 and confidence < 98:
-        confidence = min(98, confidence + 3)
 
     discovery_source = "nmap"
     if host_source == "ssh":
@@ -534,11 +639,19 @@ def log_classification(
     result: ClassificationResult,
 ) -> None:
     """Emit structured classification logs."""
-    open_ports = sorted(_open_ports(evidence))
-    ports_str = ",".join(str(p) for p in open_ports) if open_ports else "(none)"
-    logger.info("Scanning %s", ip_address)
-    logger.info("Vendor:\n%s", result.vendor or "(unknown)")
-    logger.info("OS:\n%s", result.operating_system or "(unknown)")
-    logger.info("Ports:\n%s", ports_str)
-    logger.info("Classification:\n%s", result.device_type)
-    logger.info("Confidence:\n%d%%", result.confidence)
+    _hostname, host_source = resolve_hostname(evidence)
+    device_label = ip_address
+    if result.hostname and not is_unknown_hostname(result.hostname):
+        device_label = f"{result.hostname}/{ip_address}"
+
+    signals = ",".join(result.signals_matched) if result.signals_matched else "(none)"
+    logger.info(
+        "[CLASSIFICATION] device=%s | rule=%s | confidence=%d | signals=%s | "
+        "hostname_source=%s | type=%s",
+        device_label,
+        result.classification_method,
+        result.confidence,
+        signals,
+        host_source,
+        result.device_type,
+    )

@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from bson import ObjectId
+from pymongo.errors import DuplicateKeyError
 
 from config.database import MAX_SCAN_THREADS, db
 from models.device import create_device
@@ -305,13 +306,25 @@ def enrich_online_host(
     if is_unknown_hostname(device["hostname"]):
         device["hostname"] = "Unknown"
 
-    insert_result = db.devices.insert_one(device)
-    device["_id"] = insert_result.inserted_id
+    try:
+        insert_result = db.devices.insert_one(device)
+        device["_id"] = insert_result.inserted_id
+        saved = True
+    except DuplicateKeyError:
+        logger.info(
+            "[DEVICE DUPLICATE] ip=%s using existing inventory record",
+            ip_address,
+        )
+        existing_doc = db.devices.find_one({"ipAddress": ip_address})
+        if not existing_doc:
+            raise
+        device = existing_doc
+        saved = False
 
     return _discovery_result_payload(
         ip_address=ip_address,
         ping_result=ping_result,
         device=device,
-        saved=True,
+        saved=saved,
         nmap_error=nmap_error,
     )
