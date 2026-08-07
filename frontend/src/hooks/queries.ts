@@ -55,6 +55,7 @@ import {
   setInterfaceMonitoring,
   scanDevice,
   scanDeviceNmap,
+  scanAllDevicesNmap,
   updateDevice,
   updateSettings,
   updateAccount,
@@ -839,6 +840,30 @@ export function useNmapScanMutation() {
     mutationFn: (id: string) => scanDeviceNmap(id),
     onSuccess: async (res) => {
       toast.success(res.message ?? 'Nmap scan complete')
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ['devices'] }),
+        qc.invalidateQueries({ queryKey: ['device-history'] }),
+        qc.invalidateQueries({ queryKey: queryKeys.dashboard.all }),
+      ])
+    },
+    onError: (err: Error) => toast.error(err.message),
+  })
+}
+
+export function useNmapScanAllMutation() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => scanAllDevicesNmap(),
+    onSuccess: async (res) => {
+      const failed = res.failed ?? 0
+      if (failed > 0) {
+        toast.warning(
+          res.message ??
+            `Nmap bulk scan finished: ${res.scanned}/${res.total} scanned, ${failed} failed`,
+        )
+      } else {
+        toast.success(res.message ?? 'Nmap bulk scan complete')
+      }
       await Promise.all([
         qc.invalidateQueries({ queryKey: ['devices'] }),
         qc.invalidateQueries({ queryKey: ['device-history'] }),

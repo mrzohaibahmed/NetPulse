@@ -1,6 +1,5 @@
-from datetime import datetime, timezone
-
 from utils.secret_crypto import encrypt_secret
+from utils.utc import utc_now
 
 
 def create_device(
@@ -14,7 +13,7 @@ def create_device(
     ping_retries=None,
     credentials=None,
 ):
-    now = datetime.now(timezone.utc)
+    now = utc_now()
 
     document = {
         "hostname": hostname,

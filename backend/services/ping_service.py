@@ -1,8 +1,7 @@
-from datetime import datetime, timezone
-
 from ping3 import ping
 
 from services.settings_service import get_ping_config
+from utils.utc import utc_now
 
 STATUS_ONLINE = "Online"
 STATUS_NOT_REACHABLE = "Not Reachable"
@@ -19,7 +18,7 @@ def ping_device(ip_address, critical=False, timeout_ms=None, retries=None, devic
     """
     ICMP ping with configurable timeout and retries (FR2.2, FR2.3).
     Classifies failures as Not Reachable or Offline (Critical) (FR3.1–FR3.3).
-    lastSeen is only set on success (FR3.4).
+    lastSeen is only set on success (FR3.4) — always timezone-aware UTC.
     """
     config = get_ping_config(device)
     timeout_ms = int(timeout_ms if timeout_ms is not None else config["timeout_ms"])
@@ -43,7 +42,7 @@ def ping_device(ip_address, critical=False, timeout_ms=None, retries=None, devic
                 "success": True,
                 "status": STATUS_ONLINE,
                 "responseTime": response_time,
-                "lastSeen": datetime.now(timezone.utc),
+                "lastSeen": utc_now(),
                 "message": "Device is reachable",
                 "attempts": attempts,
             }

@@ -9,6 +9,10 @@ from config.database import (
     NMAP_SCAN_INTERVAL,
 )
 from services.monitor_service import monitor_all_devices
+from services.scheduler_ownership import (
+    release_scheduler_ownership,
+    require_scheduler_leadership,
+)
 from services.settings_service import get_settings
 from utils.monitor_logger import get_monitor_logger
 
@@ -17,6 +21,7 @@ logger = get_monitor_logger("scheduler")
 # Single shared scheduler instance.
 # Ping, Nmap, interface discovery, interface stats, and eligibility share one
 # scheduler. Eligibility runs after stats in the same job chain.
+# Phase 5: only the MongoDB-elected leader executes job bodies.
 scheduler = BackgroundScheduler()
 
 # Job IDs — kept as named constants to make reschedule helpers readable.
@@ -47,6 +52,10 @@ def _run_interface_stats_then_eligibility() -> None:
     incidents are shutdown via execute_mitigation. Otherwise the chain stops after
     prepare and waits for an admin to trigger mitigation manually.
     """
+    # Phase 5 — skip on non-leader instances.
+    if not require_scheduler_leadership("interface_stats_job"):
+        return
+
     from services.interface_collection.stats_collector import (  # noqa: PLC0415
         collect_all_interface_stats,
     )
@@ -127,6 +136,24 @@ def _run_interface_stats_then_eligibility() -> None:
         )
 
 
+def _run_nmap_job() -> None:
+    if not require_scheduler_leadership("nmap_scan_job"):
+        return
+    from services.nmap_service import scan_all_online_devices  # noqa: PLC0415
+
+    scan_all_online_devices()
+
+
+def _run_interface_discovery_job() -> None:
+    if not require_scheduler_leadership("interface_discovery_job"):
+        return
+    from services.interface_collection.collector import (  # noqa: PLC0415
+        discover_all_switch_interfaces,
+    )
+
+    discover_all_switch_interfaces()
+
+
 def _start_nmap_job() -> None:
     """
     Register the Nmap periodic scan job on the shared scheduler.
@@ -143,13 +170,10 @@ def _start_nmap_job() -> None:
     log an error when the job first fires rather than crashing at startup.
     """
     try:
-        # Deferred import: python-nmap is optional at startup.
-        from services.nmap_service import scan_all_online_devices  # noqa: PLC0415
-
         interval = max(int(NMAP_SCAN_INTERVAL), 60)  # enforce minimum 60 s
 
         scheduler.add_job(
-            func=scan_all_online_devices,
+            func=_run_nmap_job,
             trigger="interval",
             seconds=interval,
             id=NMAP_JOB_ID,
@@ -185,14 +209,10 @@ def _start_interface_job() -> None:
             )
             return
 
-        from services.interface_collection.collector import (  # noqa: PLC0415
-            discover_all_switch_interfaces,
-        )
-
         interval = max(interval, 60)
 
         scheduler.add_job(
-            func=discover_all_switch_interfaces,
+            func=_run_interface_discovery_job,
             trigger="interval",
             seconds=interval,
             id=INTERFACE_JOB_ID,
@@ -267,6 +287,8 @@ def _start_recovery_job() -> None:
 
 
 def _run_recovery_cycle() -> None:
+    if not require_scheduler_leadership("storm_recovery_job"):
+        return
     try:
         from services.storm.recovery import run_recovery_cycle  # noqa: PLC0415
         run_recovery_cycle()
@@ -276,6 +298,8 @@ def _run_recovery_cycle() -> None:
 
 def _run_retention_cycle() -> None:
     """Daily: refresh TTL indexes from settings + purge closed storm incidents."""
+    if not require_scheduler_leadership("data_retention_job"):
+        return
     try:
         from services.retention_service import (  # noqa: PLC0415
             ensure_retention_ttl_indexes,
@@ -318,12 +342,15 @@ def start_scheduler():
     interval = int(settings.get("pingInterval") or 30)
 
     # Job 1: Ping-based online/offline monitoring (unchanged behaviour).
+    # Leadership is enforced inside monitor_all_devices (Phase 5).
     scheduler.add_job(
         func=monitor_all_devices,
         trigger="interval",
         seconds=interval,
         id=JOB_ID,
         replace_existing=True,
+        max_instances=1,
+        coalesce=True,
     )
 
     scheduler.start()
@@ -359,6 +386,8 @@ def reschedule_monitor_job(interval_seconds: int):
         seconds=interval,
         id=JOB_ID,
         replace_existing=True,
+        max_instances=1,
+        coalesce=True,
     )
     logger.info("Ping scheduler rescheduled | interval=%ss", interval)
 
@@ -379,10 +408,8 @@ def reschedule_nmap_job(interval_seconds: int) -> None:
         return
 
     try:
-        from services.nmap_service import scan_all_online_devices  # noqa: PLC0415
-
         scheduler.add_job(
-            func=scan_all_online_devices,
+            func=_run_nmap_job,
             trigger="interval",
             seconds=interval,
             id=NMAP_JOB_ID,
@@ -397,9 +424,14 @@ def stop_scheduler():
     if not scheduler.running:
         return
 
+    # Phase 5 — release lease so another instance can take over immediately.
+    try:
+        release_scheduler_ownership()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Ownership release during shutdown failed: %s", exc)
+
     scheduler.shutdown(wait=False)
     logger.info("Scheduler shutdown")
 
 
 atexit.register(stop_scheduler)
-

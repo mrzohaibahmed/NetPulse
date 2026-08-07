@@ -1,5 +1,3 @@
-from datetime import datetime, timezone
-
 from bson import ObjectId
 from flask import Blueprint, jsonify, request
 
@@ -7,6 +5,7 @@ from config.database import db
 from utils.auth import require_auth
 from utils.pagination import clamp_page, pagination_payload, parse_pagination
 from utils.serializers import format_datetime
+from utils.utc import utc_now
 
 alert_bp = Blueprint("alerts", __name__)
 
@@ -35,6 +34,11 @@ def serialize_alert(alert):
         "emailSent": alert.get("emailSent", False),
         "acknowledged": alert.get("acknowledged", False),
         "dismissed": alert.get("dismissed", False),
+        # Phase 4 — automatic recovery fields (additive; null for legacy alerts).
+        "resolved": bool(alert.get("resolved", False)),
+        "resolvedAt": format_datetime(alert.get("resolvedAt")),
+        "resolvedBy": alert.get("resolvedBy"),
+        "resolvedReason": alert.get("resolvedReason"),
         "acknowledgedAt": format_datetime(alert.get("acknowledgedAt")),
         "dismissedAt": format_datetime(alert.get("dismissedAt")),
         "createdAt": format_datetime(alert.get("createdAt")),
@@ -52,10 +56,14 @@ def list_alerts():
         if status_filter == "active":
             query["dismissed"] = {"$ne": True}
             query["acknowledged"] = {"$ne": True}
+            # Phase 4 — recovered alerts leave the active list (backward compatible).
+            query["resolved"] = {"$ne": True}
         elif status_filter == "acknowledged":
             query["acknowledged"] = True
         elif status_filter == "dismissed":
             query["dismissed"] = True
+        elif status_filter == "resolved":
+            query["resolved"] = True
 
         total = db.alerts.count_documents(query)
         page, skip, total_pages = clamp_page(page, total, limit)
@@ -97,7 +105,7 @@ def acknowledge_alert(alert_id):
             {
                 "$set": {
                     "acknowledged": True,
-                    "acknowledgedAt": datetime.now(timezone.utc),
+                    "acknowledgedAt": utc_now(),
                 }
             },
         )
@@ -132,7 +140,7 @@ def dismiss_alert(alert_id):
             {
                 "$set": {
                     "dismissed": True,
-                    "dismissedAt": datetime.now(timezone.utc),
+                    "dismissedAt": utc_now(),
                 }
             },
         )

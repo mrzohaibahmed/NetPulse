@@ -8,7 +8,6 @@ Used by nmap_service (manual / rescan / bulk) and discovery_service
 from __future__ import annotations
 
 import threading
-from datetime import datetime, timezone
 from typing import Any
 
 from bson import ObjectId
@@ -35,6 +34,7 @@ from services.discovery.ssh_hostname import (
     should_attempt_ssh_hostname,
 )
 from utils.monitor_logger import get_monitor_logger
+from utils.utc import utc_now
 
 logger = get_monitor_logger("discovery")
 
@@ -90,7 +90,7 @@ def apply_classification_to_device(
         "classificationConfidence": int(result.confidence),
         "classificationMethod": result.classification_method,
         "discoverySource": result.discovery_source,
-        "updatedAt": datetime.now(timezone.utc),
+        "updatedAt": utc_now(),
     }
     apply_identity_fields_to_classification_update(
         existing,
@@ -215,30 +215,30 @@ def enrich_online_host(
     Manual Nmap, scheduled Nmap, and device-detail scans are unchanged
     (they call ``scan_and_update_device``, not this path).
     """
-    now = datetime.now(timezone.utc)
+    now = utc_now()
 
-    # ── Already monitored: ping-only update (no Nmap / no classification) ──
+    # ── Already monitored: full monitoring write path (Phase 3) ────────────
+    # Route through apply_ping_result so consecutiveFailures, lastCheckedAt,
+    # history, and alert resolution stay consistent with scheduled monitoring.
     if existing is not None:
-        db.devices.update_one(
-            {"_id": existing["_id"]},
-            {
-                "$set": {
-                    "status": "Online",
-                    "responseTime": ping_result.get("responseTime"),
-                    "lastSeen": ping_result.get("lastSeen"),
-                    "updatedAt": now,
-                }
-            },
+        from services.monitor_service import apply_ping_result  # noqa: PLC0415
+
+        apply_ping_result(
+            existing,
+            ping_result,
+            scan_type="Discovery",
         )
         logger.info(
-            "[DISCOVERY] Existing device — skipped Nmap | host=%s hostname=%s",
+            "[DISCOVERY] Existing device — monitoring fields synced via "
+            "apply_ping_result | host=%s hostname=%s",
             ip_address,
             existing.get("hostname"),
         )
+        refreshed = db.devices.find_one({"_id": existing["_id"]}) or existing
         return _discovery_result_payload(
             ip_address=ip_address,
             ping_result=ping_result,
-            device=existing,
+            device=refreshed,
             saved=False,
         )
 
@@ -293,9 +293,12 @@ def enrich_online_host(
         critical=False,
         monitor=True,
     )
+    # Keep monitoring fields consistent on insert (Phase 3).
     device["status"] = "Online"
     device["responseTime"] = ping_result.get("responseTime")
-    device["lastSeen"] = ping_result.get("lastSeen")
+    device["lastSeen"] = ping_result.get("lastSeen") or now
+    device["lastCheckedAt"] = now
+    device["consecutiveFailures"] = 0
     device["updatedAt"] = now
     device["networkInfo"] = network_info
     device["vendor"] = result.vendor or None
@@ -318,7 +321,11 @@ def enrich_online_host(
         existing_doc = db.devices.find_one({"ipAddress": ip_address})
         if not existing_doc:
             raise
-        device = existing_doc
+        # Race with another inserter — sync monitoring fields consistently.
+        from services.monitor_service import apply_ping_result  # noqa: PLC0415
+
+        apply_ping_result(existing_doc, ping_result, scan_type="Discovery")
+        device = db.devices.find_one({"_id": existing_doc["_id"]}) or existing_doc
         saved = False
 
     return _discovery_result_payload(

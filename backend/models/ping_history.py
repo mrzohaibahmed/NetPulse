@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from utils.utc import utc_now
 
 
 def create_ping_history(
@@ -16,5 +16,5 @@ def create_ping_history(
         "status": status,
         "responseTime": response_time,
         "scanType": scan_type,
-        "timestamp": datetime.now(timezone.utc)
+        "timestamp": utc_now(),
     }
