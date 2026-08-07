@@ -401,6 +401,10 @@ def update_device(device_id):
 
         update_data["updatedAt"] = datetime.now(timezone.utc)
 
+        identity_updates = ownership_for_device_edit(device, update_data)
+        if identity_updates is not None:
+            update_data["identityManagement"] = identity_updates
+
         try:
             db.devices.update_one(
                 {"_id": ObjectId(device_id)},
