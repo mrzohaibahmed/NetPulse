@@ -193,7 +193,7 @@ def enrich_online_host(
 
     with _nmap_semaphore:
         try:
-            network_info = scan_device_nmap(ip_address)
+            network_info = scan_device_nmap(ip_address, profile="quick")
         except Exception as exc:  # noqa: BLE001
             nmap_error = str(exc)
             logger.warning(

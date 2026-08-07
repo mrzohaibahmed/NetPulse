@@ -4,6 +4,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 from pymongo import MongoClient
 
+from config.nmap_validation import validate_nmap_scan_profiles
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
 
@@ -13,11 +15,15 @@ SCAN_INTERVAL = int(os.getenv("SCAN_INTERVAL", 30))
 # How often (seconds) the background Nmap scheduler runs. Default: 1 hour.
 NMAP_SCAN_INTERVAL = int(os.getenv("NMAP_SCAN_INTERVAL", 3600))
 
-# CLI flags passed to every nmap invocation.
+# Deep / diagnostic Nmap profile (manual Scan Details).
 # -A covers OS detection (-O), version detection (-sV), script scanning (-sC),
 # and traceroute. -T4 is a fast timing template suitable for LAN scanning.
 # Drop -O (inside -A) by switching to "-sV -T4" if not running as administrator.
-NMAP_ARGUMENTS = os.getenv("NMAP_ARGUMENTS", "-A -T4")
+# Deep / quick profiles are validated at startup (see config/nmap_validation.py).
+NMAP_QUICK_ARGUMENTS, NMAP_ARGUMENTS = validate_nmap_scan_profiles(
+    quick_arguments=os.getenv("NMAP_QUICK_ARGUMENTS", "-O -sV -T4 --top-ports 100"),
+    deep_arguments=os.getenv("NMAP_ARGUMENTS", "-A -T4"),
+)
 
 # Max concurrent Nmap scans (ThreadPoolExecutor workers). Keep ≤ 10 on LAN.
 MAX_SCAN_THREADS = int(os.getenv("MAX_SCAN_THREADS", 5))
