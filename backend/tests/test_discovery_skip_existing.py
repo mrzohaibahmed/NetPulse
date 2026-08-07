@@ -122,7 +122,7 @@ def test_new_device_still_runs_nmap():
                 existing=None,
             )
 
-            nmap_fn.assert_called_once_with("192.168.1.99")
+            nmap_fn.assert_called_once_with("192.168.1.99", profile="quick")
             classify_fn.assert_called_once()
             mock_db.devices.insert_one.assert_called_once()
             mock_db.devices.update_one.assert_not_called()

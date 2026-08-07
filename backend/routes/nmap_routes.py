@@ -25,7 +25,11 @@ from bson import ObjectId
 from flask import Blueprint, jsonify
 
 from config.database import db
-from services.nmap_service import scan_all_online_devices, scan_and_update_device
+from services.nmap_service import (
+    SCAN_PROFILE_DEEP,
+    scan_all_online_devices,
+    scan_and_update_device,
+)
 from utils.auth import require_auth
 from utils.serializers import serialize_device
 
@@ -136,7 +140,7 @@ def scan_all_device_details():
     }
     """
     try:
-        summary = scan_all_online_devices()
+        summary = scan_all_online_devices(profile=SCAN_PROFILE_DEEP)
         return jsonify({
             "success": True,
             "message": (
