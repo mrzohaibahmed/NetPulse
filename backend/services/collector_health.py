@@ -153,6 +153,7 @@ def _create_collector_alert(cycle_id: str, reason: str) -> Any:
         result = with_mongo_retry(
             _insert,
             action="collector_health_alert_insert",
+            idempotent=False,
         )
         assert_insert_acknowledged(
             result,
@@ -186,7 +187,11 @@ def _resolve_collector_alert() -> None:
         )
 
     try:
-        result = with_mongo_retry(_resolve, action="collector_health_alert_resolve")
+        result = with_mongo_retry(
+            _resolve,
+            action="collector_health_alert_resolve",
+            idempotent=True,
+        )
         logger.info(
             "Collector health alerts resolved | matched=%s | modified=%s",
             result.matched_count,

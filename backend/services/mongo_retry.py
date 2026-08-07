@@ -1,9 +1,17 @@
 """
-MongoDB write helpers with result verification and transient retry (Phases 1 & 6).
+MongoDB write helpers with result verification and safe retry policy.
 
-Monitoring must never ignore write acknowledgements. Transient connectivity
-errors are retried with exponential backoff; permanent failures are logged
-and re-raised so callers can decide whether to continue the cycle.
+Retry classification (Phase 4):
+  Safe to retry (idempotent=True):
+    - Pure $set updates with attempt-id compare-and-set
+    - Lock renew/steal/insert (atomic filters / DuplicateKeyError)
+    - Inserts with predetermined unique attemptId (DuplicateKeyError = success)
+  Unsafe without idempotency token (idempotent=False → single attempt):
+    - Bare $inc
+    - Bare insert_one without unique key
+  Conditionally safe:
+    - find_one_and_update with attempt-id filter + post-read recovery
+      (wrapped as an idempotent function, then retries are allowed)
 """
 
 from __future__ import annotations
@@ -24,7 +32,6 @@ logger = get_monitor_logger("mongo_retry")
 
 T = TypeVar("T")
 
-# Transient errors that usually clear when Mongo becomes reachable again.
 _TRANSIENT = (
     AutoReconnect,
     ConnectionFailure,
@@ -41,32 +48,47 @@ def with_mongo_retry(
     ip_address: str | None = None,
     max_attempts: int = 5,
     base_delay_s: float = 0.25,
+    idempotent: bool = False,
 ) -> T:
     """
     Execute ``operation`` with exponential backoff on transient Mongo errors.
 
-    Non-transient exceptions propagate immediately after logging.
+    Non-idempotent operations are attempted exactly once (no blind retry).
+    Non-transient exceptions always propagate immediately after logging.
     """
+    attempts = max_attempts if idempotent else 1
     last_error: Exception | None = None
-    for attempt in range(1, max_attempts + 1):
+
+    for attempt in range(1, attempts + 1):
         try:
             return operation()
         except _TRANSIENT as exc:
             last_error = exc
+            if not idempotent or attempt >= attempts:
+                logger.error(
+                    "Mongo transient failure (no retry) | action=%s | "
+                    "idempotent=%s | attempt=%s/%s | deviceId=%s | ip=%s | error=%s",
+                    action,
+                    idempotent,
+                    attempt,
+                    attempts,
+                    device_id,
+                    ip_address,
+                    exc,
+                )
+                break
             delay = base_delay_s * (2 ** (attempt - 1))
             logger.warning(
                 "Mongo transient failure | action=%s | attempt=%s/%s | "
                 "deviceId=%s | ip=%s | retry_in=%.2fs | error=%s",
                 action,
                 attempt,
-                max_attempts,
+                attempts,
                 device_id,
                 ip_address,
                 delay,
                 exc,
             )
-            if attempt >= max_attempts:
-                break
             time.sleep(delay)
         except Exception as exc:  # noqa: BLE001
             logger.error(
@@ -97,12 +119,7 @@ def assert_update_acknowledged(
     ip_address: str | None = None,
     require_matched: bool = True,
 ) -> bool:
-    """
-    Verify an UpdateResult / BulkWriteResult was acknowledged.
-
-    Returns True when the write looks successful. Logs and returns False
-    when unmatched (device deleted mid-cycle) so monitoring can continue.
-    """
+    """Verify an UpdateResult was acknowledged."""
     if getattr(result, "acknowledged", True) is False:
         logger.error(
             "Mongo write NOT acknowledged | action=%s | deviceId=%s | ip=%s",
