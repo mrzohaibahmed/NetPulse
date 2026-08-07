@@ -1,8 +1,10 @@
 """
 Device reachability monitoring — ping cycle and atomic status writes.
 
-Phases covered here: reliable writes, atomic failure counter, partition
-suppression, structured logging, integrity audit hooks, event publishing.
+Correctness guarantees (final hardening):
+  - Scheduler leadership checked with time + device heartbeats; loss aborts cycle.
+  - Each ping attempt has an attemptId so $inc / history / alerts are idempotent.
+  - Devices remain the source of truth; events are advisory only.
 """
 
 from __future__ import annotations
@@ -27,7 +29,10 @@ from services.monitor_events import (
 )
 from services.monitor_integrity import run_integrity_audit
 from services.ping_service import STATUS_ONLINE, ping_device
-from services.scheduler_ownership import require_scheduler_leadership, try_acquire_or_renew
+from services.scheduler_ownership import (
+    CycleLeadershipGuard,
+    require_scheduler_leadership,
+)
 from services.settings_service import get_ping_config
 from utils.monitor_logger import get_monitor_logger
 from utils.utc import ensure_utc, utc_now
@@ -39,6 +44,11 @@ def _db():
     from config.database import db  # noqa: PLC0415
 
     return db
+
+
+def _new_attempt_id() -> str:
+    """Unique id for one ping apply — used for idempotent Mongo writes."""
+    return uuid.uuid4().hex
 
 
 def _should_check_now(device, now):
@@ -60,28 +70,31 @@ def apply_ping_result(
     *,
     suppress_offline: bool = False,
     cycle_id: str | None = None,
+    attempt_id: str | None = None,
 ):
     """
     Atomically update device fields and history from a ping result (FR3.4, FR3.5).
 
-    consecutiveFailures uses MongoDB $inc / $set (never read-modify-write).
+    ``attempt_id`` scopes idempotent $inc / history / alert writes for one ping.
     """
     now = utc_now()
+    attempt_id = attempt_id or _new_attempt_id()
     device_id = device.get("_id")
     hostname = device.get("hostname", "unknown")
     ip_address = device.get("ipAddress", "unknown")
     previous_status = device.get("status", "Unknown")
 
-    # Phase 8 — suppress mass offline when collector is partitioned.
     if suppress_offline and not result.get("success"):
         logger.warning(
             "Offline transition suppressed (collector partition) | "
-            "cycleId=%s | deviceId=%s | hostname=%s | ip=%s | wouldStatus=%s",
+            "cycleId=%s | deviceId=%s | hostname=%s | ip=%s | wouldStatus=%s | "
+            "attemptId=%s",
             cycle_id,
             device_id,
             hostname,
             ip_address,
             result.get("status"),
+            attempt_id,
         )
 
         def _touch_checked():
@@ -92,11 +105,13 @@ def apply_ping_result(
             )
 
         try:
+            # $set-only on timestamps — safe to retry.
             with_mongo_retry(
                 _touch_checked,
                 action="device_touch_checked_partition",
                 device_id=device_id,
                 ip_address=ip_address,
+                idempotent=True,
             )
         except Exception as exc:  # noqa: BLE001
             logger.error(
@@ -113,6 +128,7 @@ def apply_ping_result(
             ip_address=ip_address,
             result=result,
             now=now,
+            attempt_id=attempt_id,
         )
         if updated is None:
             return previous_status
@@ -125,6 +141,7 @@ def apply_ping_result(
             ip_address=ip_address,
             result=result,
             now=now,
+            attempt_id=attempt_id,
         )
         if updated is None:
             return previous_status
@@ -133,10 +150,11 @@ def apply_ping_result(
         new_status = result["status"]
 
     logger.info(
-        "Ping applied | cycleId=%s | deviceId=%s | hostname=%s | ip=%s | "
-        "previous=%s | new=%s | success=%s | responseTime=%s | "
+        "Ping applied | cycleId=%s | attemptId=%s | deviceId=%s | hostname=%s | "
+        "ip=%s | previous=%s | new=%s | success=%s | responseTime=%s | "
         "consecutiveFailures=%s | scanType=%s",
         cycle_id,
+        attempt_id,
         device_id,
         hostname,
         ip_address,
@@ -148,24 +166,25 @@ def apply_ping_result(
         scan_type,
     )
 
-    # History after device write — if history fails, device state is still
-    # authoritative; exception is logged by caller / retry layer.
     try:
         save_ping_history(
             device=device,
             ping_result=result,
             scan_type=scan_type,
             cycle_id=cycle_id,
+            attempt_id=attempt_id,
         )
     except Exception as exc:  # noqa: BLE001
         logger.error(
             "Ping history write failed after status update | "
-            "deviceId=%s | ip=%s | error=%s",
+            "deviceId=%s | ip=%s | attemptId=%s | error=%s",
             device_id,
             ip_address,
+            attempt_id,
             exc,
         )
 
+    # Events only after durable device write (advisory — never SoT).
     if previous_status != new_status:
         publish(
             EVENT_DEVICE_STATUS_CHANGED,
@@ -178,6 +197,7 @@ def apply_ping_result(
                 "status": new_status,
                 "scanType": scan_type,
                 "cycleId": cycle_id,
+                "attemptId": attempt_id,
             },
         )
 
@@ -192,6 +212,7 @@ def apply_ping_result(
                     "previousStatus": previous_status,
                     "status": STATUS_ONLINE,
                     "cycleId": cycle_id,
+                    "attemptId": attempt_id,
                 },
             )
         resolve_critical_offline_alerts(device, cycle_id=cycle_id)
@@ -203,19 +224,40 @@ def apply_ping_result(
             consecutive_failures=consecutive,
             scan_type=scan_type,
             cycle_id=cycle_id,
+            attempt_id=attempt_id,
         )
 
     return previous_status
 
 
-def _atomic_mark_online(*, device_id, ip_address, result, now) -> dict[str, Any] | None:
-    """Set Online + reset consecutiveFailures atomically."""
+def _recover_attempt_doc(device_id, attempt_id: str) -> dict[str, Any] | None:
+    """If a prior write for this attempt committed, return the current device doc."""
+    existing = _db().devices.find_one({"_id": device_id})
+    if existing is None:
+        return None
+    if existing.get("lastPingAttemptId") == attempt_id:
+        return existing
+    return None
+
+
+def _atomic_mark_online(
+    *,
+    device_id,
+    ip_address,
+    result,
+    now,
+    attempt_id: str,
+) -> dict[str, Any] | None:
+    """Set Online + reset consecutiveFailures; idempotent per attempt_id."""
     last_seen = result.get("lastSeen") or now
     last_seen = ensure_utc(last_seen) or now
 
-    def _update():
-        return _db().devices.find_one_and_update(
-            {"_id": device_id},
+    def _update_once():
+        doc = _db().devices.find_one_and_update(
+            {
+                "_id": device_id,
+                "lastPingAttemptId": {"$ne": attempt_id},
+            },
             {
                 "$set": {
                     "status": STATUS_ONLINE,
@@ -224,54 +266,81 @@ def _atomic_mark_online(*, device_id, ip_address, result, now) -> dict[str, Any]
                     "lastCheckedAt": now,
                     "updatedAt": now,
                     "consecutiveFailures": 0,
+                    "lastPingAttemptId": attempt_id,
                 }
             },
             return_document=ReturnDocument.AFTER,
         )
+        if doc is not None:
+            return doc
+        recovered = _recover_attempt_doc(device_id, attempt_id)
+        if recovered is not None:
+            logger.info(
+                "Online write idempotent recovery | deviceId=%s | attemptId=%s",
+                device_id,
+                attempt_id,
+            )
+            return recovered
+        return None
 
     try:
         doc = with_mongo_retry(
-            _update,
+            _update_once,
             action="device_mark_online",
             device_id=device_id,
             ip_address=ip_address,
+            idempotent=True,
         )
     except Exception as exc:  # noqa: BLE001
         logger.error(
-            "Atomic online write failed | deviceId=%s | ip=%s | error=%s",
+            "Atomic online write failed | deviceId=%s | ip=%s | attemptId=%s | error=%s",
             device_id,
             ip_address,
+            attempt_id,
             exc,
         )
         raise
 
     if doc is None:
         logger.warning(
-            "Atomic online write unmatched | deviceId=%s | ip=%s",
+            "Atomic online write unmatched | deviceId=%s | ip=%s | attemptId=%s",
             device_id,
             ip_address,
+            attempt_id,
         )
         return None
 
     logger.info(
         "Mongo write ok | action=device_mark_online | deviceId=%s | ip=%s | "
-        "matched=1 | consecutiveFailures=0",
+        "attemptId=%s | consecutiveFailures=0",
         device_id,
         ip_address,
+        attempt_id,
     )
     return doc
 
 
-def _atomic_mark_failure(*, device_id, ip_address, result, now) -> dict[str, Any] | None:
+def _atomic_mark_failure(
+    *,
+    device_id,
+    ip_address,
+    result,
+    now,
+    attempt_id: str,
+) -> dict[str, Any] | None:
     """
-    Increment consecutiveFailures with $inc and set failure status.
+    Increment consecutiveFailures at most once per attempt_id.
 
-    Eliminates read-modify-write races across concurrent monitor / manual scans.
+    Filter ``lastPingAttemptId != attempt_id`` makes $inc retry-safe: a second
+    apply after a committed write matches zero documents and recovers via read.
     """
 
-    def _update():
-        return _db().devices.find_one_and_update(
-            {"_id": device_id},
+    def _update_once():
+        doc = _db().devices.find_one_and_update(
+            {
+                "_id": device_id,
+                "lastPingAttemptId": {"$ne": attempt_id},
+            },
             {
                 "$inc": {"consecutiveFailures": 1},
                 "$set": {
@@ -279,41 +348,58 @@ def _atomic_mark_failure(*, device_id, ip_address, result, now) -> dict[str, Any
                     "responseTime": None,
                     "lastCheckedAt": now,
                     "updatedAt": now,
+                    "lastPingAttemptId": attempt_id,
                 },
-                # Do not overwrite lastSeen on failure (FR3.4)
             },
             return_document=ReturnDocument.AFTER,
         )
+        if doc is not None:
+            return doc
+        recovered = _recover_attempt_doc(device_id, attempt_id)
+        if recovered is not None:
+            logger.info(
+                "Failure write idempotent recovery | deviceId=%s | attemptId=%s | "
+                "consecutiveFailures=%s",
+                device_id,
+                attempt_id,
+                recovered.get("consecutiveFailures"),
+            )
+            return recovered
+        return None
 
     try:
         doc = with_mongo_retry(
-            _update,
+            _update_once,
             action="device_mark_failure",
             device_id=device_id,
             ip_address=ip_address,
+            idempotent=True,
         )
     except Exception as exc:  # noqa: BLE001
         logger.error(
-            "Atomic failure write failed | deviceId=%s | ip=%s | error=%s",
+            "Atomic failure write failed | deviceId=%s | ip=%s | attemptId=%s | error=%s",
             device_id,
             ip_address,
+            attempt_id,
             exc,
         )
         raise
 
     if doc is None:
         logger.warning(
-            "Atomic failure write unmatched | deviceId=%s | ip=%s",
+            "Atomic failure write unmatched | deviceId=%s | ip=%s | attemptId=%s",
             device_id,
             ip_address,
+            attempt_id,
         )
         return None
 
     logger.info(
         "Mongo write ok | action=device_mark_failure | deviceId=%s | ip=%s | "
-        "matched=1 | consecutiveFailures=%s",
+        "attemptId=%s | consecutiveFailures=%s",
         device_id,
         ip_address,
+        attempt_id,
         doc.get("consecutiveFailures"),
     )
     return doc
@@ -323,10 +409,13 @@ def _scan_device(device, *, suppress_offline: bool, cycle_id: str):
     hostname = device.get("hostname", "unknown")
     ip_address = device.get("ipAddress", "unknown")
     device_id = device.get("_id")
+    attempt_id = _new_attempt_id()
 
     logger.info(
-        "Device scan started | cycleId=%s | deviceId=%s | hostname=%s | ip=%s",
+        "Device scan started | cycleId=%s | attemptId=%s | deviceId=%s | "
+        "hostname=%s | ip=%s",
         cycle_id,
+        attempt_id,
         device_id,
         hostname,
         ip_address,
@@ -343,13 +432,15 @@ def _scan_device(device, *, suppress_offline: bool, cycle_id: str):
         scan_type="Automatic",
         suppress_offline=suppress_offline,
         cycle_id=cycle_id,
+        attempt_id=attempt_id,
     )
 
     if result["status"] == STATUS_ONLINE:
         logger.info(
-            "Device online | cycleId=%s | deviceId=%s | hostname=%s | ip=%s | "
-            "response=%s ms",
+            "Device online | cycleId=%s | attemptId=%s | deviceId=%s | "
+            "hostname=%s | ip=%s | response=%s ms",
             cycle_id,
+            attempt_id,
             device_id,
             hostname,
             ip_address,
@@ -357,9 +448,10 @@ def _scan_device(device, *, suppress_offline: bool, cycle_id: str):
         )
     else:
         logger.warning(
-            "Device down | cycleId=%s | deviceId=%s | hostname=%s | ip=%s | "
-            "status=%s | message=%s | suppressed=%s",
+            "Device down | cycleId=%s | attemptId=%s | deviceId=%s | "
+            "hostname=%s | ip=%s | status=%s | message=%s | suppressed=%s",
             cycle_id,
+            attempt_id,
             device_id,
             hostname,
             ip_address,
@@ -370,15 +462,22 @@ def _scan_device(device, *, suppress_offline: bool, cycle_id: str):
 
 
 def monitor_all_devices():
-    """Scan all devices with monitor=True (FR2.1). Leader-only when multi-instance."""
-    # Phase 5 — only the elected scheduler owner runs monitoring.
+    """Scan all devices with monitor=True (FR2.1). Leader-only; aborts on lease loss."""
     if not require_scheduler_leadership("device_monitor_job"):
         return
 
     cycle_id = uuid.uuid4().hex[:12]
-    logger.info("Monitoring cycle started | cycleId=%s", cycle_id)
+    guard = CycleLeadershipGuard(cycle_id=cycle_id)
+    # Force renew at cycle start and verify ownership.
+    if not guard.ensure(force=True, reason="cycle_start"):
+        return
 
-    # Phase 8 — collector connectivity probe.
+    logger.info(
+        "Monitoring cycle started | cycleId=%s | heartbeat_s=%s",
+        cycle_id,
+        guard.heartbeat_s,
+    )
+
     suppress_offline = begin_cycle_connectivity_check(cycle_id)
 
     now = utc_now()
@@ -395,15 +494,18 @@ def monitor_all_devices():
     scanned = 0
     skipped = 0
     failed = 0
-    renew_every = 10  # renew leadership during long cycles
+    aborted = False
 
     for index, device in enumerate(devices):
         hostname = device.get("hostname", "unknown")
         ip_address = device.get("ipAddress", "unknown")
         device_id = device.get("_id")
 
-        if index > 0 and index % renew_every == 0:
-            try_acquire_or_renew()
+        guard.note_device_visited()
+        # Time-based and device-count heartbeat — abort immediately on loss.
+        if not guard.ensure(reason=f"pre_device:{index}"):
+            aborted = True
+            break
 
         try:
             if not _should_check_now(device, now):
@@ -426,24 +528,30 @@ def monitor_all_devices():
                 error,
             )
 
+        # Renew again after potentially long ping so lease cannot expire mid-device.
+        if not guard.ensure(force=False, reason=f"post_device:{index}"):
+            aborted = True
+            break
+
     logger.info(
         "Monitoring cycle finished | cycleId=%s | total=%s scanned=%s "
-        "skipped=%s failed=%s | partitionSuppress=%s",
+        "skipped=%s failed=%s | partitionSuppress=%s | aborted=%s | abortReason=%s",
         cycle_id,
         len(devices),
         scanned,
         skipped,
         failed,
         suppress_offline,
+        aborted,
+        guard.abort_reason,
     )
 
-    if scanned > 0:
+    if scanned > 0 and not aborted:
         publish(
             EVENT_DASHBOARD_METRICS_CHANGED,
             {"cycleId": cycle_id, "scanned": scanned, "failed": failed},
         )
 
-    # Phase 11 — non-blocking integrity audit.
     try:
         run_integrity_audit(cycle_id=cycle_id)
     except Exception as exc:  # noqa: BLE001

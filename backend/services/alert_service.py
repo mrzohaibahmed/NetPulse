@@ -42,6 +42,9 @@ def _active_critical_offline_filter(device_id) -> dict:
     }
 
 
+CRITICAL_OFFLINE_ALERT_THRESHOLD = 3
+
+
 def resolve_critical_offline_alerts(device, *, cycle_id=None) -> int:
     """
     Mark active Offline (Critical) alerts as recovered when the device is Online.
@@ -72,6 +75,7 @@ def resolve_critical_offline_alerts(device, *, cycle_id=None) -> int:
             action="critical_alert_resolve",
             device_id=device_id,
             ip_address=ip_address,
+            idempotent=True,
         )
         assert_update_acknowledged(
             result,
@@ -136,27 +140,32 @@ def maybe_send_critical_offline_alert(
     scan_type="Automatic",
     *,
     cycle_id=None,
+    attempt_id: str | None = None,
 ):
     """
-    Email + alert insert when a critical device hits exactly 3 consecutive failures.
+    Email + alert insert for critical devices when failures reach the threshold.
 
-    Idempotent: skips insert when an active unrecovered Offline (Critical) alert
-    already exists for the device (concurrent / retry safe).
+    Phase 7–8:
+      - Fire when consecutiveFailures >= 3 (recovers missed exactly-3 inserts).
+      - Unique partial index + DuplicateKeyError ⇒ at most one active alert.
+      - Retries are idempotent when the unique constraint is present.
     """
+    from pymongo.errors import DuplicateKeyError  # noqa: PLC0415
+
     if not device.get("critical"):
         return False
 
     if new_status != STATUS_OFFLINE_CRITICAL:
         return False
 
-    if consecutive_failures != 3:
+    # Recover missed threshold: alert whenever failures >= 3 and none active.
+    if int(consecutive_failures or 0) < CRITICAL_OFFLINE_ALERT_THRESHOLD:
         return False
 
     device_id = device.get("_id")
     hostname = device.get("hostname", "unknown")
     ip_address = device.get("ipAddress", "unknown")
 
-    # Idempotency gate — prevent duplicate alerts for the same outage window.
     existing = db.alerts.find_one(
         _active_critical_offline_filter(device_id),
         {"_id": 1},
@@ -164,28 +173,31 @@ def maybe_send_critical_offline_alert(
     if existing:
         logger.info(
             "Critical offline alert already active — skip duplicate | "
-            "deviceId=%s | ip=%s | alertId=%s | cycleId=%s",
+            "deviceId=%s | ip=%s | alertId=%s | failures=%s | cycleId=%s",
             device_id,
             ip_address,
             existing.get("_id"),
+            consecutive_failures,
             cycle_id,
         )
         return False
 
     message = (
         f"Critical device {hostname} ({ip_address}) transitioned to "
-        f"{STATUS_OFFLINE_CRITICAL} via {scan_type} scan."
+        f"{STATUS_OFFLINE_CRITICAL} via {scan_type} scan "
+        f"(consecutiveFailures={consecutive_failures})."
     )
 
     logger.warning(
         "Critical device offline: %s (%s) | previous=%s scan=%s | "
-        "failures=%s | cycleId=%s",
+        "failures=%s | cycleId=%s | attemptId=%s",
         hostname,
         ip_address,
         previous_status,
         scan_type,
         consecutive_failures,
         cycle_id,
+        attempt_id,
     )
 
     email_sent = send_critical_offline_alert(device, scan_type=scan_type)
@@ -210,18 +222,45 @@ def maybe_send_critical_offline_alert(
         "resolvedAt": None,
         "createdAt": now,
         "cycleId": cycle_id,
+        "attemptId": attempt_id,
+        "consecutiveFailuresAtAlert": int(consecutive_failures),
     }
 
-    def _insert():
-        return db.alerts.insert_one(doc)
+    def _insert_or_existing():
+        try:
+            return db.alerts.insert_one(doc)
+        except DuplicateKeyError:
+            # Unique active-alert index: peer or prior retry already inserted.
+            logger.info(
+                "Critical alert insert idempotent (DuplicateKey) | "
+                "deviceId=%s | ip=%s | attemptId=%s",
+                device_id,
+                ip_address,
+                attempt_id,
+            )
+            return None
 
     try:
         result = with_mongo_retry(
-            _insert,
+            _insert_or_existing,
             action="critical_alert_insert",
             device_id=device_id,
             ip_address=ip_address,
+            idempotent=True,
         )
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            "Failed to insert critical offline alert | deviceId=%s | ip=%s | error=%s",
+            device_id,
+            ip_address,
+            exc,
+        )
+        return False
+
+    if result is None:
+        return False
+
+    try:
         assert_insert_acknowledged(
             result,
             action="critical_alert_insert",
@@ -230,9 +269,8 @@ def maybe_send_critical_offline_alert(
         )
     except Exception as exc:  # noqa: BLE001
         logger.error(
-            "Failed to insert critical offline alert | deviceId=%s | ip=%s | error=%s",
+            "Critical alert insert acknowledgement failed | deviceId=%s | error=%s",
             device_id,
-            ip_address,
             exc,
         )
         return False
@@ -246,6 +284,7 @@ def maybe_send_critical_offline_alert(
             "status": STATUS_OFFLINE_CRITICAL,
             "alertId": str(result.inserted_id),
             "cycleId": cycle_id,
+            "attemptId": attempt_id,
         },
     )
     return True

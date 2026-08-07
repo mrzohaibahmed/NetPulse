@@ -1,9 +1,23 @@
 """
-Internal event publisher for future WebSocket broadcasting (Phase 14).
+Internal event publisher for future WebSocket broadcasting (Phase 14 / 9).
 
-Events are published in-process only. No frontend or REST contract changes.
-Subscribers can be registered later (e.g. a WebSocket hub) without touching
-the monitoring pipeline.
+Events are advisory only — MongoDB ``devices`` / ``alerts`` / ``pingHistory``
+remain the source of truth. REST APIs are unchanged.
+
+Extension point for WebSockets
+------------------------------
+Register a subscriber at app startup::
+
+    from services.monitor_events import subscribe, EVENT_DEVICE_STATUS_CHANGED
+
+    def websocket_bridge(event_type, payload):
+        # enqueue to async broadcaster — must not block or raise into monitor
+        hub.broadcast(event_type, payload)
+
+    subscribe(websocket_bridge)
+
+Handler failures are swallowed so monitoring never depends on the publisher.
+Prefer pushing to a queue from the handler rather than doing network I/O inline.
 """
 
 from __future__ import annotations
@@ -15,7 +29,6 @@ from utils.utc import utc_now
 
 logger = get_monitor_logger("monitor_events")
 
-# Event type constants — stable names for future WS payloads.
 EVENT_DEVICE_STATUS_CHANGED = "device.status_changed"
 EVENT_DEVICE_RECOVERED = "device.recovered"
 EVENT_PING_HISTORY_ADDED = "ping.history_added"
@@ -46,7 +59,8 @@ def publish(event_type: str, payload: dict[str, Any] | None = None) -> None:
     """
     Publish a monitoring event to all subscribers.
 
-    Failures in handlers never interrupt monitoring.
+    Failures in handlers never interrupt monitoring. Callers must invoke
+    publish only after the related durable Mongo write has succeeded.
     """
     body = dict(payload or {})
     body.setdefault("eventType", event_type)
@@ -77,5 +91,4 @@ def _log_subscriber(event_type: str, payload: dict[str, Any]) -> None:
     )
 
 
-# Always keep a log subscriber so events are visible without WS.
 subscribe(_log_subscriber)
