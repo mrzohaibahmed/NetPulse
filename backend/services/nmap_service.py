@@ -29,6 +29,7 @@ required for -O (raw socket access). Without them, set NMAP_QUICK_ARGUMENTS /
 NMAP_ARGUMENTS to omit -O (e.g. "-sV -T4") and OS detection is skipped gracefully.
 """
 
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
@@ -170,52 +171,50 @@ def get_cached_network_info(
     return network_info
 
 # ---------------------------------------------------------------------------
-# Module-level scanner singleton (created once, reused across calls).
-# Using a module-level instance avoids the overhead of re-initialising the
-# python-nmap PortScanner object on every request.
-# ---------------------------------------------------------------------------
-_scanner: Any = None  # nmap.PortScanner | None
-
-
-# ---------------------------------------------------------------------------
-# Internal helpers
+# PortScanner factory (thread-safe: no shared instance across threads/scans).
 # ---------------------------------------------------------------------------
 
-def _get_scanner() -> Any:
+
+def _create_scanner() -> Any:
     """
-    Return the shared nmap.PortScanner instance, creating it on first call.
+    Create a new nmap.PortScanner for the current scan.
+
+    Each invocation returns a dedicated instance so concurrent discovery,
+    scheduled inventory, bulk, and manual scans never share scanner state.
 
     Raises
     ------
     RuntimeError
-        If python-nmap is not installed.
-    RuntimeError
-        If the nmap binary cannot be found at NMAP_PATH (or system PATH).
+        If python-nmap is not installed or the nmap binary is unavailable.
     """
-    global _scanner
-
     if not _NMAP_AVAILABLE or nmap_lib is None:
         raise RuntimeError(
             "python-nmap is not installed. "
             "Run: pip install python-nmap"
         )
 
-    if _scanner is None:
-        try:
-            # nmap_path=None -> python-nmap auto-detects from system PATH.
-            # Passing an explicit path supports custom install locations (Windows).
-            if NMAP_PATH:
-                _scanner = nmap_lib.PortScanner(nmap_search_path=(NMAP_PATH,))
-            else:
-                _scanner = nmap_lib.PortScanner()
-        except nmap_lib.PortScannerError as exc:
-            raise RuntimeError(
-                f"Nmap binary not found. "
-                f"Install Nmap and set NMAP_PATH in .env if needed. Details: {exc}"
-            ) from exc
+    try:
+        if NMAP_PATH:
+            scanner = nmap_lib.PortScanner(nmap_search_path=(NMAP_PATH,))
+        else:
+            scanner = nmap_lib.PortScanner()
+    except nmap_lib.PortScannerError as exc:
+        raise RuntimeError(
+            f"Nmap binary not found. "
+            f"Install Nmap and set NMAP_PATH in .env if needed. Details: {exc}"
+        ) from exc
 
-    return _scanner
+    logger.debug(
+        "[NMAP SCANNER] thread=%s scanner=%s",
+        threading.get_ident(),
+        id(scanner),
+    )
+    return scanner
 
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
 
 def _safe_str(value: Any, default: str = "") -> str:
     """Cast a value to a stripped string; return default on None / falsy."""
@@ -477,7 +476,7 @@ def scan_device_nmap(
     elif existing_network_info and _network_info_cache_age(existing_network_info) is not None:
         logger.info("[NMAP CACHE EXPIRED] device=%s", label)
 
-    scanner = _get_scanner()
+    scanner = _create_scanner()
     scan_profile = normalize_scan_profile(profile)
     arguments = resolve_nmap_arguments(scan_profile)
 

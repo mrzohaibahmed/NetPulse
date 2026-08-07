@@ -158,14 +158,14 @@ def test_missing_last_scan_performs_scan(ttl_6h):
 
 def test_scan_device_nmap_returns_cached_without_subprocess(ttl_6h):
     existing = _network_info(age_seconds=300)
-    with patch("services.nmap_service._get_scanner") as get_scanner:
+    with patch("services.nmap_service._create_scanner") as create_scanner:
         result = scan_device_nmap(
             "192.168.1.10",
             existing_network_info=existing,
             force=False,
         )
         assert result is existing
-        get_scanner.assert_not_called()
+        create_scanner.assert_not_called()
 
 
 def test_manual_deep_scan_path_uses_force(ttl_6h):
