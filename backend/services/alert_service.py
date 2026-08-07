@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Optional
 
 from config.database import db
@@ -8,8 +8,19 @@ from services.email_service import (
     _risk_score_from_incident,
     send_critical_offline_alert,
 )
+from services.mongo_retry import (
+    assert_insert_acknowledged,
+    assert_update_acknowledged,
+    with_mongo_retry,
+)
+from services.monitor_events import (
+    EVENT_ALERT_CREATED,
+    EVENT_ALERT_RESOLVED,
+    publish,
+)
 from services.ping_service import STATUS_OFFLINE_CRITICAL
 from utils.monitor_logger import get_monitor_logger
+from utils.utc import utc_now
 
 logger = get_monitor_logger("alert")
 
@@ -18,10 +29,119 @@ CATEGORY_STORM = "Storm Protection"
 GENERATED_BY_SYSTEM = "SYSTEM"
 
 
-def maybe_send_critical_offline_alert(device, previous_status, new_status, consecutive_failures, scan_type="Automatic"):
+def _active_critical_offline_filter(device_id) -> dict:
+    """Match unrecovered Offline (Critical) alerts for a device (ObjectId or str)."""
+    ids = [device_id]
+    if device_id is not None:
+        ids.append(str(device_id))
+    return {
+        "deviceId": {"$in": ids},
+        "status": STATUS_OFFLINE_CRITICAL,
+        "resolved": {"$ne": True},
+        "dismissed": {"$ne": True},
+    }
+
+
+def resolve_critical_offline_alerts(device, *, cycle_id=None) -> int:
     """
-    Email + history only when a critical device transitions to Offline (Critical)
-    after exactly 3 consecutive failures.
+    Mark active Offline (Critical) alerts as recovered when the device is Online.
+
+    Never deletes alerts. Idempotent under concurrent / repeated recoveries.
+    """
+    device_id = device.get("_id")
+    hostname = device.get("hostname", "unknown")
+    ip_address = device.get("ipAddress", "unknown")
+    now = utc_now()
+
+    def _update():
+        return db.alerts.update_many(
+            _active_critical_offline_filter(device_id),
+            {
+                "$set": {
+                    "resolved": True,
+                    "resolvedAt": now,
+                    "resolvedBy": GENERATED_BY_SYSTEM,
+                    "resolvedReason": "Device recovered to Online",
+                }
+            },
+        )
+
+    try:
+        result = with_mongo_retry(
+            _update,
+            action="critical_alert_resolve",
+            device_id=device_id,
+            ip_address=ip_address,
+        )
+        assert_update_acknowledged(
+            result,
+            action="critical_alert_resolve",
+            device_id=device_id,
+            ip_address=ip_address,
+            require_matched=False,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            "Failed to resolve critical alerts | deviceId=%s | ip=%s | error=%s",
+            device_id,
+            ip_address,
+            exc,
+        )
+        return 0
+
+    modified = int(result.modified_count or 0)
+    if modified:
+        logger.info(
+            "Critical alerts resolved on recovery | deviceId=%s | hostname=%s | "
+            "ip=%s | count=%s | cycleId=%s",
+            device_id,
+            hostname,
+            ip_address,
+            modified,
+            cycle_id,
+        )
+        publish(
+            EVENT_ALERT_RESOLVED,
+            {
+                "deviceId": str(device_id) if device_id is not None else None,
+                "hostname": hostname,
+                "ipAddress": ip_address,
+                "status": STATUS_OFFLINE_CRITICAL,
+                "resolvedCount": modified,
+                "cycleId": cycle_id,
+            },
+        )
+        try:
+            log_audit(
+                action="critical_offline_alert_resolved",
+                entity_type="device",
+                entity_id=str(device_id) if device_id is not None else None,
+                details={
+                    "hostname": hostname,
+                    "ipAddress": ip_address,
+                    "resolvedCount": modified,
+                    "cycleId": cycle_id,
+                },
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Audit log failed for alert resolve: %s", exc)
+    return modified
+
+
+def maybe_send_critical_offline_alert(
+    device,
+    previous_status,
+    new_status,
+    consecutive_failures,
+    scan_type="Automatic",
+    *,
+    cycle_id=None,
+):
+    """
+    Email + alert insert when a critical device hits exactly 3 consecutive failures.
+
+    Idempotent: skips insert when an active unrecovered Offline (Critical) alert
+    already exists for the device (concurrent / retry safe).
     """
     if not device.get("critical"):
         return False
@@ -32,39 +152,102 @@ def maybe_send_critical_offline_alert(device, previous_status, new_status, conse
     if consecutive_failures != 3:
         return False
 
+    device_id = device.get("_id")
     hostname = device.get("hostname", "unknown")
     ip_address = device.get("ipAddress", "unknown")
+
+    # Idempotency gate — prevent duplicate alerts for the same outage window.
+    existing = db.alerts.find_one(
+        _active_critical_offline_filter(device_id),
+        {"_id": 1},
+    )
+    if existing:
+        logger.info(
+            "Critical offline alert already active — skip duplicate | "
+            "deviceId=%s | ip=%s | alertId=%s | cycleId=%s",
+            device_id,
+            ip_address,
+            existing.get("_id"),
+            cycle_id,
+        )
+        return False
+
     message = (
         f"Critical device {hostname} ({ip_address}) transitioned to "
         f"{STATUS_OFFLINE_CRITICAL} via {scan_type} scan."
     )
 
     logger.warning(
-        "Critical device offline: %s (%s) | previous=%s scan=%s",
+        "Critical device offline: %s (%s) | previous=%s scan=%s | "
+        "failures=%s | cycleId=%s",
         hostname,
         ip_address,
         previous_status,
         scan_type,
+        consecutive_failures,
+        cycle_id,
     )
 
     email_sent = send_critical_offline_alert(device, scan_type=scan_type)
-
-    db.alerts.insert_one({
-        "deviceId": device.get("_id"),
+    now = utc_now()
+    doc = {
+        "deviceId": device_id,
         "hostname": hostname,
         "ipAddress": ip_address,
         "deviceType": device.get("deviceType") or device.get("type"),
         "status": STATUS_OFFLINE_CRITICAL,
         "message": message,
         "scanType": scan_type,
+        "alertType": "Device Offline",
+        "category": "Device Monitoring",
+        "severity": "CRITICAL",
         "emailSent": bool(email_sent),
         "acknowledged": False,
         "dismissed": False,
+        "resolved": False,
         "acknowledgedAt": None,
         "dismissedAt": None,
-        "createdAt": datetime.now(timezone.utc),
-    })
+        "resolvedAt": None,
+        "createdAt": now,
+        "cycleId": cycle_id,
+    }
 
+    def _insert():
+        return db.alerts.insert_one(doc)
+
+    try:
+        result = with_mongo_retry(
+            _insert,
+            action="critical_alert_insert",
+            device_id=device_id,
+            ip_address=ip_address,
+        )
+        assert_insert_acknowledged(
+            result,
+            action="critical_alert_insert",
+            device_id=device_id,
+            ip_address=ip_address,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            "Failed to insert critical offline alert | deviceId=%s | ip=%s | error=%s",
+            device_id,
+            ip_address,
+            exc,
+        )
+        return False
+
+    publish(
+        EVENT_ALERT_CREATED,
+        {
+            "deviceId": str(device_id) if device_id is not None else None,
+            "hostname": hostname,
+            "ipAddress": ip_address,
+            "status": STATUS_OFFLINE_CRITICAL,
+            "alertId": str(result.inserted_id),
+            "cycleId": cycle_id,
+        },
+    )
     return True
 
 
@@ -122,7 +305,7 @@ def _insert_storm_alert(
     write an audit log. Never raises — failures are logged only.
     """
     try:
-        now = datetime.now(timezone.utc)
+        now = utc_now()
         fields = _storm_device_fields(incident, device)
         doc: dict[str, Any] = {
             "deviceId": fields["deviceId"],

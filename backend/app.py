@@ -22,6 +22,7 @@ from services.device_indexes import ensure_device_indexes
 from services.interface_collection.collector import ensure_interface_indexes
 from services.interface_collection.stats_collector import ensure_interface_stats_indexes
 from services.settings_service import ensure_settings
+from services.scheduler_ownership import ensure_scheduler_lock_indexes
 from services.storm.confirmation import ensure_confirmation_indexes
 from services.storm.eligibility import ensure_eligibility_indexes
 from services.storm.incident import ensure_incident_indexes
@@ -114,6 +115,8 @@ def bootstrap():
     # MongoDB enforces these under concurrency; application checks are kept
     # for user-friendly errors.
     ensure_device_indexes()
+    # Phase 5 — scheduler leader-election lock collection.
+    ensure_scheduler_lock_indexes()
     db.users.create_index(
         [("username", 1)],
         unique=True,

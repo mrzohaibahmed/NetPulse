@@ -162,6 +162,19 @@ export const scanDeviceNmap = (id: string) =>
     timeoutMs: 180000,
   })
 
+export const scanAllDevicesNmap = () =>
+  apiRequest<{
+    success: boolean
+    message: string
+    total: number
+    scanned: number
+    failed: number
+    errors: Array<{ ip: string; error: string }>
+  }>('/api/devices/scan-all-details', {
+    method: 'POST',
+    timeoutMs: 900000,
+  })
+
 export const getHistory = (params: PaginationParams = {}) =>
   apiRequest<ApiListResponse<PingHistory>>(`/api/history${toQuery(params)}`)
 

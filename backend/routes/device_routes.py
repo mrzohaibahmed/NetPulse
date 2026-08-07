@@ -10,6 +10,7 @@ from pymongo.errors import DuplicateKeyError
 from config.database import db
 from models.device import create_device, normalize_device_credentials
 from services.audit_service import log_audit
+from services.discovery.identity_management import ownership_for_device_edit
 from utils.auth import require_auth
 from utils.pagination import clamp_page, pagination_payload, parse_pagination
 from utils.serializers import serialize_device

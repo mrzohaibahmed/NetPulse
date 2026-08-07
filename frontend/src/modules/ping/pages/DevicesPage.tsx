@@ -26,7 +26,12 @@ import {
   WifiOff,
 } from 'lucide-react'
 import { useAuth } from '@/shared/auth/AuthContext'
-import { useDashboardQuery, useDeviceMutations, useDevicesQuery } from '@/hooks/queries'
+import {
+  useDashboardQuery,
+  useDeviceMutations,
+  useDevicesQuery,
+  useNmapScanAllMutation,
+} from '@/hooks/queries'
 import { deviceTypeIcon } from '@/lib/device-icons'
 import { displayDeviceType } from '@/modules/ping/constants/devices'
 import { formatMs, formatRelative } from '@/utils/format'
@@ -75,7 +80,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 const DEFAULT_LIMIT = 25
 
 export function DevicesPage() {
-  const { isAdmin } = useAuth()
+  const { isAdmin, isOperator } = useAuth()
   const navigate = useNavigate()
   const { deviceId: routeDeviceId } = useParams()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -91,8 +96,10 @@ export function DevicesPage() {
   const [editing, setEditing] = useState<Device | null>(null)
   const [drawerId, setDrawerId] = useState<string | null>(routeDeviceId ?? null)
   const [deleteTarget, setDeleteTarget] = useState<Device | null>(null)
+  const [nmapAllConfirmOpen, setNmapAllConfirmOpen] = useState(false)
 
   const { update, remove, scan, importCsv } = useDeviceMutations()
+  const nmapScanAll = useNmapScanAllMutation()
   const dash = useDashboardQuery()
 
   useEffect(() => {
@@ -351,40 +358,53 @@ export function DevicesPage() {
         title="Ping Monitoring · Devices"
         description="Enterprise inventory of monitored hosts — reachability, latency, and critical flags at a glance."
         actions={
-          isAdmin ? (
-            <>
-              <input
-                ref={fileRef}
-                type="file"
-                accept=".csv,text/csv"
-                hidden
-                onChange={(e) => {
-                  const file = e.target.files?.[0]
-                  if (file) importCsv.mutate(file)
-                  if (fileRef.current) fileRef.current.value = ''
-                }}
-              />
+          <>
+            {isOperator ? (
               <Button
                 type="button"
                 variant="secondary"
-                disabled={importCsv.isPending}
-                onClick={() => fileRef.current?.click()}
+                disabled={nmapScanAll.isPending}
+                onClick={() => setNmapAllConfirmOpen(true)}
               >
-                <Upload className="h-4 w-4" />
-                {importCsv.isPending ? 'Importing…' : 'Import CSV'}
+                <Radar className={`h-4 w-4 ${nmapScanAll.isPending ? 'animate-pulse' : ''}`} />
+                {nmapScanAll.isPending ? 'Nmap scanning…' : 'Nmap scan all'}
               </Button>
-              <Button
-                type="button"
-                onClick={() => {
-                  setEditing(null)
-                  setFormOpen(true)
-                }}
-              >
-                <Plus className="h-4 w-4" />
-                Add device
-              </Button>
-            </>
-          ) : null
+            ) : null}
+            {isAdmin ? (
+              <>
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept=".csv,text/csv"
+                  hidden
+                  onChange={(e) => {
+                    const file = e.target.files?.[0]
+                    if (file) importCsv.mutate(file)
+                    if (fileRef.current) fileRef.current.value = ''
+                  }}
+                />
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={importCsv.isPending}
+                  onClick={() => fileRef.current?.click()}
+                >
+                  <Upload className="h-4 w-4" />
+                  {importCsv.isPending ? 'Importing…' : 'Import CSV'}
+                </Button>
+                <Button
+                  type="button"
+                  onClick={() => {
+                    setEditing(null)
+                    setFormOpen(true)
+                  }}
+                >
+                  <Plus className="h-4 w-4" />
+                  Add device
+                </Button>
+              </>
+            ) : null}
+          </>
         }
       />
 
@@ -595,6 +615,35 @@ export function DevicesPage() {
               }}
             >
               Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={nmapAllConfirmOpen} onOpenChange={setNmapAllConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Run Nmap on all online devices?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This starts a deep detail scan for every currently online device. It can take several
+              minutes and may briefly increase network load.
+              {dash.summary?.onlineDevices != null
+                ? ` About ${dash.summary.onlineDevices} online device(s) will be scanned.`
+                : ''}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={nmapScanAll.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={nmapScanAll.isPending}
+              onClick={(e) => {
+                e.preventDefault()
+                nmapScanAll.mutate(undefined, {
+                  onSettled: () => setNmapAllConfirmOpen(false),
+                })
+              }}
+            >
+              {nmapScanAll.isPending ? 'Scanning…' : 'Start Nmap scan'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
