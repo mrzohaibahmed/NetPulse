@@ -22,6 +22,10 @@ from services.discovery.classifier import (
     is_unknown_hostname,
     log_classification,
 )
+from services.discovery.identity_management import (
+    apply_identity_fields_to_classification_update,
+    ownership_for_device_edit,
+)
 from services.discovery.ssh_hostname import fetch_ssh_hostname
 from utils.monitor_logger import get_monitor_logger
 
@@ -68,14 +72,26 @@ def apply_classification_to_device(
     optionally refreshes ``networkInfo``.
     """
     hostname = merge_hostname(existing, result.hostname)
+    ip_address = (existing or {}).get("ipAddress", "unknown")
+    device_label = ip_address
+    if existing:
+        hostname_label = existing.get("hostname")
+        if hostname_label and str(hostname_label).strip():
+            device_label = f"{hostname_label}/{ip_address}"
+
     update_fields: dict[str, Any] = {
-        "hostname": hostname,
-        "deviceType": result.device_type,
         "classificationConfidence": int(result.confidence),
         "classificationMethod": result.classification_method,
         "discoverySource": result.discovery_source,
         "updatedAt": datetime.now(timezone.utc),
     }
+    apply_identity_fields_to_classification_update(
+        existing,
+        update_fields,
+        detected_hostname=hostname,
+        detected_device_type=result.device_type,
+        device_label=device_label,
+    )
     if result.vendor:
         update_fields["vendor"] = result.vendor
     if result.operating_system:
