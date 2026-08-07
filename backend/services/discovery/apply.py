@@ -114,6 +114,30 @@ def classify_network_info(
     return result, evidence
 
 
+def _discovery_result_payload(
+    *,
+    ip_address: str,
+    ping_result: dict,
+    device: dict,
+    saved: bool,
+    nmap_error: str | None = None,
+) -> dict[str, Any]:
+    """Build the discovery API row from a stored (or just-inserted) device."""
+    return {
+        "hostname": device.get("hostname"),
+        "ipAddress": ip_address,
+        "status": "Online",
+        "responseTime": ping_result.get("responseTime"),
+        "saved": saved,
+        "deviceType": device.get("deviceType"),
+        "vendor": device.get("vendor"),
+        "operatingSystem": device.get("operatingSystem"),
+        "classificationConfidence": device.get("classificationConfidence"),
+        "classificationMethod": device.get("classificationMethod"),
+        "nmapError": nmap_error,
+    }
+
+
 def enrich_online_host(
     ip_address: str,
     *,
@@ -121,15 +145,49 @@ def enrich_online_host(
     existing: dict | None = None,
 ) -> dict[str, Any]:
     """
-    Nmap → classify → save/update for one online host (discovery path).
+    Discovery enrichment for one online host.
 
-    Falls back to DNS-only / unknown classification when Nmap is unavailable.
-    Never creates a duplicate device for an existing IP.
+    New device
+        Nmap → classify → insert (full pipeline).
+
+    Existing device
+        Skip Nmap and classification. Update only reachability fields and
+        return stored hostname / vendor / deviceType / classification metadata.
+
+    Manual Nmap, scheduled Nmap, and device-detail scans are unchanged
+    (they call ``scan_and_update_device``, not this path).
     """
+    now = datetime.now(timezone.utc)
+
+    # ── Already monitored: ping-only update (no Nmap / no classification) ──
+    if existing is not None:
+        db.devices.update_one(
+            {"_id": existing["_id"]},
+            {
+                "$set": {
+                    "status": "Online",
+                    "responseTime": ping_result.get("responseTime"),
+                    "lastSeen": ping_result.get("lastSeen"),
+                    "updatedAt": now,
+                }
+            },
+        )
+        logger.info(
+            "[DISCOVERY] Existing device — skipped Nmap | host=%s hostname=%s",
+            ip_address,
+            existing.get("hostname"),
+        )
+        return _discovery_result_payload(
+            ip_address=ip_address,
+            ping_result=ping_result,
+            device=existing,
+            saved=False,
+        )
+
+    # ── New device: full Nmap → classify → insert ─────────────────────────
     from services.discovery_service import get_hostname  # noqa: PLC0415
     from services.nmap_service import scan_device_nmap  # noqa: PLC0415
 
-    now = datetime.now(timezone.utc)
     network_info = None
     nmap_error = None
 
@@ -164,68 +222,39 @@ def enrich_online_host(
     result, _evidence = classify_network_info(
         network_info,
         ip_address=ip_address,
-        existing=existing,
-        try_ssh=True,
+        existing=None,
+        try_ssh=False,
     )
 
-    saved = False
-    if existing is None:
-        device = create_device(
-            hostname=result.hostname if not is_unknown_hostname(result.hostname) else (
-                dns_hostname or "Unknown"
-            ),
-            ip_address=ip_address,
-            device_type=result.device_type,
-            critical=False,
-            monitor=True,
-        )
-        # Apply optional classification fields on create.
-        device["status"] = "Online"
-        device["responseTime"] = ping_result.get("responseTime")
-        device["lastSeen"] = ping_result.get("lastSeen")
-        device["updatedAt"] = now
-        device["networkInfo"] = network_info
-        device["vendor"] = result.vendor or None
-        device["operatingSystem"] = result.operating_system or None
-        device["classificationConfidence"] = int(result.confidence)
-        device["classificationMethod"] = result.classification_method
-        device["discoverySource"] = result.discovery_source
-        if is_unknown_hostname(device["hostname"]):
-            device["hostname"] = "Unknown"
-        insert_result = db.devices.insert_one(device)
-        device_id = insert_result.inserted_id
-        saved = True
-    else:
-        device_id = existing["_id"]
-        apply_classification_to_device(
-            device_id,
-            result,
-            network_info=network_info,
-            existing=existing,
-        )
-        db.devices.update_one(
-            {"_id": device_id},
-            {
-                "$set": {
-                    "status": "Online",
-                    "responseTime": ping_result.get("responseTime"),
-                    "lastSeen": ping_result.get("lastSeen"),
-                    "updatedAt": now,
-                }
-            },
-        )
+    device = create_device(
+        hostname=result.hostname if not is_unknown_hostname(result.hostname) else (
+            dns_hostname or "Unknown"
+        ),
+        ip_address=ip_address,
+        device_type=result.device_type,
+        critical=False,
+        monitor=True,
+    )
+    device["status"] = "Online"
+    device["responseTime"] = ping_result.get("responseTime")
+    device["lastSeen"] = ping_result.get("lastSeen")
+    device["updatedAt"] = now
+    device["networkInfo"] = network_info
+    device["vendor"] = result.vendor or None
+    device["operatingSystem"] = result.operating_system or None
+    device["classificationConfidence"] = int(result.confidence)
+    device["classificationMethod"] = result.classification_method
+    device["discoverySource"] = result.discovery_source
+    if is_unknown_hostname(device["hostname"]):
+        device["hostname"] = "Unknown"
 
-    updated = db.devices.find_one({"_id": device_id}) or {}
-    return {
-        "hostname": updated.get("hostname"),
-        "ipAddress": ip_address,
-        "status": "Online",
-        "responseTime": ping_result.get("responseTime"),
-        "saved": saved,
-        "deviceType": updated.get("deviceType"),
-        "vendor": updated.get("vendor"),
-        "operatingSystem": updated.get("operatingSystem"),
-        "classificationConfidence": updated.get("classificationConfidence"),
-        "classificationMethod": updated.get("classificationMethod"),
-        "nmapError": nmap_error,
-    }
+    insert_result = db.devices.insert_one(device)
+    device["_id"] = insert_result.inserted_id
+
+    return _discovery_result_payload(
+        ip_address=ip_address,
+        ping_result=ping_result,
+        device=device,
+        saved=True,
+        nmap_error=nmap_error,
+    )

@@ -70,7 +70,8 @@ def scan_single_ip(ip_address):
 
         existing = db.devices.find_one({"ipAddress": ip_address})
 
-        # Nmap → classify → save/update (automatic hostname & device type).
+        # New hosts: Nmap → classify → insert.
+        # Existing hosts: ping status only (Nmap skipped inside enrich_online_host).
         from services.discovery.apply import enrich_online_host  # noqa: PLC0415
 
         return enrich_online_host(
