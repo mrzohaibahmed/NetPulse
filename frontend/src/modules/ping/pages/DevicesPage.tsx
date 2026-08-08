@@ -420,18 +420,21 @@ export function DevicesPage() {
             value={dash.summary?.totalDevices ?? '—'}
             icon={Server}
             tone="accent"
+            onClick={() => setStatusFilter('all')}
           />
           <KpiCard
             label="Online"
             value={dash.summary?.onlineDevices ?? '—'}
             icon={Wifi}
             tone="success"
+            onClick={() => setStatusFilter('Online')}
           />
           <KpiCard
             label="Offline"
             value={dash.summary ? offlineCount : '—'}
             icon={WifiOff}
             tone={offlineCount > 0 ? 'danger' : 'default'}
+            onClick={() => setStatusFilter('Offline (Critical)')}
           />
           <KpiCard
             label="Warning"
@@ -439,6 +442,7 @@ export function DevicesPage() {
             icon={AlertTriangle}
             tone={warningCount > 0 ? 'warning' : 'default'}
             hint="Not reachable"
+            onClick={() => setStatusFilter('Not Reachable')}
           />
           <KpiCard
             label="Avg Response"
