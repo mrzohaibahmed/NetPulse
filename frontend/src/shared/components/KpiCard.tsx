@@ -75,7 +75,7 @@ export function KpiCard({
       className={cn(
         'glass relative flex min-h-[7.5rem] flex-col justify-between overflow-hidden rounded-xl border-l-[3px] bg-gradient-to-br p-4',
         toneStyles[tone],
-        onClick && 'cursor-pointer hover:ring-2 hover:ring-primary/50 transition-shadow',
+        onClick && 'cursor-pointer',
         className,
       )}
       onClick={onClick}
