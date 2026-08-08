@@ -136,6 +136,11 @@ export function DevicesPage() {
     (dash.summary?.notReachableDevices ?? 0) + (dash.summary?.criticalOfflineDevices ?? 0)
   const warningCount = dash.summary?.notReachableDevices ?? 0
 
+  const handleCardClick = (status: string) => {
+    setStatusFilter(status)
+    document.getElementById('inventory-section')?.scrollIntoView({ behavior: 'smooth' })
+  }
+
   useEffect(() => {
     if ((devicesQuery.data?.totalPages ?? 0) > 0 && page > (devicesQuery.data?.totalPages ?? 1)) {
       setPage(devicesQuery.data?.totalPages ?? 1)
@@ -420,21 +425,21 @@ export function DevicesPage() {
             value={dash.summary?.totalDevices ?? '—'}
             icon={Server}
             tone="accent"
-            onClick={() => setStatusFilter('all')}
+            onClick={() => handleCardClick('all')}
           />
           <KpiCard
             label="Online"
             value={dash.summary?.onlineDevices ?? '—'}
             icon={Wifi}
             tone="success"
-            onClick={() => setStatusFilter('Online')}
+            onClick={() => handleCardClick('Online')}
           />
           <KpiCard
             label="Offline"
             value={dash.summary ? offlineCount : '—'}
             icon={WifiOff}
             tone={offlineCount > 0 ? 'danger' : 'default'}
-            onClick={() => setStatusFilter('Offline (Critical)')}
+            onClick={() => handleCardClick('Offline (Critical)')}
           />
           <KpiCard
             label="Warning"
@@ -442,7 +447,7 @@ export function DevicesPage() {
             icon={AlertTriangle}
             tone={warningCount > 0 ? 'warning' : 'default'}
             hint="Not reachable"
-            onClick={() => setStatusFilter('Not Reachable')}
+            onClick={() => handleCardClick('Not Reachable')}
           />
           <KpiCard
             label="Avg Response"
@@ -454,7 +459,7 @@ export function DevicesPage() {
       </section>
 
       {/* 2. Device Inventory */}
-      <section className="space-y-4" aria-label="Device inventory">
+      <section className="space-y-4" id="inventory-section" aria-label="Device inventory">
         <SectionHeading
           title="Device Inventory"
           description="Search, filter, and manage monitored hosts."
