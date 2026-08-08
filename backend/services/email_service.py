@@ -239,6 +239,7 @@ def _build_storm_email(
     operator: str = "SYSTEM",
     recovery_duration: Optional[str] = None,
     timestamp: Optional[datetime] = None,
+    suggested_action: Optional[str] = None,
 ) -> tuple[str, str]:
     hostname = incident.get("hostname") or "Unknown"
     ip_address = incident.get("ipAddress") or "Unknown"
@@ -289,6 +290,15 @@ def _build_storm_email(
     ]
     for label, value in rows:
         text_lines.append(f"{label}: {value}")
+    if suggested_action:
+        text_lines.extend(
+            [
+                "",
+                "Suggested Action for Network Engineer:",
+                "-" * 40,
+                suggested_action,
+            ]
+        )
     text_lines.extend(
         [
             "",
@@ -311,6 +321,23 @@ def _build_storm_email(
         """
         for label, value in rows
     )
+
+    suggested_action_html = ""
+    if suggested_action:
+        suggested_action_html = (
+            '<tr>'
+            '<td style="padding:0 28px 24px 28px;">'
+            '<div style="background:#fefce8;border:1px solid #facc15;border-radius:8px;padding:14px 16px;">'
+            '<div style="font-size:12px;font-weight:700;color:#854d0e;text-transform:uppercase;letter-spacing:0.06em;">'
+            '&#x26A0; Suggested Action for Network Engineer'
+            '</div>'
+            f'<div style="margin-top:6px;font-size:14px;color:#422006;line-height:1.5;">'
+            f'{_escape(suggested_action)}'
+            '</div>'
+            '</div>'
+            '</td>'
+            '</tr>'
+        )
 
     body_html = f"""
 <!DOCTYPE html>
@@ -366,6 +393,7 @@ def _build_storm_email(
               </div>
             </td>
           </tr>
+          {suggested_action_html}
           <tr>
             <td style="background:#0b1f33;padding:16px 28px;color:#9fb3c8;font-size:12px;line-height:1.5;">
               <div>NetPulse Storm Protection · Automated notification</div>
@@ -425,6 +453,7 @@ def _dispatch_storm_email(
     verification_result: Any,
     operator: str = "SYSTEM",
     recovery_duration: Optional[str] = None,
+    suggested_action: Optional[str] = None,
     setting_flag: str,
 ) -> bool:
     """Shared gate + send + audit. Never raises."""
@@ -449,6 +478,7 @@ def _dispatch_storm_email(
             verification_result=verification_result,
             operator=operator or "SYSTEM",
             recovery_duration=recovery_duration,
+            suggested_action=suggested_action,
         )
         delivered = send_email(
             subject,
@@ -489,6 +519,11 @@ def send_storm_shutdown_notification(
         reason=reason,
         verification_result=verification_result if verification_result is not None else {"success": True},
         operator=operator,
+        suggested_action=(
+            "Please inspect the physical port and trace the cable to identify "
+            "any unauthorized switches or routing loops before manually "
+            "recovering this interface."
+        ),
         setting_flag="shutdownEmails",
     )
 
