@@ -703,3 +703,9 @@ export const retryStormRecovery = (payload: { incidentId: string }) =>
     },
   )
 
+export const getFullTopology = () =>
+  apiRequest<{ success: boolean; data: any }>('/api/topology/full')
+
+export const getSwitchTopology = (deviceId: string) =>
+  apiRequest<{ success: boolean; data: any }>(`/api/topology/switch/${deviceId}`)
+

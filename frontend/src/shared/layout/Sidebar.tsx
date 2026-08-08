@@ -15,6 +15,7 @@ import {
   PinOff,
   Radar,
   RotateCcw,
+  Router,
   Server,
   Settings,
   Shield,
@@ -129,6 +130,12 @@ export function Sidebar({ pinned, onPinnedChange, mobileOpen, onMobileOpenChange
           isActive: stormViewActive('overview'),
         },
         { id: 'storm-interfaces', to: '/interfaces', label: 'Interfaces', icon: Network },
+        {
+          id: 'storm-topology',
+          to: '/storm/topology',
+          label: 'Topology',
+          icon: Router,
+        },
         {
           id: 'storm-pipeline',
           to: '/storm?view=pipeline',
