@@ -109,13 +109,18 @@ class TestCycleLeadershipGuard(unittest.TestCase):
 
 
 class TestIdempotentFailureCounter(unittest.TestCase):
+    @patch("services.monitor_service.get_failure_confirmation_scans", return_value=1)
     @patch("services.monitor_service.maybe_send_critical_offline_alert")
     @patch("services.monitor_service.save_ping_history")
     @patch("services.monitor_service._db")
-    def test_failure_filter_includes_attempt_id(self, mock_db, _hist, mock_alert):
+    def test_failure_filter_includes_attempt_id(
+        self, mock_db, _hist, mock_alert, _threshold
+    ):
         from services.monitor_service import apply_ping_result
+        from utils.utc import utc_now
 
         device_id = ObjectId()
+        started = utc_now()
         device = {
             "_id": device_id,
             "hostname": "sw1",
@@ -129,6 +134,7 @@ class TestIdempotentFailureCounter(unittest.TestCase):
             "status": "Offline (Critical)",
             "consecutiveFailures": 3,
             "lastPingAttemptId": "attempt-1",
+            "lastPingStartedAt": started,
         }
         coll = MagicMock()
         coll.find_one_and_update.return_value = updated
@@ -142,24 +148,31 @@ class TestIdempotentFailureCounter(unittest.TestCase):
                 "responseTime": None,
                 "lastSeen": None,
                 "message": "down",
+                "pingStartedAt": started,
             },
             attempt_id="attempt-1",
         )
 
         filt = coll.find_one_and_update.call_args[0][0]
         self.assertEqual(filt["lastPingAttemptId"], {"$ne": "attempt-1"})
-        update = coll.find_one_and_update.call_args[0][1]
-        self.assertEqual(update["$inc"]["consecutiveFailures"], 1)
-        self.assertEqual(update["$set"]["lastPingAttemptId"], "attempt-1")
+        self.assertIn("$or", filt)
+        pipeline = coll.find_one_and_update.call_args[0][1]
+        self.assertIsInstance(pipeline, list)
+        self.assertEqual(pipeline[0]["$set"]["lastPingAttemptId"], "attempt-1")
         self.assertEqual(mock_alert.call_args.kwargs["consecutive_failures"], 3)
 
+    @patch("services.monitor_service.get_failure_confirmation_scans", return_value=1)
     @patch("services.monitor_service.maybe_send_critical_offline_alert")
     @patch("services.monitor_service.save_ping_history")
     @patch("services.monitor_service._db")
-    def test_retry_after_commit_does_not_double_inc(self, mock_db, _hist, mock_alert):
+    def test_retry_after_commit_does_not_double_inc(
+        self, mock_db, _hist, mock_alert, _threshold
+    ):
         from services.monitor_service import apply_ping_result
+        from utils.utc import utc_now
 
         device_id = ObjectId()
+        started = utc_now()
         device = {
             "_id": device_id,
             "hostname": "sw1",
@@ -173,6 +186,7 @@ class TestIdempotentFailureCounter(unittest.TestCase):
             "status": "Offline (Critical)",
             "consecutiveFailures": 3,
             "lastPingAttemptId": "attempt-1",
+            "lastPingStartedAt": started,
         }
         coll = MagicMock()
         # First find_one_and_update: as if already applied (None), then recover via find_one
@@ -188,11 +202,12 @@ class TestIdempotentFailureCounter(unittest.TestCase):
                 "responseTime": None,
                 "lastSeen": None,
                 "message": "down",
+                "pingStartedAt": started,
             },
             attempt_id="attempt-1",
         )
 
-        # $inc only attempted once; recovery path used find_one — no second inc payload applied
+        # Update attempted once; recovery path used find_one — no second inc applied
         self.assertEqual(coll.find_one_and_update.call_count, 1)
         mock_alert.assert_called_once()
         self.assertEqual(mock_alert.call_args.kwargs["consecutive_failures"], 3)
@@ -308,7 +323,7 @@ class TestMonitorLoopAbort(unittest.TestCase):
         from services.monitor_service import monitor_all_devices
 
         guard = MagicMock()
-        # start ok, then fail on first pre_device ensure
+        # start ok, then fail on first select ensure
         guard.ensure.side_effect = [True, False]
         guard.aborted = True
         guard.abort_reason = "leadership_lost:test"
@@ -324,6 +339,142 @@ class TestMonitorLoopAbort(unittest.TestCase):
         monitor_all_devices()
         mock_scan.assert_not_called()
 
+    @patch("services.monitor_service.get_monitor_ping_concurrency", return_value=2)
+    @patch("services.monitor_service.get_ping_config")
+    @patch("services.monitor_service.run_integrity_audit")
+    @patch("services.monitor_service.begin_cycle_connectivity_check", return_value=False)
+    @patch("services.monitor_service._scan_device")
+    @patch("services.monitor_service._db")
+    @patch("services.monitor_service.require_scheduler_leadership", return_value=True)
+    @patch("services.monitor_service.CycleLeadershipGuard")
+    def test_parallel_batches_scan_due_devices(
+        self,
+        mock_guard_cls,
+        _lead,
+        mock_db,
+        mock_scan,
+        _probe,
+        _audit,
+        mock_ping_cfg,
+        _conc,
+    ):
+        from services.monitor_service import monitor_all_devices
+
+        mock_ping_cfg.return_value = {
+            "interval": 30,
+            "timeout_ms": 1000,
+            "retries": 2,
+            "failure_confirmation_scans": 2,
+        }
+        guard = MagicMock()
+        guard.ensure.return_value = True
+        guard.aborted = False
+        guard.abort_reason = None
+        guard.heartbeat_s = 30
+        mock_guard_cls.return_value = guard
+
+        devices = [
+            {
+                "_id": ObjectId(),
+                "hostname": f"h{i}",
+                "ipAddress": f"10.0.0.{i}",
+                "monitor": True,
+                "lastCheckedAt": None,
+            }
+            for i in range(5)
+        ]
+        mock_db.return_value.devices.find.return_value = devices
+
+        monitor_all_devices()
+        self.assertEqual(mock_scan.call_count, 5)
+
+    @patch("services.monitor_service.get_monitor_ping_concurrency", return_value=4)
+    @patch("services.monitor_service.get_ping_config")
+    @patch("services.monitor_service.run_integrity_audit")
+    @patch("services.monitor_service.begin_cycle_connectivity_check", return_value=False)
+    @patch("services.monitor_service._scan_device")
+    @patch("services.monitor_service._db")
+    @patch("services.monitor_service.require_scheduler_leadership", return_value=True)
+    @patch("services.monitor_service.CycleLeadershipGuard")
+    def test_skips_devices_not_due(
+        self,
+        mock_guard_cls,
+        _lead,
+        mock_db,
+        mock_scan,
+        _probe,
+        _audit,
+        mock_ping_cfg,
+        _conc,
+    ):
+        from datetime import timedelta
+
+        from services.monitor_service import monitor_all_devices
+        from utils.utc import utc_now
+
+        mock_ping_cfg.return_value = {
+            "interval": 30,
+            "timeout_ms": 1000,
+            "retries": 2,
+            "failure_confirmation_scans": 2,
+        }
+        guard = MagicMock()
+        guard.ensure.return_value = True
+        guard.aborted = False
+        guard.abort_reason = None
+        guard.heartbeat_s = 30
+        mock_guard_cls.return_value = guard
+
+        recent = utc_now() - timedelta(seconds=5)
+        devices = [
+            {
+                "_id": ObjectId(),
+                "hostname": "fresh",
+                "ipAddress": "10.0.0.1",
+                "monitor": True,
+                "lastCheckedAt": recent,
+                "pingInterval": 30,
+            },
+            {
+                "_id": ObjectId(),
+                "hostname": "due",
+                "ipAddress": "10.0.0.2",
+                "monitor": True,
+                "lastCheckedAt": None,
+            },
+        ]
+        mock_db.return_value.devices.find.return_value = devices
+
+        with patch(
+            "services.monitor_service.get_ping_config",
+            side_effect=lambda device=None: {
+                "interval": int((device or {}).get("pingInterval") or 30),
+                "timeout_ms": 1000,
+                "retries": 2,
+                "failure_confirmation_scans": 2,
+            },
+        ):
+            monitor_all_devices()
+
+        self.assertEqual(mock_scan.call_count, 1)
+        self.assertEqual(mock_scan.call_args[0][0]["hostname"], "due")
+
+
+class TestPingConcurrencyConfig(unittest.TestCase):
+    def test_default_concurrency_in_defaults(self):
+        from services.settings_service import DEFAULT_SETTINGS
+
+        self.assertEqual(DEFAULT_SETTINGS["pingConcurrency"], 20)
+
+    @patch("services.settings_service.get_settings")
+    def test_concurrency_clamped(self, mock_settings):
+        from services.settings_service import get_monitor_ping_concurrency
+
+        mock_settings.return_value = {"pingConcurrency": 1000}
+        self.assertEqual(get_monitor_ping_concurrency(), 64)
+        mock_settings.return_value = {"pingConcurrency": 0}
+        self.assertEqual(get_monitor_ping_concurrency(), 1)
+
 
 class TestOnlineApply(unittest.TestCase):
     @patch("services.monitor_service.resolve_critical_offline_alerts")
@@ -334,6 +485,7 @@ class TestOnlineApply(unittest.TestCase):
         from utils.utc import utc_now
 
         device_id = ObjectId()
+        started = utc_now()
         device = {
             "_id": device_id,
             "hostname": "sw1",
@@ -348,6 +500,7 @@ class TestOnlineApply(unittest.TestCase):
             "consecutiveFailures": 0,
             "responseTime": 1.5,
             "lastPingAttemptId": "a1",
+            "lastPingStartedAt": started,
         }
         coll = MagicMock()
         coll.find_one_and_update.return_value = updated
@@ -359,14 +512,18 @@ class TestOnlineApply(unittest.TestCase):
                 "success": True,
                 "status": "Online",
                 "responseTime": 1.5,
-                "lastSeen": utc_now(),
+                "lastSeen": started,
                 "message": "ok",
+                "pingStartedAt": started,
             },
             scan_type="Manual",
             attempt_id="a1",
         )
         update = coll.find_one_and_update.call_args[0][1]
         self.assertEqual(update["$set"]["consecutiveFailures"], 0)
+        self.assertEqual(update["$set"]["lastPingStartedAt"], started)
+        filt = coll.find_one_and_update.call_args[0][0]
+        self.assertIn("$or", filt)
         mock_hist.assert_called_once()
         mock_resolve.assert_called_once()
 
@@ -440,6 +597,421 @@ class TestIntegrity(unittest.TestCase):
             }
         )
         self.assertTrue(any(i.startswith("invalid_status") for i in issues))
+
+    @patch("services.monitor_integrity.get_failure_confirmation_scans", return_value=2)
+    def test_online_with_sub_threshold_failures_ok(self, _threshold):
+        from services.monitor_integrity import validate_device_document
+
+        issues = validate_device_document(
+            {
+                "_id": ObjectId(),
+                "hostname": "x",
+                "ipAddress": "1.2.3.4",
+                "status": "Online",
+                "monitor": True,
+                "consecutiveFailures": 1,
+            }
+        )
+        self.assertFalse(any(i == "online_with_failures" for i in issues))
+
+    @patch("services.monitor_integrity.get_failure_confirmation_scans", return_value=2)
+    def test_online_with_threshold_failures_flagged(self, _threshold):
+        from services.monitor_integrity import validate_device_document
+
+        issues = validate_device_document(
+            {
+                "_id": ObjectId(),
+                "hostname": "x",
+                "ipAddress": "1.2.3.4",
+                "status": "Online",
+                "monitor": True,
+                "consecutiveFailures": 2,
+            }
+        )
+        self.assertTrue(any(i == "online_with_failures" for i in issues))
+
+
+class TestFreshnessOrdering(unittest.TestCase):
+    @patch("services.monitor_service.maybe_send_critical_offline_alert")
+    @patch("services.monitor_service.resolve_critical_offline_alerts")
+    @patch("services.monitor_service.save_ping_history")
+    @patch("services.monitor_service._db")
+    def test_older_failure_cannot_overwrite_newer_online(
+        self, mock_db, mock_hist, mock_resolve, mock_alert
+    ):
+        from services.monitor_service import apply_ping_result
+        from utils.utc import utc_now
+
+        device_id = ObjectId()
+        t_old = utc_now() - timedelta(seconds=5)
+        t_new = utc_now()
+        device = {
+            "_id": device_id,
+            "hostname": "sw1",
+            "ipAddress": "10.0.0.1",
+            "status": "Online",
+            "critical": False,
+            "consecutiveFailures": 0,
+            "lastPingAttemptId": "newer",
+            "lastPingStartedAt": t_new,
+        }
+        coll = MagicMock()
+        coll.find_one_and_update.return_value = None
+        coll.find_one.return_value = device
+        mock_db.return_value.devices = coll
+
+        apply_ping_result(
+            device,
+            {
+                "success": False,
+                "status": "Not Reachable",
+                "responseTime": None,
+                "lastSeen": None,
+                "message": "timeout",
+                "pingStartedAt": t_old,
+                "pingCompletedAt": utc_now(),
+            },
+            scan_type="Automatic",
+            attempt_id="older",
+        )
+
+        mock_hist.assert_not_called()
+        mock_alert.assert_not_called()
+        mock_resolve.assert_not_called()
+
+    @patch("services.monitor_service.get_failure_confirmation_scans", return_value=1)
+    @patch("services.monitor_service.maybe_send_critical_offline_alert")
+    @patch("services.monitor_service.resolve_critical_offline_alerts")
+    @patch("services.monitor_service.save_ping_history")
+    @patch("services.monitor_service._db")
+    def test_older_online_cannot_overwrite_newer_failure(
+        self, mock_db, mock_hist, mock_resolve, mock_alert, _threshold
+    ):
+        from services.monitor_service import apply_ping_result
+        from utils.utc import utc_now
+
+        device_id = ObjectId()
+        t_old = utc_now() - timedelta(seconds=5)
+        t_new = utc_now()
+        device = {
+            "_id": device_id,
+            "hostname": "sw1",
+            "ipAddress": "10.0.0.1",
+            "status": "Not Reachable",
+            "critical": False,
+            "consecutiveFailures": 2,
+            "lastPingAttemptId": "newer-fail",
+            "lastPingStartedAt": t_new,
+        }
+        coll = MagicMock()
+        coll.find_one_and_update.return_value = None
+        coll.find_one.return_value = device
+        mock_db.return_value.devices = coll
+
+        apply_ping_result(
+            device,
+            {
+                "success": True,
+                "status": "Online",
+                "responseTime": 12.0,
+                "lastSeen": t_old,
+                "message": "ok",
+                "pingStartedAt": t_old,
+                "pingCompletedAt": utc_now(),
+            },
+            scan_type="Manual",
+            attempt_id="older-ok",
+        )
+
+        mock_hist.assert_not_called()
+        mock_resolve.assert_not_called()
+
+    @patch("services.monitor_service.resolve_critical_offline_alerts")
+    @patch("services.monitor_service.save_ping_history")
+    @patch("services.monitor_service._db")
+    def test_newer_result_can_update(self, mock_db, mock_hist, mock_resolve):
+        from services.monitor_service import apply_ping_result
+        from utils.utc import utc_now
+
+        device_id = ObjectId()
+        t_old = utc_now() - timedelta(seconds=5)
+        t_new = utc_now()
+        device = {
+            "_id": device_id,
+            "hostname": "sw1",
+            "ipAddress": "10.0.0.1",
+            "status": "Not Reachable",
+            "critical": False,
+            "consecutiveFailures": 2,
+            "lastPingAttemptId": "old",
+            "lastPingStartedAt": t_old,
+        }
+        updated = {
+            **device,
+            "status": "Online",
+            "consecutiveFailures": 0,
+            "lastPingAttemptId": "new",
+            "lastPingStartedAt": t_new,
+            "responseTime": 5.0,
+        }
+        coll = MagicMock()
+        coll.find_one_and_update.return_value = updated
+        mock_db.return_value.devices = coll
+
+        apply_ping_result(
+            device,
+            {
+                "success": True,
+                "status": "Online",
+                "responseTime": 5.0,
+                "lastSeen": t_new,
+                "message": "ok",
+                "pingStartedAt": t_new,
+            },
+            scan_type="Discovery",
+            attempt_id="new",
+        )
+
+        filt = coll.find_one_and_update.call_args[0][0]
+        self.assertEqual(filt["lastPingAttemptId"], {"$ne": "new"})
+        mock_hist.assert_called_once()
+        mock_resolve.assert_called_once()
+
+    @patch("services.monitor_service.get_failure_confirmation_scans", return_value=1)
+    @patch("services.monitor_service.maybe_send_critical_offline_alert")
+    @patch("services.monitor_service.save_ping_history")
+    @patch("services.monitor_service._db")
+    def test_completion_order_does_not_determine_freshness(
+        self, mock_db, mock_hist, mock_alert, _threshold
+    ):
+        """Later-finishing older start is still rejected via start-time filter."""
+        from services.monitor_service import _freshness_filter
+        from utils.utc import utc_now
+
+        t1 = utc_now() - timedelta(seconds=2)
+        t2 = utc_now()
+        filt = _freshness_filter(ObjectId(), "attempt-a", t1)
+        lte_clause = next(
+            c
+            for c in filt["$or"]
+            if isinstance(c.get("lastPingStartedAt"), dict)
+            and "$lte" in c["lastPingStartedAt"]
+        )
+        self.assertEqual(lte_clause["lastPingStartedAt"]["$lte"], t1)
+        self.assertLess(t1, t2)
+
+    @patch("services.monitor_service.maybe_send_critical_offline_alert")
+    @patch("services.monitor_service.save_ping_history")
+    @patch("services.monitor_service._db")
+    def test_stale_skips_alerts(self, mock_db, mock_hist, mock_alert):
+        from services.monitor_service import apply_ping_result
+        from utils.utc import utc_now
+
+        device_id = ObjectId()
+        t_old = utc_now() - timedelta(seconds=3)
+        device = {
+            "_id": device_id,
+            "hostname": "sw1",
+            "ipAddress": "10.0.0.1",
+            "status": "Online",
+            "critical": True,
+            "consecutiveFailures": 0,
+            "lastPingAttemptId": "fresh",
+            "lastPingStartedAt": utc_now(),
+        }
+        coll = MagicMock()
+        coll.find_one_and_update.return_value = None
+        coll.find_one.return_value = device
+        mock_db.return_value.devices = coll
+
+        apply_ping_result(
+            device,
+            {
+                "success": False,
+                "status": "Offline (Critical)",
+                "responseTime": None,
+                "lastSeen": None,
+                "message": "down",
+                "pingStartedAt": t_old,
+            },
+            attempt_id="stale",
+        )
+        mock_alert.assert_not_called()
+        mock_hist.assert_not_called()
+
+
+class TestFailureHysteresis(unittest.TestCase):
+    @patch("services.monitor_service.get_failure_confirmation_scans", return_value=2)
+    @patch("services.monitor_service.maybe_send_critical_offline_alert")
+    @patch("services.monitor_service.save_ping_history")
+    @patch("services.monitor_service._db")
+    def test_one_failed_scan_keeps_online(self, mock_db, mock_hist, mock_alert, _thr):
+        from services.monitor_service import apply_ping_result
+        from utils.utc import utc_now
+
+        device_id = ObjectId()
+        started = utc_now()
+        device = {
+            "_id": device_id,
+            "hostname": "sw1",
+            "ipAddress": "10.0.0.1",
+            "status": "Online",
+            "critical": False,
+            "consecutiveFailures": 0,
+        }
+        # After first failed scan with threshold=2, status stays Online.
+        updated = {
+            **device,
+            "status": "Online",
+            "consecutiveFailures": 1,
+            "lastPingAttemptId": "a1",
+            "lastPingStartedAt": started,
+        }
+        coll = MagicMock()
+        coll.find_one_and_update.return_value = updated
+        mock_db.return_value.devices = coll
+
+        apply_ping_result(
+            device,
+            {
+                "success": False,
+                "status": "Not Reachable",
+                "responseTime": None,
+                "lastSeen": None,
+                "message": "unreachable",
+                "pingStartedAt": started,
+            },
+            attempt_id="a1",
+        )
+
+        pipeline = coll.find_one_and_update.call_args[0][1]
+        status_expr = pipeline[0]["$set"]["status"]
+        self.assertEqual(status_expr["$cond"][0]["$gte"][1], 2)
+        mock_alert.assert_called_once()
+        # Alert receives authoritative Online status — will no-op inside alert service
+        # for non-critical / wrong status; here critical=False so skipped anyway.
+        self.assertEqual(mock_alert.call_args.args[2], "Online")
+        self.assertEqual(mock_alert.call_args.kwargs["consecutive_failures"], 1)
+
+    @patch("services.monitor_service.get_failure_confirmation_scans", return_value=2)
+    @patch("services.monitor_service.maybe_send_critical_offline_alert")
+    @patch("services.monitor_service.save_ping_history")
+    @patch("services.monitor_service._db")
+    def test_second_failed_scan_sets_not_reachable(
+        self, mock_db, mock_hist, mock_alert, _thr
+    ):
+        from services.monitor_service import apply_ping_result
+        from utils.utc import utc_now
+
+        device_id = ObjectId()
+        started = utc_now()
+        device = {
+            "_id": device_id,
+            "hostname": "sw1",
+            "ipAddress": "10.0.0.1",
+            "status": "Online",
+            "critical": False,
+            "consecutiveFailures": 1,
+        }
+        updated = {
+            **device,
+            "status": "Not Reachable",
+            "consecutiveFailures": 2,
+            "lastPingAttemptId": "a2",
+            "lastPingStartedAt": started,
+        }
+        coll = MagicMock()
+        coll.find_one_and_update.return_value = updated
+        mock_db.return_value.devices = coll
+
+        apply_ping_result(
+            device,
+            {
+                "success": False,
+                "status": "Not Reachable",
+                "responseTime": None,
+                "lastSeen": None,
+                "message": "unreachable",
+                "pingStartedAt": started,
+            },
+            attempt_id="a2",
+        )
+        self.assertEqual(mock_alert.call_args.args[2], "Not Reachable")
+        self.assertEqual(mock_alert.call_args.kwargs["consecutive_failures"], 2)
+
+    @patch("services.monitor_service.resolve_critical_offline_alerts")
+    @patch("services.monitor_service.save_ping_history")
+    @patch("services.monitor_service._db")
+    def test_success_resets_confirmation_sequence(
+        self, mock_db, mock_hist, mock_resolve
+    ):
+        from services.monitor_service import apply_ping_result
+        from utils.utc import utc_now
+
+        started = utc_now()
+        device_id = ObjectId()
+        device = {
+            "_id": device_id,
+            "hostname": "sw1",
+            "ipAddress": "10.0.0.1",
+            "status": "Online",
+            "critical": False,
+            "consecutiveFailures": 1,
+        }
+        updated = {
+            **device,
+            "status": "Online",
+            "consecutiveFailures": 0,
+            "lastPingAttemptId": "ok",
+            "lastPingStartedAt": started,
+            "responseTime": 3.0,
+        }
+        coll = MagicMock()
+        coll.find_one_and_update.return_value = updated
+        mock_db.return_value.devices = coll
+
+        apply_ping_result(
+            device,
+            {
+                "success": True,
+                "status": "Online",
+                "responseTime": 3.0,
+                "lastSeen": started,
+                "message": "ok",
+                "pingStartedAt": started,
+            },
+            attempt_id="ok",
+        )
+        self.assertEqual(
+            coll.find_one_and_update.call_args[0][1]["$set"]["consecutiveFailures"], 0
+        )
+
+    @patch("services.ping_service.get_ping_config")
+    @patch("services.ping_service.ping")
+    def test_icmp_retries_are_one_scan(self, mock_ping, mock_cfg):
+        from services.ping_service import ping_device
+
+        mock_cfg.return_value = {
+            "interval": 30,
+            "timeout_ms": 1000,
+            "retries": 3,
+            "failure_confirmation_scans": 2,
+        }
+        mock_ping.side_effect = [None, None, None]
+        result = ping_device("10.0.0.1", critical=False)
+        self.assertFalse(result["success"])
+        self.assertEqual(result["status"], "Not Reachable")
+        self.assertEqual(result["attempts"], 3)
+        self.assertEqual(mock_ping.call_count, 3)
+        self.assertIn("pingStartedAt", result)
+        self.assertIn("pingCompletedAt", result)
+
+
+class TestPingConfigDefaults(unittest.TestCase):
+    def test_failure_confirmation_default(self):
+        from services.settings_service import DEFAULT_SETTINGS
+
+        self.assertEqual(DEFAULT_SETTINGS["pingFailureConfirmationScans"], 2)
 
 
 if __name__ == "__main__":

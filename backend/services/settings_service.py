@@ -12,7 +12,14 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "_id": SETTINGS_ID,
     "pingInterval": int(os.getenv("SCAN_INTERVAL", "30")),
     "pingTimeoutMs": int(os.getenv("PING_TIMEOUT_MS", "1000")),
+    # Total ICMP attempts per scan (not "retries after first success/fail").
     "pingRetries": int(os.getenv("PING_RETRIES", "3")),
+    # Complete failed SCANS required before leaving Online (not per-ICMP attempt).
+    "pingFailureConfirmationScans": int(
+        os.getenv("PING_FAILURE_CONFIRMATION_SCANS", "2")
+    ),
+    # Max concurrent device pings per monitoring cycle (bounded parallelism).
+    "pingConcurrency": int(os.getenv("MONITOR_PING_CONCURRENCY", "20")),
     "smtp": {
         "enabled": os.getenv("ALERT_EMAIL_ENABLED", "true").lower() in ("1", "true", "yes"),
         "host": (os.getenv("SMTP_HOST") or "smtp.gmail.com").strip(),
@@ -70,6 +77,15 @@ def get_public_settings():
         "pingInterval": settings.get("pingInterval", 30),
         "pingTimeoutMs": settings.get("pingTimeoutMs", 1000),
         "pingRetries": settings.get("pingRetries", 3),
+        "pingFailureConfirmationScans": int(
+            settings.get(
+                "pingFailureConfirmationScans",
+                DEFAULT_SETTINGS["pingFailureConfirmationScans"],
+            )
+        ),
+        "pingConcurrency": int(
+            settings.get("pingConcurrency", DEFAULT_SETTINGS["pingConcurrency"])
+        ),
         "smtp": {
             "enabled": smtp.get("enabled", True),
             "host": smtp.get("host", ""),
@@ -127,6 +143,21 @@ def update_settings(payload: dict):
         if value < 1:
             raise ValueError("pingRetries must be at least 1")
         update["pingRetries"] = value
+
+    if (
+        "pingFailureConfirmationScans" in payload
+        and payload["pingFailureConfirmationScans"] is not None
+    ):
+        value = int(payload["pingFailureConfirmationScans"])
+        if value < 1:
+            raise ValueError("pingFailureConfirmationScans must be at least 1")
+        update["pingFailureConfirmationScans"] = value
+
+    if "pingConcurrency" in payload and payload["pingConcurrency"] is not None:
+        value = int(payload["pingConcurrency"])
+        if value < 1 or value > 64:
+            raise ValueError("pingConcurrency must be between 1 and 64")
+        update["pingConcurrency"] = value
 
     if "smtp" in payload and isinstance(payload["smtp"], dict):
         smtp = dict(current.get("smtp") or {})
@@ -222,11 +253,43 @@ def update_settings(payload: dict):
     return updated_doc
 
 
+def get_failure_confirmation_scans() -> int:
+    """Complete failed scans required before Online → Not Reachable / Offline (Critical)."""
+    settings = get_settings()
+    raw = settings.get(
+        "pingFailureConfirmationScans",
+        DEFAULT_SETTINGS["pingFailureConfirmationScans"],
+    )
+    try:
+        return max(int(raw), 1)
+    except (TypeError, ValueError):
+        return int(DEFAULT_SETTINGS["pingFailureConfirmationScans"])
+
+
+def get_monitor_ping_concurrency() -> int:
+    """
+    Bounded parallelism for automatic monitoring scans.
+
+    Cap at 64 to avoid unbounded socket/load spikes. Missing Mongo field falls
+    back to DEFAULT_SETTINGS / MONITOR_PING_CONCURRENCY env.
+    """
+    settings = get_settings()
+    raw = settings.get("pingConcurrency", DEFAULT_SETTINGS["pingConcurrency"])
+    try:
+        return max(1, min(int(raw), 64))
+    except (TypeError, ValueError):
+        return max(1, min(int(DEFAULT_SETTINGS["pingConcurrency"]), 64))
+
+
 def get_ping_config(device=None):
     settings = get_settings()
     interval = settings.get("pingInterval", 30)
     timeout_ms = settings.get("pingTimeoutMs", 1000)
     retries = settings.get("pingRetries", 3)
+    confirmation_scans = settings.get(
+        "pingFailureConfirmationScans",
+        DEFAULT_SETTINGS["pingFailureConfirmationScans"],
+    )
 
     if device:
         if device.get("pingInterval") is not None:
@@ -236,8 +299,14 @@ def get_ping_config(device=None):
         if device.get("pingRetries") is not None:
             retries = int(device["pingRetries"])
 
+    try:
+        confirmation_scans = max(int(confirmation_scans), 1)
+    except (TypeError, ValueError):
+        confirmation_scans = int(DEFAULT_SETTINGS["pingFailureConfirmationScans"])
+
     return {
         "interval": interval,
         "timeout_ms": timeout_ms,
         "retries": retries,
+        "failure_confirmation_scans": confirmation_scans,
     }
