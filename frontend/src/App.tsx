@@ -58,6 +58,11 @@ const StormProtectionPage = lazy(() =>
     default: m.StormProtectionPage,
   })),
 )
+const TopologyPage = lazy(() =>
+  import('@/modules/storm/pages/TopologyPage').then((m) => ({
+    default: m.TopologyPage,
+  })),
+)
 const LoginPage = lazy(() =>
   import('@/pages/LoginPage').then((m) => ({ default: m.LoginPage })),
 )
@@ -87,6 +92,7 @@ export default function App() {
                       />
                       <Route path="alerts" element={<AlertsPage />} />
                       <Route path="storm" element={<StormProtectionPage />} />
+                      <Route path="topology" element={<TopologyPage />} />
                       <Route path="discovery" element={<DiscoveryPage />} />
                       <Route path="history" element={<HistoryPage />} />
                       <Route path="reports" element={<ReportsPage />} />
