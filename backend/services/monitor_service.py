@@ -12,6 +12,7 @@ Correctness guarantees (final hardening):
 from __future__ import annotations
 
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Literal
 
 from pymongo import ReturnDocument
@@ -35,7 +36,11 @@ from services.scheduler_ownership import (
     CycleLeadershipGuard,
     require_scheduler_leadership,
 )
-from services.settings_service import get_failure_confirmation_scans, get_ping_config
+from services.settings_service import (
+    get_failure_confirmation_scans,
+    get_monitor_ping_concurrency,
+    get_ping_config,
+)
 from utils.monitor_logger import get_monitor_logger
 from utils.utc import ensure_utc, utc_now
 
@@ -602,8 +607,39 @@ def _scan_device(device, *, suppress_offline: bool, cycle_id: str):
         )
 
 
+def _scan_device_safe(device, *, suppress_offline: bool, cycle_id: str) -> str:
+    """Thread-pool worker wrapper — returns scanned|failed for cycle counters."""
+    hostname = device.get("hostname", "unknown")
+    ip_address = device.get("ipAddress", "unknown")
+    device_id = device.get("_id")
+    try:
+        _scan_device(
+            device,
+            suppress_offline=suppress_offline,
+            cycle_id=cycle_id,
+        )
+        return "scanned"
+    except Exception as error:  # noqa: BLE001
+        logger.exception(
+            "Scan failed | cycleId=%s | deviceId=%s | hostname=%s | ip=%s | error=%s",
+            cycle_id,
+            device_id,
+            hostname,
+            ip_address,
+            error,
+        )
+        return "failed"
+
+
 def monitor_all_devices():
-    """Scan all devices with monitor=True (FR2.1). Leader-only; aborts on lease loss."""
+    """
+    Scan all devices with monitor=True (FR2.1).
+
+    Leader-only. Devices due for a check are pinged with bounded parallelism
+    (pingConcurrency) so large inventories can finish within the scheduler
+    interval. Leadership is renewed between batches; lease loss aborts further
+    batches (in-flight batch workers finish their current device).
+    """
     if not require_scheduler_leadership("device_monitor_job"):
         return
 
@@ -613,10 +649,22 @@ def monitor_all_devices():
     if not guard.ensure(force=True, reason="cycle_start"):
         return
 
+    concurrency = get_monitor_ping_concurrency()
+    ping_cfg = get_ping_config()
+    worst_batch_s = (max(ping_cfg["timeout_ms"], 100) / 1000.0) * max(
+        ping_cfg["retries"], 1
+    )
+
     logger.info(
-        "Monitoring cycle started | cycleId=%s | heartbeat_s=%s",
+        "Monitoring cycle started | cycleId=%s | heartbeat_s=%s | "
+        "pingConcurrency=%s | timeoutMs=%s | retries=%s | "
+        "estWorstBatchSeconds=%.1f",
         cycle_id,
         guard.heartbeat_s,
+        concurrency,
+        ping_cfg["timeout_ms"],
+        ping_cfg["retries"],
+        worst_batch_s,
     )
 
     suppress_offline = begin_cycle_connectivity_check(cycle_id)
@@ -636,52 +684,84 @@ def monitor_all_devices():
     skipped = 0
     failed = 0
     aborted = False
+    due_devices: list[dict[str, Any]] = []
 
+    # Phase 1: select due devices (cheap) while holding leadership.
     for index, device in enumerate(devices):
-        hostname = device.get("hostname", "unknown")
-        ip_address = device.get("ipAddress", "unknown")
-        device_id = device.get("_id")
-
         guard.note_device_visited()
-        # Time-based and device-count heartbeat — abort immediately on loss.
-        if not guard.ensure(reason=f"pre_device:{index}"):
+        if not guard.ensure(reason=f"select:{index}"):
             aborted = True
             break
+        if not _should_check_now(device, now):
+            skipped += 1
+            continue
+        due_devices.append(device)
 
-        try:
-            if not _should_check_now(device, now):
-                skipped += 1
-                continue
-            _scan_device(
-                device,
-                suppress_offline=suppress_offline,
-                cycle_id=cycle_id,
-            )
-            scanned += 1
-        except Exception as error:
-            failed += 1
-            logger.exception(
-                "Scan failed | cycleId=%s | deviceId=%s | hostname=%s | ip=%s | error=%s",
+    if not aborted and due_devices:
+        batch_count = (len(due_devices) + concurrency - 1) // concurrency
+        est_cycle_s = batch_count * worst_batch_s
+        if est_cycle_s > float(ping_cfg["interval"]):
+            logger.warning(
+                "Monitoring capacity risk | cycleId=%s | due=%s | batches=%s | "
+                "concurrency=%s | estWorstCycleSeconds=%.1f | pingInterval=%ss | "
+                "hint=raise_pingConcurrency_or_lower_timeout_retries",
                 cycle_id,
-                device_id,
-                hostname,
-                ip_address,
-                error,
+                len(due_devices),
+                batch_count,
+                concurrency,
+                est_cycle_s,
+                ping_cfg["interval"],
             )
 
-        # Renew again after potentially long ping so lease cannot expire mid-device.
-        if not guard.ensure(force=False, reason=f"post_device:{index}"):
-            aborted = True
-            break
+        # Phase 2: bounded parallel scans in leadership-gated batches.
+        for batch_start in range(0, len(due_devices), concurrency):
+            if not guard.ensure(force=True, reason=f"batch_pre:{batch_start}"):
+                aborted = True
+                break
+
+            batch = due_devices[batch_start : batch_start + concurrency]
+            workers = min(concurrency, len(batch))
+            logger.info(
+                "Monitoring batch started | cycleId=%s | offset=%s | size=%s | "
+                "workers=%s",
+                cycle_id,
+                batch_start,
+                len(batch),
+                workers,
+            )
+
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = [
+                    pool.submit(
+                        _scan_device_safe,
+                        device,
+                        suppress_offline=suppress_offline,
+                        cycle_id=cycle_id,
+                    )
+                    for device in batch
+                ]
+                for fut in as_completed(futures):
+                    outcome = fut.result()
+                    if outcome == "scanned":
+                        scanned += 1
+                    else:
+                        failed += 1
+
+            if not guard.ensure(force=True, reason=f"batch_post:{batch_start}"):
+                aborted = True
+                break
 
     logger.info(
-        "Monitoring cycle finished | cycleId=%s | total=%s scanned=%s "
-        "skipped=%s failed=%s | partitionSuppress=%s | aborted=%s | abortReason=%s",
+        "Monitoring cycle finished | cycleId=%s | total=%s due=%s scanned=%s "
+        "skipped=%s failed=%s | concurrency=%s | partitionSuppress=%s | "
+        "aborted=%s | abortReason=%s",
         cycle_id,
         len(devices),
+        len(due_devices),
         scanned,
         skipped,
         failed,
+        concurrency,
         suppress_offline,
         aborted,
         guard.abort_reason,

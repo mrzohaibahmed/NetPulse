@@ -323,7 +323,7 @@ class TestMonitorLoopAbort(unittest.TestCase):
         from services.monitor_service import monitor_all_devices
 
         guard = MagicMock()
-        # start ok, then fail on first pre_device ensure
+        # start ok, then fail on first select ensure
         guard.ensure.side_effect = [True, False]
         guard.aborted = True
         guard.abort_reason = "leadership_lost:test"
@@ -338,6 +338,142 @@ class TestMonitorLoopAbort(unittest.TestCase):
 
         monitor_all_devices()
         mock_scan.assert_not_called()
+
+    @patch("services.monitor_service.get_monitor_ping_concurrency", return_value=2)
+    @patch("services.monitor_service.get_ping_config")
+    @patch("services.monitor_service.run_integrity_audit")
+    @patch("services.monitor_service.begin_cycle_connectivity_check", return_value=False)
+    @patch("services.monitor_service._scan_device")
+    @patch("services.monitor_service._db")
+    @patch("services.monitor_service.require_scheduler_leadership", return_value=True)
+    @patch("services.monitor_service.CycleLeadershipGuard")
+    def test_parallel_batches_scan_due_devices(
+        self,
+        mock_guard_cls,
+        _lead,
+        mock_db,
+        mock_scan,
+        _probe,
+        _audit,
+        mock_ping_cfg,
+        _conc,
+    ):
+        from services.monitor_service import monitor_all_devices
+
+        mock_ping_cfg.return_value = {
+            "interval": 30,
+            "timeout_ms": 1000,
+            "retries": 2,
+            "failure_confirmation_scans": 2,
+        }
+        guard = MagicMock()
+        guard.ensure.return_value = True
+        guard.aborted = False
+        guard.abort_reason = None
+        guard.heartbeat_s = 30
+        mock_guard_cls.return_value = guard
+
+        devices = [
+            {
+                "_id": ObjectId(),
+                "hostname": f"h{i}",
+                "ipAddress": f"10.0.0.{i}",
+                "monitor": True,
+                "lastCheckedAt": None,
+            }
+            for i in range(5)
+        ]
+        mock_db.return_value.devices.find.return_value = devices
+
+        monitor_all_devices()
+        self.assertEqual(mock_scan.call_count, 5)
+
+    @patch("services.monitor_service.get_monitor_ping_concurrency", return_value=4)
+    @patch("services.monitor_service.get_ping_config")
+    @patch("services.monitor_service.run_integrity_audit")
+    @patch("services.monitor_service.begin_cycle_connectivity_check", return_value=False)
+    @patch("services.monitor_service._scan_device")
+    @patch("services.monitor_service._db")
+    @patch("services.monitor_service.require_scheduler_leadership", return_value=True)
+    @patch("services.monitor_service.CycleLeadershipGuard")
+    def test_skips_devices_not_due(
+        self,
+        mock_guard_cls,
+        _lead,
+        mock_db,
+        mock_scan,
+        _probe,
+        _audit,
+        mock_ping_cfg,
+        _conc,
+    ):
+        from datetime import timedelta
+
+        from services.monitor_service import monitor_all_devices
+        from utils.utc import utc_now
+
+        mock_ping_cfg.return_value = {
+            "interval": 30,
+            "timeout_ms": 1000,
+            "retries": 2,
+            "failure_confirmation_scans": 2,
+        }
+        guard = MagicMock()
+        guard.ensure.return_value = True
+        guard.aborted = False
+        guard.abort_reason = None
+        guard.heartbeat_s = 30
+        mock_guard_cls.return_value = guard
+
+        recent = utc_now() - timedelta(seconds=5)
+        devices = [
+            {
+                "_id": ObjectId(),
+                "hostname": "fresh",
+                "ipAddress": "10.0.0.1",
+                "monitor": True,
+                "lastCheckedAt": recent,
+                "pingInterval": 30,
+            },
+            {
+                "_id": ObjectId(),
+                "hostname": "due",
+                "ipAddress": "10.0.0.2",
+                "monitor": True,
+                "lastCheckedAt": None,
+            },
+        ]
+        mock_db.return_value.devices.find.return_value = devices
+
+        with patch(
+            "services.monitor_service.get_ping_config",
+            side_effect=lambda device=None: {
+                "interval": int((device or {}).get("pingInterval") or 30),
+                "timeout_ms": 1000,
+                "retries": 2,
+                "failure_confirmation_scans": 2,
+            },
+        ):
+            monitor_all_devices()
+
+        self.assertEqual(mock_scan.call_count, 1)
+        self.assertEqual(mock_scan.call_args[0][0]["hostname"], "due")
+
+
+class TestPingConcurrencyConfig(unittest.TestCase):
+    def test_default_concurrency_in_defaults(self):
+        from services.settings_service import DEFAULT_SETTINGS
+
+        self.assertEqual(DEFAULT_SETTINGS["pingConcurrency"], 20)
+
+    @patch("services.settings_service.get_settings")
+    def test_concurrency_clamped(self, mock_settings):
+        from services.settings_service import get_monitor_ping_concurrency
+
+        mock_settings.return_value = {"pingConcurrency": 1000}
+        self.assertEqual(get_monitor_ping_concurrency(), 64)
+        mock_settings.return_value = {"pingConcurrency": 0}
+        self.assertEqual(get_monitor_ping_concurrency(), 1)
 
 
 class TestOnlineApply(unittest.TestCase):

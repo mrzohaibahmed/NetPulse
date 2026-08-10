@@ -18,6 +18,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "pingFailureConfirmationScans": int(
         os.getenv("PING_FAILURE_CONFIRMATION_SCANS", "2")
     ),
+    # Max concurrent device pings per monitoring cycle (bounded parallelism).
+    "pingConcurrency": int(os.getenv("MONITOR_PING_CONCURRENCY", "20")),
     "smtp": {
         "enabled": os.getenv("ALERT_EMAIL_ENABLED", "true").lower() in ("1", "true", "yes"),
         "host": (os.getenv("SMTP_HOST") or "smtp.gmail.com").strip(),
@@ -80,6 +82,9 @@ def get_public_settings():
                 "pingFailureConfirmationScans",
                 DEFAULT_SETTINGS["pingFailureConfirmationScans"],
             )
+        ),
+        "pingConcurrency": int(
+            settings.get("pingConcurrency", DEFAULT_SETTINGS["pingConcurrency"])
         ),
         "smtp": {
             "enabled": smtp.get("enabled", True),
@@ -147,6 +152,12 @@ def update_settings(payload: dict):
         if value < 1:
             raise ValueError("pingFailureConfirmationScans must be at least 1")
         update["pingFailureConfirmationScans"] = value
+
+    if "pingConcurrency" in payload and payload["pingConcurrency"] is not None:
+        value = int(payload["pingConcurrency"])
+        if value < 1 or value > 64:
+            raise ValueError("pingConcurrency must be between 1 and 64")
+        update["pingConcurrency"] = value
 
     if "smtp" in payload and isinstance(payload["smtp"], dict):
         smtp = dict(current.get("smtp") or {})
@@ -253,6 +264,21 @@ def get_failure_confirmation_scans() -> int:
         return max(int(raw), 1)
     except (TypeError, ValueError):
         return int(DEFAULT_SETTINGS["pingFailureConfirmationScans"])
+
+
+def get_monitor_ping_concurrency() -> int:
+    """
+    Bounded parallelism for automatic monitoring scans.
+
+    Cap at 64 to avoid unbounded socket/load spikes. Missing Mongo field falls
+    back to DEFAULT_SETTINGS / MONITOR_PING_CONCURRENCY env.
+    """
+    settings = get_settings()
+    raw = settings.get("pingConcurrency", DEFAULT_SETTINGS["pingConcurrency"])
+    try:
+        return max(1, min(int(raw), 64))
+    except (TypeError, ValueError):
+        return max(1, min(int(DEFAULT_SETTINGS["pingConcurrency"]), 64))
 
 
 def get_ping_config(device=None):
