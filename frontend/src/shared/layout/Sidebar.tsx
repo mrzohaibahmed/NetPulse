@@ -17,6 +17,7 @@ import {
   RotateCcw,
   Server,
   Settings,
+  Share2,
   Shield,
   ShieldAlert,
   ShieldCheck,
@@ -129,6 +130,7 @@ export function Sidebar({ pinned, onPinnedChange, mobileOpen, onMobileOpenChange
           isActive: stormViewActive('overview'),
         },
         { id: 'storm-interfaces', to: '/interfaces', label: 'Interfaces', icon: Network },
+        { id: 'storm-topology', to: '/topology', label: 'Topology', icon: Share2 },
         {
           id: 'storm-pipeline',
           to: '/storm?view=pipeline',
