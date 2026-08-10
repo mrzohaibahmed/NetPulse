@@ -17,6 +17,7 @@ import {
   RotateCcw,
   Server,
   Settings,
+  Share2,
   Shield,
   ShieldAlert,
   ShieldCheck,
@@ -129,6 +130,7 @@ export function Sidebar({ pinned, onPinnedChange, mobileOpen, onMobileOpenChange
           isActive: stormViewActive('overview'),
         },
         { id: 'storm-interfaces', to: '/interfaces', label: 'Interfaces', icon: Network },
+        { id: 'storm-topology', to: '/topology', label: 'Topology', icon: Share2 },
         {
           id: 'storm-pipeline',
           to: '/storm?view=pipeline',
@@ -256,7 +258,7 @@ export function Sidebar({ pinned, onPinnedChange, mobileOpen, onMobileOpenChange
     return link
   }
 
-  const NavGroupSection = ({ group }: { group: NavGroup }) => {
+  const renderNavGroupSection = (group: NavGroup) => {
     const items = filterItems(group.items)
     if (items.length === 0) return null
 
@@ -266,14 +268,14 @@ export function Sidebar({ pinned, onPinnedChange, mobileOpen, onMobileOpenChange
 
     if (collapsed) {
       return (
-        <div className="space-y-1">
+        <div key={group.id} className="space-y-1">
           {items.map((item) => renderNavLink(item))}
         </div>
       )
     }
 
     return (
-      <div className="space-y-1">
+      <div key={group.id} className="space-y-1">
         <button
           type="button"
           onClick={() => toggleGroup(group.id)}
@@ -363,9 +365,7 @@ export function Sidebar({ pinned, onPinnedChange, mobileOpen, onMobileOpenChange
       </div>
 
       <nav className="np-sidebar-scroll flex-1 space-y-4 overflow-y-auto px-2 pb-4" aria-label="Primary">
-        {groups.map((group) => (
-          <NavGroupSection key={group.id} group={group} />
-        ))}
+        {groups.map((group) => renderNavGroupSection(group))}
       </nav>
 
       <div className="space-y-3 border-t border-sidebar-border p-3">

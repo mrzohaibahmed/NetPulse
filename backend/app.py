@@ -18,6 +18,7 @@ from routes.report_routes import report_bp
 from routes.scan_routes import scan_bp
 from routes.settings_routes import settings_bp
 from routes.storm_routes import storm_bp
+from routes.topology import topology_bp
 from scheduler import start_scheduler
 from services.device_indexes import ensure_device_indexes
 from services.isp_indexes import ensure_isp_indexes
@@ -70,6 +71,7 @@ app.register_blueprint(storm_bp, url_prefix="/api")
 app.register_blueprint(alert_bp, url_prefix="/api")
 app.register_blueprint(settings_bp, url_prefix="/api")
 app.register_blueprint(report_bp, url_prefix="/api")
+app.register_blueprint(topology_bp, url_prefix="/api/topology")
 
 
 @app.route("/")
