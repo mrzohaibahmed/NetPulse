@@ -816,6 +816,19 @@ export function useDeviceMutations() {
     mutationFn: (id: string) => scanDevice(id),
     onSuccess: async (res) => {
       toast.success(res.message ?? 'Ping complete')
+      const updated = res.data
+      if (updated?._id) {
+        // Authoritative device from scan API — patch cached lists before refetch.
+        qc.setQueriesData({ queryKey: ['devices'] }, (prev: unknown) => {
+          if (!prev || typeof prev !== 'object') return prev
+          const page = prev as { data?: Array<{ _id?: string }> }
+          if (!Array.isArray(page.data)) return prev
+          return {
+            ...page,
+            data: page.data.map((d) => (d._id === updated._id ? { ...d, ...updated } : d)),
+          }
+        })
+      }
       await invalidate()
       await qc.invalidateQueries({ queryKey: ['device-history'] })
     },

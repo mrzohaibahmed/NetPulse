@@ -14,6 +14,7 @@ from services.ping_service import (
     STATUS_OFFLINE_CRITICAL,
     STATUS_ONLINE,
 )
+from services.settings_service import get_failure_confirmation_scans
 from utils.monitor_logger import get_monitor_logger
 from utils.utc import ensure_utc, utc_now
 
@@ -61,14 +62,17 @@ def validate_device_document(device: dict[str, Any], *, cycle_id: str | None = N
         except (TypeError, ValueError):
             issues.append("non_numeric_consecutiveFailures")
 
-    # Online with outstanding failures is inconsistent (unless mid-race).
-    if status == STATUS_ONLINE and int(device.get("consecutiveFailures") or 0) > 0:
+    # Online with outstanding failures at/above confirmation threshold is inconsistent.
+    # Below-threshold failures are expected during hysteresis confirmation.
+    threshold = get_failure_confirmation_scans()
+    consecutive_n = int(device.get("consecutiveFailures") or 0)
+    if status == STATUS_ONLINE and consecutive_n >= threshold:
         issues.append("online_with_failures")
 
     # Offline / NR with zero failures after at least one check is odd.
     if (
         status in (STATUS_NOT_REACHABLE, STATUS_OFFLINE_CRITICAL, "Offline")
-        and int(device.get("consecutiveFailures") or 0) == 0
+        and consecutive_n == 0
         and device.get("lastCheckedAt") is not None
     ):
         issues.append("offline_with_zero_failures")
