@@ -111,7 +111,11 @@ export function StormProtectionPage() {
 
   const viewParam = (searchParams.get('view') || '').trim().toLowerCase()
 
-  const devicesQuery = useDevicesQuery({ page: 1, limit: FETCH_LIMIT })
+  const devicesQuery = useDevicesQuery({
+    page: 1,
+    limit: FETCH_LIMIT,
+    deviceType: 'switch',
+  })
   const devices = devicesQuery.data?.data ?? []
   const switchDevices = useMemo(
     () => devices.filter((device) => isManagedSwitch(device.deviceType)),

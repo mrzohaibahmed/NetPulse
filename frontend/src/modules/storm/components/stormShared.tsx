@@ -35,7 +35,8 @@ export type SwitchStormSectionData = {
 }
 
 export function isManagedSwitch(deviceType: string | null | undefined): boolean {
-  return (deviceType || '').trim().toLowerCase() === 'switch'
+  // Match "Switch", "Managed Switch", "L3 Switch", etc. (aligned with backend).
+  return (deviceType || '').trim().toLowerCase().includes('switch')
 }
 
 export function EligibilityBadge({ eligible }: { eligible: boolean }) {

@@ -145,11 +145,11 @@ export function DashboardPage() {
       .filter((n): n is number => typeof n === 'number' && !Number.isNaN(n))
     const peakRisk = riskScores.length ? Math.max(...riskScores) : null
     const managedSwitches = dash.devices.filter(
-      (d) => (d.deviceType || '').trim().toLowerCase() === 'switch',
+      (d) => (d.deviceType || '').trim().toLowerCase().includes('switch'),
     ).length
     const monitoredSwitches = dash.devices.filter(
       (d) =>
-        (d.deviceType || '').trim().toLowerCase() === 'switch' && d.monitor,
+        (d.deviceType || '').trim().toLowerCase().includes('switch') && d.monitor,
     ).length
 
     return {

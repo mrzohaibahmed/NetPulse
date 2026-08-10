@@ -35,6 +35,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { queryKeys } from '@/hooks/queryKeys'
 import { useClientPagination } from '@/hooks/useClientPagination'
 import { useDevicesQuery, useInterfaceMutations, useInterfacesQuery, useRiskQuery } from '@/hooks/queries'
+import { isManagedSwitch } from '@/modules/storm/components/stormShared'
 import type { InterfaceListRow, InterfaceStat } from '@/types'
 import { formatDateTime, formatRelative } from '@/utils/format'
 import { interfaceNamesMatch } from '@/utils/interfaceNames'
@@ -57,11 +58,6 @@ type DeviceSection = {
   monitor: boolean
   lastScan: string | null
   interfaces: InterfaceRowWithRisk[]
-}
-
-/** Interface Inventory is switch-only; match backend deviceType "Switch". */
-function isManagedSwitch(deviceType: string | null | undefined): boolean {
-  return (deviceType || '').trim().toLowerCase() === 'switch'
 }
 
 function mergeInterfaceRows(
@@ -126,7 +122,13 @@ export function InterfacesEnterprisePage() {
     sessionStorage.setItem(COLLAPSE_KEY, JSON.stringify([...collapsedDeviceIds]))
   }, [collapsedDeviceIds])
 
-  const devicesQuery = useDevicesQuery({ page: 1, limit: FETCH_LIMIT })
+  // Ask the API for switch-like types so older switches are not dropped by
+  // newest-first pagination when the inventory has many discovered hosts.
+  const devicesQuery = useDevicesQuery({
+    page: 1,
+    limit: FETCH_LIMIT,
+    deviceType: 'switch',
+  })
   const devices = devicesQuery.data?.data ?? []
 
   const switchDevices = useMemo(
@@ -500,7 +502,7 @@ export function InterfacesEnterprisePage() {
           }
           description={
             hasNonSwitchDevices
-              ? 'Routers, servers, PCs, printers, and other device types appear in Device Inventory. Add a device with type Switch to manage interfaces here.'
+              ? 'Routers, servers, PCs, printers, and other device types appear in Device Inventory. Add a device with type Switch or Managed Switch to manage interfaces here.'
               : 'Add a managed switch from Device Inventory to begin discovering switch ports.'
           }
           actionLabel="Add Device"

@@ -32,12 +32,22 @@ def build_device_filter():
     device_type = (request.args.get("deviceType") or "").strip()
     if device_type and device_type.lower() != "all":
         query["$and"] = query.get("$and", [])
-        query["$and"].append({
-            "$or": [
-                {"deviceType": device_type},
-                {"type": device_type},
-            ]
-        })
+        # "switch" matches Switch / Managed Switch / L3 Switch (storm inventory).
+        if device_type.lower() == "switch":
+            switch_pattern = re.compile(r"switch", re.IGNORECASE)
+            query["$and"].append({
+                "$or": [
+                    {"deviceType": switch_pattern},
+                    {"type": switch_pattern},
+                ]
+            })
+        else:
+            query["$and"].append({
+                "$or": [
+                    {"deviceType": device_type},
+                    {"type": device_type},
+                ]
+            })
 
     search = (request.args.get("q") or "").strip()
     if search:
@@ -257,7 +267,7 @@ def import_devices_csv():
 @require_auth()
 def get_devices():
     try:
-        page, limit = parse_pagination(default_limit=25, max_limit=100)
+        page, limit = parse_pagination(default_limit=25, max_limit=500)
         filters = build_device_filter()
         total = db.devices.count_documents(filters)
         page, skip, total_pages = clamp_page(page, total, limit)
