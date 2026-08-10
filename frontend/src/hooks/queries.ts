@@ -26,6 +26,7 @@ import {
   getEligibilityResults,
   getHealth,
   getHistory,
+  getIsps,
   getInterfaceHistory,
   getInterfaceRisk,
   getInterfaces,
@@ -56,6 +57,8 @@ import {
   scanDevice,
   scanDeviceNmap,
   scanAllDevicesNmap,
+  scanIsp,
+  updateIsp,
   updateDevice,
   updateSettings,
   updateAccount,
@@ -65,7 +68,7 @@ import {
   exportHistoryReport,
 } from '@/api'
 import { queryKeys } from '@/hooks/queryKeys'
-import type { DevicePayload, PaginationParams, UserRole } from '@/types'
+import type { DevicePayload, IspConnectionPayload, PaginationParams, UserRole } from '@/types'
 import { toast } from 'sonner'
 
 const DASHBOARD_INTERVAL = 10_000
@@ -84,6 +87,52 @@ export function useHealthQuery() {
     refetchInterval: HEALTH_INTERVAL,
     retry: 1,
   })
+}
+
+export function useIspsQuery() {
+  return useQuery({
+    queryKey: queryKeys.isps,
+    queryFn: async () => (await getIsps()).data,
+    refetchInterval: DASHBOARD_INTERVAL,
+  })
+}
+
+export function useIspMutations() {
+  const qc = useQueryClient()
+
+  const refreshIspViews = () => {
+    // Refresh ISP data immediately; dashboard cards update in the background.
+    // Do not await full dashboard refetch — it triggers many parallel requests
+    // and can make Save appear to time out even after PUT succeeded.
+    void qc.invalidateQueries({ queryKey: queryKeys.dashboard.all })
+    return qc.invalidateQueries({ queryKey: queryKeys.isps })
+  }
+
+  const update = useMutation({
+    mutationFn: ({
+      id,
+      payload,
+    }: {
+      id: string
+      payload: Partial<IspConnectionPayload>
+    }) => updateIsp(id, payload),
+    onSuccess: async () => {
+      toast.success('ISP connection updated')
+      await refreshIspViews()
+    },
+    onError: (err: Error) => toast.error(err.message),
+  })
+
+  const scan = useMutation({
+    mutationFn: (id: string) => scanIsp(id),
+    onSuccess: async (res) => {
+      toast.success(res.message ?? 'ISP scan complete')
+      await refreshIspViews()
+    },
+    onError: (err: Error) => toast.error(err.message),
+  })
+
+  return { update, scan }
 }
 
 export function useDashboardQuery() {

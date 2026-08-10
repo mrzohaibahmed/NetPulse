@@ -6,6 +6,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { Mail, Save, Timer, Activity } from 'lucide-react'
 import { useAuth } from '@/shared/auth/AuthContext'
 import { useSettingsMutation, useSettingsQuery } from '@/hooks/queries'
+import { IspSettingsSection } from '@/modules/ping/components/IspSettingsSection'
 import { ErrorState } from '@/shared/components/ErrorState'
 import { LoadingState } from '@/shared/components/LoadingState'
 import { PageHeader } from '@/shared/components/PageHeader'
@@ -157,10 +158,13 @@ export function SettingsPage() {
     <div className="np-page">
       <PageHeader
         title="Settings"
-        description="Configure global ping parameters, SMTP, and storm email notifications"
+        description="Configure ISP connectivity, ping monitoring, SMTP, and storm notifications"
       />
 
-      <form className="space-y-6" onSubmit={(e) => void onSubmit(e)}>
+      <div className="space-y-6">
+        <IspSettingsSection />
+
+        <form className="space-y-6" onSubmit={(e) => void onSubmit(e)}>
         <Card className="glass">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -414,7 +418,8 @@ export function SettingsPage() {
             {save.isPending ? 'Saving…' : 'Save settings'}
           </Button>
         </div>
-      </form>
+        </form>
+      </div>
     </div>
   )
 }

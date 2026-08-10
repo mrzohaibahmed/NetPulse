@@ -14,6 +14,8 @@ import type {
   DiscoveryResult,
   EligibilityResult,
   InterfaceStat,
+  IspConnection,
+  IspConnectionPayload,
   NetworkHint,
   NetworkInterface,
   PaginationParams,
@@ -702,4 +704,33 @@ export const retryStormRecovery = (payload: { incidentId: string }) =>
       timeoutMs: 180000,
     },
   )
+
+export const getIsps = () =>
+  apiRequest<ApiListResponse<IspConnection>>('/api/isps')
+
+export const getIsp = (id: string) =>
+  apiRequest<ApiItemResponse<IspConnection>>(`/api/isps/${id}`)
+
+export const createIsp = (payload: IspConnectionPayload) =>
+  apiRequest<ApiItemResponse<IspConnection>>('/api/isps', {
+    method: 'POST',
+    body: payload,
+  })
+
+export const updateIsp = (id: string, payload: Partial<IspConnectionPayload>) =>
+  apiRequest<ApiItemResponse<IspConnection>>(`/api/isps/${id}`, {
+    method: 'PUT',
+    body: payload,
+  })
+
+export const deleteIsp = (id: string) =>
+  apiRequest<{ success: boolean; message: string }>(`/api/isps/${id}`, {
+    method: 'DELETE',
+  })
+
+export const scanIsp = (id: string) =>
+  apiRequest<ApiItemResponse<IspConnection>>(`/api/isps/${id}/scan`, {
+    method: 'POST',
+    timeoutMs: 60_000,
+  })
 
