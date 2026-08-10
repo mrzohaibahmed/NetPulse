@@ -8,6 +8,7 @@ from config.database import (
     INTERFACE_STATS_INTERVAL,
     NMAP_SCAN_INTERVAL,
 )
+from services.isp_monitor_service import monitor_all_isp_connections
 from services.monitor_service import monitor_all_devices
 from services.scheduler_ownership import (
     release_scheduler_ownership,
@@ -31,6 +32,7 @@ INTERFACE_JOB_ID = "interface_discovery_job"
 INTERFACE_STATS_JOB_ID = "interface_stats_job"
 RECOVERY_JOB_ID = "storm_recovery_job"
 RETENTION_JOB_ID = "data_retention_job"
+ISP_JOB_ID = "isp_monitor_job"
 
 
 def _run_interface_stats_then_eligibility() -> None:
@@ -332,6 +334,20 @@ def _start_retention_job() -> None:
 # Public functions (unchanged signatures for existing callers)
 # ---------------------------------------------------------------------------
 
+def _register_isp_monitor_job(interval: int) -> None:
+    """Register ISP connectivity monitoring on the shared scheduler."""
+    scheduler.add_job(
+        func=monitor_all_isp_connections,
+        trigger="interval",
+        seconds=interval,
+        id=ISP_JOB_ID,
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+    logger.info("ISP monitor job registered | interval=%ss", interval)
+
+
 def start_scheduler():
     """Start automatic device monitoring using persisted settings."""
     if scheduler.running:
@@ -352,6 +368,9 @@ def start_scheduler():
         max_instances=1,
         coalesce=True,
     )
+
+    # Job 1b: ISP connectivity monitoring (independent job body).
+    _register_isp_monitor_job(interval)
 
     scheduler.start()
     logger.info("Scheduler started | ping_interval=%ss", interval)
@@ -389,6 +408,7 @@ def reschedule_monitor_job(interval_seconds: int):
         max_instances=1,
         coalesce=True,
     )
+    _register_isp_monitor_job(interval)
     logger.info("Ping scheduler rescheduled | interval=%ss", interval)
 
 
