@@ -73,7 +73,13 @@ import {
   scanNetworks,
 } from '@/api'
 import { queryKeys } from '@/hooks/queryKeys'
-import type { DevicePayload, PaginationParams, UserRole, NetworkProfile } from '@/types'
+import type {
+  DevicePayload,
+  IspConnectionPayload,
+  PaginationParams,
+  UserRole,
+  NetworkProfile,
+} from '@/types'
 import { toast } from 'sonner'
 
 const DASHBOARD_INTERVAL = 10_000

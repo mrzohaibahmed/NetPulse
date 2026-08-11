@@ -1,0 +1,7 @@
+Phase 10 capacity validation
+  mode: mocked ping + in-memory store (no production IO)
+  interval=30.0s  fleets=[1000]
+  mixes=['half', 'all_down', 'intermittent', 'slow']
+  concurrency=[20, 30, 40, 50, 60, 64]
+  unreachable_cost=3.0s (timeout=1000ms × retries=3)
+[run] devices=1000 mix=half concurrency=20 ...

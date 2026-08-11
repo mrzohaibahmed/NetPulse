@@ -291,6 +291,24 @@ export const getHealth = () =>
     skipAuth: true,
   })
 
+export const getIsps = () =>
+  apiRequest<{ success: boolean; count: number; data: IspConnection[] }>('/api/isps')
+
+export const updateIsp = (id: string, payload: Partial<IspConnectionPayload>) =>
+  apiRequest<{ success: boolean; message: string; data: IspConnection }>(`/api/isps/${id}`, {
+    method: 'PUT',
+    body: payload,
+  })
+
+export const scanIsp = (id: string) =>
+  apiRequest<{ success: boolean; message: string; data: IspConnection }>(
+    `/api/isps/${id}/scan`,
+    {
+      method: 'POST',
+      timeoutMs: 30000,
+    },
+  )
+
 export const getInterfaces = (params: PaginationParams = {}) =>
   apiRequest<ApiListResponse<NetworkInterface>>(`/api/interfaces${toQuery(params)}`)
 
