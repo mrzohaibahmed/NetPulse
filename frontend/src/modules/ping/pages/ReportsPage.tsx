@@ -612,7 +612,7 @@ export function ReportsPage() {
                 error={recoveryHistory.error}
                 emptyTitle="No recovery history"
                 emptyDescription="Recovery events will appear here after rollback or restoration."
-                columns={['Incident', 'Interface', 'Status', 'Triggered by', 'Time']}
+                columns={['Incident', 'Interface', 'Status', 'Executed By', 'Time']}
                 rows={recoveryRows.map((row) => ({
                   key: `${row.incidentId}-${row.timestamp}`,
                   cells: [

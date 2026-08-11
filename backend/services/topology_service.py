@@ -8,6 +8,7 @@ from bson import ObjectId
 
 from config.database import db
 from services.interface_collection.port_resolution import attach_resolved_ips
+from services.ping_service import STATUS_ONLINE
 
 _DEVICE_PROJECTION = {
     "_id": 1,
@@ -476,6 +477,50 @@ def _canonical_pair(a: str, b: str) -> tuple[str, str]:
     return (a, b) if a <= b else (b, a)
 
 
+def _is_known_device_online(node_id: str, devices_by_id: dict[str, dict]) -> bool:
+    """
+    Return True only when the endpoint is an inventory device with authoritative
+    ping status Online. Synthetic/unresolved neighbor/endpoint nodes are never
+    treated as verified online.
+    """
+    device = devices_by_id.get(node_id)
+    if not device:
+        return False
+    return (device.get("status") or "Unknown") == STATUS_ONLINE
+
+
+def _derive_edge_status(
+    source_id: str,
+    target_id: str,
+    devices_by_id: dict[str, dict],
+) -> str:
+    """
+    Derive link presentation state from current device health.
+
+    Both endpoints must be known inventory devices with status Online.
+    Any offline/unreachable/unknown endpoint, or unresolved synthetic node,
+    yields stale.
+    """
+    if _is_known_device_online(source_id, devices_by_id) and _is_known_device_online(
+        target_id, devices_by_id
+    ):
+        return "active"
+    return "stale"
+
+
+def _apply_edge_statuses(
+    edges: list[dict],
+    devices_by_id: dict[str, dict],
+) -> list[dict]:
+    """Attach derived link status to each topology edge."""
+    for edge in edges:
+        status = _derive_edge_status(edge["source"], edge["target"], devices_by_id)
+        edge["status"] = status
+        if status == "stale":
+            edge["animated"] = False
+    return edges
+
+
 def _merge_raw_edges(raw_edges: list[dict]) -> list[dict]:
     """Merge bidirectional known-device links into a single undirected edge."""
     merged: dict[tuple[str, str], dict] = {}
@@ -690,7 +735,7 @@ def _build_topology_data(device_filter=None):
         if device_filter and target_id in devices_by_id and target_id not in nodes:
             nodes[target_id] = _device_node(devices_by_id[target_id])
 
-    edges = _merge_raw_edges(raw_edges)
+    edges = _apply_edge_statuses(_merge_raw_edges(raw_edges), devices_by_id)
 
     return {"nodes": list(nodes.values()), "edges": edges}
 

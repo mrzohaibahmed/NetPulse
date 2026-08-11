@@ -56,12 +56,14 @@ type TopologyEdgeData = {
   description?: string
   speed?: string
   centerLabel?: string
+  status?: 'active' | 'stale'
 }
 
 const NODE_WIDTH = 200
 const NODE_HEIGHT = 96
 const EDGE_COLOR = '#3b82f6'
 const TRUNK_EDGE_COLOR = '#f59e0b'
+const STALE_EDGE_COLOR = '#94a3b8'
 const POSITIONS_STORAGE_PREFIX = 'netpulse-topology-pos-'
 
 function isSwitchType(type: string) {
@@ -390,7 +392,8 @@ const TopologyEdge = memo(function TopologyEdge({
 }: EdgeProps) {
   const edgeData = (data || {}) as TopologyEdgeData
   const isTrunk = Boolean(edgeData.isTrunk)
-  const stroke = isTrunk ? TRUNK_EDGE_COLOR : EDGE_COLOR
+  const isStale = edgeData.status === 'stale'
+  const stroke = isStale ? STALE_EDGE_COLOR : isTrunk ? TRUNK_EDGE_COLOR : EDGE_COLOR
 
   const [edgePath] = getSmoothStepPath({
     sourceX,
@@ -422,7 +425,8 @@ const TopologyEdge = memo(function TopologyEdge({
         style={{
           stroke,
           strokeWidth: isTrunk ? 2.5 : 2,
-          strokeDasharray: isTrunk ? undefined : '6,4',
+          strokeDasharray: isStale ? '8,6' : isTrunk ? undefined : '6,4',
+          opacity: isStale ? 0.45 : 1,
           ...style,
         }}
       />
@@ -531,7 +535,8 @@ export function TopologyPage() {
     const flowEdges: Edge[] = activeData.edges.map((e) => {
       const handles = edgeHandles.get(e.id)
       const isTrunk = Boolean(e.isTrunk)
-      const stroke = isTrunk ? TRUNK_EDGE_COLOR : EDGE_COLOR
+      const isStale = e.status === 'stale'
+      const stroke = isStale ? STALE_EDGE_COLOR : isTrunk ? TRUNK_EDGE_COLOR : EDGE_COLOR
       return {
         id: e.id,
         source: e.source,
@@ -539,7 +544,7 @@ export function TopologyPage() {
         sourceHandle: handles?.sourceHandle,
         targetHandle: handles?.targetHandle,
         type: 'topologyEdge',
-        animated: !isTrunk,
+        animated: !isTrunk && !isStale,
         data: {
           sourcePort: e.sourcePort,
           targetPort: e.targetPort,
@@ -549,8 +554,13 @@ export function TopologyPage() {
           description: e.description,
           speed: e.speed,
           centerLabel: e.isTrunk ? 'Trunk' : e.linkType || e.protocol,
+          status: e.status ?? 'active',
         } satisfies TopologyEdgeData,
-        style: { stroke, strokeWidth: isTrunk ? 2.5 : 2 },
+        style: {
+          stroke,
+          strokeWidth: isTrunk ? 2.5 : 2,
+          opacity: isStale ? 0.45 : 1,
+        },
         markerEnd: {
           type: MarkerType.ArrowClosed,
           width: 16,
@@ -763,6 +773,10 @@ export function TopologyPage() {
                     ? `${hoveredEdge.data.speed} Mbps` 
                     : hoveredEdge.data.speed)
                 : 'Unknown'}
+            </div>
+            <div className="text-muted-foreground">Link:</div>
+            <div className="text-foreground capitalize">
+              {hoveredEdge.data.status === 'stale' ? 'Stale (endpoint offline)' : 'Active'}
             </div>
           </div>
         </div>
