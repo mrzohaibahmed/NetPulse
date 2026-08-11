@@ -510,7 +510,13 @@ export function TopologyPage() {
       return
     }
 
-    const { edgeHandles, nodeHandles } = computeHandleAssignments(activeData.edges)
+    // Level 2 is live-only: backend filters stale edges; keep a local guard.
+    const visibleEdges =
+      selectedSwitchId != null
+        ? activeData.edges
+        : activeData.edges.filter((e) => e.status !== 'stale')
+
+    const { edgeHandles, nodeHandles } = computeHandleAssignments(visibleEdges)
     const savedPositions = loadSavedPositions(viewKey)
 
     const flowNodes: Node[] = activeData.nodes.map((n) => ({
@@ -532,7 +538,7 @@ export function TopologyPage() {
       } satisfies TopologyNodeData,
     }))
 
-    const flowEdges: Edge[] = activeData.edges.map((e) => {
+    const flowEdges: Edge[] = visibleEdges.map((e) => {
       const handles = edgeHandles.get(e.id)
       const isTrunk = Boolean(e.isTrunk)
       const isStale = e.status === 'stale'

@@ -511,14 +511,47 @@ def _derive_edge_status(
 def _apply_edge_statuses(
     edges: list[dict],
     devices_by_id: dict[str, dict],
+    *,
+    live_only: bool = False,
 ) -> list[dict]:
-    """Attach derived link status to each topology edge."""
+    """
+    Attach derived link status to each topology edge.
+
+    Level 1 (live_only=False): keep all edges; mark offline/unresolved as stale.
+    Level 2 (live_only=True): include only currently verified active live links.
+    Never mutates MongoDB — filtering is response-only.
+    """
+    result: list[dict] = []
     for edge in edges:
         status = _derive_edge_status(edge["source"], edge["target"], devices_by_id)
         edge["status"] = status
         if status == "stale":
             edge["animated"] = False
-    return edges
+            if live_only:
+                continue
+        result.append(edge)
+    return result
+
+
+def _prune_unconnected_synthetic_nodes(
+    nodes: list[dict],
+    edges: list[dict],
+) -> list[dict]:
+    """
+    After Level 2 live filtering, drop synthetic neighbor/endpoint nodes that
+    no longer have any edge. Inventory/infrastructure nodes are preserved.
+    """
+    connected = {edge["source"] for edge in edges} | {edge["target"] for edge in edges}
+    pruned: list[dict] = []
+    for node in nodes:
+        node_id = node.get("id") or ""
+        if node_id in connected:
+            pruned.append(node)
+            continue
+        if node_id.startswith(("neighbor_", "endpoint_")):
+            continue
+        pruned.append(node)
+    return pruned
 
 
 def _merge_raw_edges(raw_edges: list[dict]) -> list[dict]:
@@ -619,12 +652,16 @@ def get_switches():
     return switches
 
 
-def _build_topology_data(device_filter=None):
+def _build_topology_data(device_filter=None, *, live_only: bool = False):
     """
     Build topology nodes and edges from interface neighbors.
 
     If device_filter is set, only that switch and its direct neighbors (Level 1).
     Otherwise, build the full network graph (Level 2).
+
+    live_only:
+      False (Level 1) — keep historical links; mark offline endpoints stale.
+      True  (Level 2) — return only currently verified Online↔Online live links.
     """
     devices = list(db.devices.find({}, _DEVICE_PROJECTION))
 
@@ -735,9 +772,16 @@ def _build_topology_data(device_filter=None):
         if device_filter and target_id in devices_by_id and target_id not in nodes:
             nodes[target_id] = _device_node(devices_by_id[target_id])
 
-    edges = _apply_edge_statuses(_merge_raw_edges(raw_edges), devices_by_id)
+    edges = _apply_edge_statuses(
+        _merge_raw_edges(raw_edges),
+        devices_by_id,
+        live_only=live_only,
+    )
+    node_list = list(nodes.values())
+    if live_only:
+        node_list = _prune_unconnected_synthetic_nodes(node_list, edges)
 
-    return {"nodes": list(nodes.values()), "edges": edges}
+    return {"nodes": node_list, "edges": edges}
 
 
 def get_level_1_topology(device_id: str):
@@ -748,8 +792,10 @@ def get_level_1_topology(device_id: str):
     if not device:
         raise LookupError("Device not found")
 
-    return _build_topology_data(device_filter=device_id)
+    # Historical/infrastructure view: preserve links, mark offline as stale.
+    return _build_topology_data(device_filter=device_id, live_only=False)
 
 
 def get_level_2_topology():
-    return _build_topology_data(device_filter=None)
+    # Live view: only Online↔Online inventory links; no Mongo mutation.
+    return _build_topology_data(device_filter=None, live_only=True)
