@@ -685,6 +685,13 @@ export function InterfaceDetailPage() {
                   : '—'
               }
             />
+            {iface?.resolvedDeviceIp ? (
+              <DetailRow
+                label="Connected device IP"
+                value={iface.resolvedDeviceIp}
+                mono
+              />
+            ) : null}
             <DetailRow
               label="Neighbor device type"
               value={iface?.neighbor?.deviceType || '—'}

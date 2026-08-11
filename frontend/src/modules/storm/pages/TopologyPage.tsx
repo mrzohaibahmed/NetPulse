@@ -290,8 +290,22 @@ const TopologyDeviceNode = memo(function TopologyDeviceNode({ data }: NodeProps)
           <div className="truncate text-[11px] leading-tight text-muted-foreground" title={nodeData.type}>
             {nodeData.type || 'Unknown'}
           </div>
-          <div className="truncate font-mono text-[10px] leading-tight text-muted-foreground">
-            {nodeData.ip || nodeData.mac || '—'}
+          <div className="flex flex-col gap-0.5 mt-0.5">
+            {nodeData.ip && (
+              <div className="truncate font-mono text-[10px] leading-tight text-muted-foreground">
+                IP: {nodeData.ip}
+              </div>
+            )}
+            {nodeData.mac && (
+              <div className="truncate font-mono text-[10px] leading-tight text-muted-foreground">
+                MAC: {nodeData.mac}
+              </div>
+            )}
+            {!nodeData.ip && !nodeData.mac && (
+              <div className="truncate font-mono text-[10px] leading-tight text-muted-foreground">
+                —
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -304,15 +318,16 @@ const TopologyDeviceNode = memo(function TopologyDeviceNode({ data }: NodeProps)
       <TooltipContent side="top" className="max-w-xs space-y-1 p-3 text-xs">
         <div className="font-semibold text-foreground">{displayHostname(nodeData)}</div>
         <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-muted-foreground">
-          {nodeData.ip ? (
+          {nodeData.ip && (
             <>
               <span>IP</span>
               <span className="font-mono text-foreground">{nodeData.ip}</span>
             </>
-          ) : (
+          )}
+          {nodeData.mac && (
             <>
               <span>MAC</span>
-              <span className="font-mono text-foreground">{nodeData.mac || '—'}</span>
+              <span className="font-mono text-foreground">{nodeData.mac}</span>
             </>
           )}
           <span>Type</span>

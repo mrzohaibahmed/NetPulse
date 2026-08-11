@@ -146,6 +146,12 @@ def serialize_interface(interface: dict) -> dict:
         "neighbor": neighbor,
         "ifIndex": interface.get("ifIndex"),
         "macAddress": interface.get("macAddress") or "",
+        # Set by services.interface_collection.port_resolution.attach_resolved_ips
+        # before serialization; absent/None means genuinely unresolved (down
+        # port, or a multi-device uplink with no recognized neighbor) — never
+        # a guess, so callers must render nothing rather than a placeholder.
+        "resolvedDeviceIp": interface.get("resolvedDeviceIp"),
+        "resolvedDeviceIpVia": interface.get("resolvedDeviceIpVia"),
         "vendor": interface.get("vendor") or "",
         "collectionMethod": interface.get("collectionMethod") or "ssh",
         "lastUpdated": format_datetime(interface.get("lastUpdated")),

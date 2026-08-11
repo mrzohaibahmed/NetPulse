@@ -59,6 +59,21 @@ MAX_INTERFACE_STATS_THREADS = int(os.getenv("MAX_INTERFACE_STATS_THREADS", 8))
 # Bulk insert chunk size for append-only historical samples.
 INTERFACE_STATS_BATCH_SIZE = int(os.getenv("INTERFACE_STATS_BATCH_SIZE", 500))
 
+# ── Port -> Connected Device IP Resolution (MAC/ARP) ──────────────────────────
+# Passive poll: MAC table on every switch, ARP table on whichever ones route.
+# Frequent/lightweight — keep well below INTERFACE_SCAN_INTERVAL.
+MAC_ARP_POLL_INTERVAL = int(os.getenv("MAC_ARP_POLL_INTERVAL", 90))
+MAX_MAC_ARP_POLL_THREADS = int(os.getenv("MAX_MAC_ARP_POLL_THREADS", 5))
+MAC_ARP_POLL_MAX_THREADS = MAX_MAC_ARP_POLL_THREADS
+
+# Active sweep: reads each router's real subnets and pings unresolved hosts
+# to force ARP for devices that have never spoken to their gateway. Slower
+# and more invasive than the passive poll by design — set to 0 to disable.
+ARP_ACTIVE_SWEEP_INTERVAL = int(os.getenv("ARP_ACTIVE_SWEEP_INTERVAL", 1800))
+# Safety cap: max host addresses probed per connected subnet per sweep
+# cycle, so a large subnet can't turn one cycle into a flood of pings.
+ARP_ACTIVE_SWEEP_MAX_HOSTS = int(os.getenv("ARP_ACTIVE_SWEEP_MAX_HOSTS", 512))
+
 MONGO_URI = os.getenv("MONGO_URI")
 DATABASE_NAME = os.getenv("DATABASE_NAME")
 

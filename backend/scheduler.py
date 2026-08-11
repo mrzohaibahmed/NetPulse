@@ -5,8 +5,10 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from config.database import (
+    ARP_ACTIVE_SWEEP_INTERVAL,
     INTERFACE_SCAN_INTERVAL,
     INTERFACE_STATS_INTERVAL,
+    MAC_ARP_POLL_INTERVAL,
     NMAP_SCAN_INTERVAL,
 )
 from services.isp_monitor_service import monitor_all_isp_connections
@@ -44,6 +46,8 @@ INTERFACE_STATS_JOB_ID = "interface_stats_job"
 RECOVERY_JOB_ID = "storm_recovery_job"
 RETENTION_JOB_ID = "data_retention_job"
 ISP_JOB_ID = "isp_monitor_job"
+MAC_ARP_POLL_JOB_ID = "mac_arp_poll_job"
+ARP_ACTIVE_SWEEP_JOB_ID = "arp_active_sweep_job"
 
 
 def _run_interface_stats_then_eligibility() -> None:
@@ -282,6 +286,95 @@ def _start_interface_stats_job() -> None:
         )
 
 
+def _run_mac_arp_poll() -> None:
+    if not require_scheduler_leadership("mac_arp_poll_job"):
+        return
+    try:
+        from services.interface_collection.mac_arp_collector import (  # noqa: PLC0415
+            poll_all_devices_mac_and_arp,
+        )
+        poll_all_devices_mac_and_arp()
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Passive MAC/ARP poll failed: %s", exc)
+
+
+def _start_mac_arp_poll_job() -> None:
+    """
+    Register the passive MAC-table / ARP-table poll job.
+
+    Independent of stats/discovery. Disabled when MAC_ARP_POLL_INTERVAL is 0.
+    """
+    try:
+        interval = int(MAC_ARP_POLL_INTERVAL)
+        if interval <= 0:
+            logger.info(
+                "MAC/ARP passive poll job disabled (MAC_ARP_POLL_INTERVAL=%s)",
+                MAC_ARP_POLL_INTERVAL,
+            )
+            return
+
+        interval = max(interval, 30)
+
+        scheduler.add_job(
+            func=_run_mac_arp_poll,
+            trigger="interval",
+            seconds=interval,
+            id=MAC_ARP_POLL_JOB_ID,
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        logger.info("MAC/ARP passive poll job registered | interval=%ss", interval)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("MAC/ARP passive poll job could not be registered: %s", exc)
+
+
+def _run_arp_active_sweep() -> None:
+    if not require_scheduler_leadership("arp_active_sweep_job"):
+        return
+    try:
+        from services.interface_collection.mac_arp_collector import (  # noqa: PLC0415
+            sweep_all_device_subnets,
+        )
+        sweep_all_device_subnets()
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Active ARP sweep failed: %s", exc)
+
+
+def _start_arp_active_sweep_job() -> None:
+    """
+    Register the active ARP-forcing subnet sweep job.
+
+    Deliberately slower / more invasive than the passive poll — pings
+    unresolved addresses in each router's real connected subnets to catch
+    silent devices the passive poll can never see. Disabled when
+    ARP_ACTIVE_SWEEP_INTERVAL is 0.
+    """
+    try:
+        interval = int(ARP_ACTIVE_SWEEP_INTERVAL)
+        if interval <= 0:
+            logger.info(
+                "Active ARP sweep job disabled (ARP_ACTIVE_SWEEP_INTERVAL=%s)",
+                ARP_ACTIVE_SWEEP_INTERVAL,
+            )
+            return
+
+        interval = max(interval, 300)
+
+        scheduler.add_job(
+            func=_run_arp_active_sweep,
+            trigger="interval",
+            seconds=interval,
+            id=ARP_ACTIVE_SWEEP_JOB_ID,
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        logger.info("Active ARP sweep job registered | interval=%ss", interval)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Active ARP sweep job could not be registered: %s", exc)
+
+
 def _start_recovery_job() -> None:
     """Register storm recovery scheduler check job."""
     try:
@@ -442,6 +535,12 @@ def start_scheduler():
 
         # Job 4: Interface statistics (SNMP preferred, SSH fallback).
         _start_interface_stats_job()
+
+        # Job 4b: Passive MAC/ARP table poll (port -> connected-device IP).
+        _start_mac_arp_poll_job()
+
+        # Job 4c: Active ARP-forcing subnet sweep (catches silent devices).
+        _start_arp_active_sweep_job()
 
         # Job 5: Storm Recovery periodic auto-recovery checks (30s interval).
         _start_recovery_job()

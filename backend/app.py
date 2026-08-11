@@ -24,6 +24,7 @@ from services.device_indexes import ensure_device_indexes
 from services.isp_indexes import ensure_isp_indexes
 from services.isp_service import ensure_isp_connections
 from services.interface_collection.collector import ensure_interface_indexes
+from services.interface_collection.mac_arp_collector import ensure_mac_arp_indexes
 from services.interface_collection.stats_collector import ensure_interface_stats_indexes
 from services.settings_service import ensure_settings
 from services.scheduler_ownership import ensure_scheduler_lock_indexes
@@ -140,6 +141,7 @@ def bootstrap():
     ensure_default_admin()
     ensure_interface_indexes()
     ensure_interface_stats_indexes()
+    ensure_mac_arp_indexes()
     ensure_eligibility_indexes()
     ensure_risk_indexes()
     ensure_confirmation_indexes()

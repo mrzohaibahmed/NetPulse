@@ -7,11 +7,14 @@ import re
 from bson import ObjectId
 
 from config.database import db
+from services.interface_collection.port_resolution import attach_resolved_ips
 
 _DEVICE_PROJECTION = {
     "_id": 1,
     "hostname": 1,
     "ipAddress": 1,
+    "macAddress": 1,
+    "mac_address": 1,
     "deviceType": 1,
     "type": 1,
     "status": 1,
@@ -28,6 +31,11 @@ _VLAN_IFACE_RE = re.compile(r"^Vl(?:an)?(\d+)$", re.IGNORECASE)
 
 def _is_switch(device_type: str | None) -> bool:
     return "switch" in (device_type or "").lower()
+
+
+def _is_infrastructure_device(device_type: str | None) -> bool:
+    dt = (device_type or "").lower()
+    return any(x in dt for x in ["switch", "router", "firewall", "gateway", "wlc", "ap", "controller", "hub"])
 
 
 def _device_type(device: dict) -> str:
@@ -296,7 +304,8 @@ def _endpoint_node(device_id: str, iface: dict) -> dict:
     description = iface.get("description") or ""
     node_id = f"endpoint_{device_id}_{iface_name}"
 
-    ip = _extract_ipv4(description)
+    ip = iface.get("resolvedDeviceIp") or _extract_ipv4(description)
+    mac = iface.get("resolvedDeviceMac") or ""
     hostname = _description_hostname_hint(description)
     vlan_match = _VLAN_IFACE_RE.match(iface_name.strip())
 
@@ -321,7 +330,7 @@ def _endpoint_node(device_id: str, iface: dict) -> dict:
         "hostname": hostname,
         "label": label,
         "ip": ip,
-        "mac": "",
+        "mac": mac,
         "type": device_type,
         "status": "Online",
         "vendor": "",
@@ -578,6 +587,8 @@ def _build_topology_data(device_filter=None):
         interfaces = list(db.interfaces.find({"deviceId": ObjectId(device_filter)}))
     else:
         interfaces = list(db.interfaces.find())
+        
+    attach_resolved_ips(interfaces)
 
     nodes: dict[str, dict] = {}
     raw_edges: list[dict] = []
@@ -590,8 +601,11 @@ def _build_topology_data(device_filter=None):
         devices_by_id[device_id] = d
         _register_device_indexes(d, known_devices_by_ip, known_devices_by_hostname)
 
+        # Only proactively add infrastructure devices as standalone nodes.
+        # Endpoints/Ping devices will only be added if a switch connects to them.
         if not device_filter or device_id == device_filter:
-            nodes[device_id] = _device_node(d)
+            if _is_infrastructure_device(_device_type(d)) or device_id == device_filter:
+                nodes[device_id] = _device_node(d)
 
     for iface in interfaces:
         device_id = str(iface.get("deviceId") or "")

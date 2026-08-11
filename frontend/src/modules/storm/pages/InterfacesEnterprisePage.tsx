@@ -887,7 +887,21 @@ function DeviceInventorySection({
                           <TableCell>
                             <InterfaceStatusBadge status={row.operStatus} />
                           </TableCell>
-                          <TableCell className="whitespace-nowrap font-medium">{row.name}</TableCell>
+                          <TableCell className="whitespace-nowrap font-medium">
+                            {row.name}
+                            {row.resolvedDeviceIp ? (
+                              <div
+                                className="mono text-[10px] font-normal text-muted-foreground/80"
+                                title={
+                                  row.resolvedDeviceIpVia === 'neighbor'
+                                    ? 'Connects to a known device'
+                                    : 'Resolved via ARP'
+                                }
+                              >
+                                {row.resolvedDeviceIp}
+                              </div>
+                            ) : null}
+                          </TableCell>
                           <TableCell className="max-w-[180px] truncate text-muted-foreground">
                             {row.description || '—'}
                           </TableCell>

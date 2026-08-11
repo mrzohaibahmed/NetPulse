@@ -32,6 +32,7 @@ from services.interface_collection.monitoring_state import (
     normalize_monitoring_mode,
     set_interface_monitoring_mode,
 )
+from services.interface_collection.port_resolution import attach_resolved_ips
 from services.interface_collection.stats_collector import (
     collect_all_interface_stats,
     collect_device_interface_stats,
@@ -134,6 +135,7 @@ def list_interfaces():
             limit=limit,
             **filters,
         )
+        attach_resolved_ips(interfaces)
 
         return jsonify({
             "success": True,
@@ -247,6 +249,7 @@ def discover_interfaces_for_device(device_id: str):
             skip=0,
             limit=1000,
         )
+        attach_resolved_ips(interfaces)
 
         return jsonify({
             "success": True,
@@ -425,6 +428,8 @@ def set_interface_monitoring(device_id: str, interface_name: str):
                 "requestedBy": username,
             },
         )
+
+        attach_resolved_ips([updated])
 
         return jsonify({
             "success": True,
@@ -785,6 +790,7 @@ def list_device_interfaces(device_id: str):
             limit=limit,
             **filters,
         )
+        attach_resolved_ips(interfaces)
 
         return jsonify({
             "success": True,
