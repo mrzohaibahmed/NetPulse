@@ -605,19 +605,30 @@ def _scan_device(device, *, suppress_offline: bool, cycle_id: str):
             suppress_offline,
             result.get("pingStartedAt"),
         )
+    return result
 
 
-def _scan_device_safe(device, *, suppress_offline: bool, cycle_id: str) -> str:
+def _scan_device_safe(
+    device,
+    *,
+    suppress_offline: bool,
+    cycle_id: str,
+    timing_out: dict | None = None,
+) -> str:
     """Thread-pool worker wrapper — returns scanned|failed for cycle counters."""
     hostname = device.get("hostname", "unknown")
     ip_address = device.get("ipAddress", "unknown")
     device_id = device.get("_id")
     try:
-        _scan_device(
+        result = _scan_device(
             device,
             suppress_offline=suppress_offline,
             cycle_id=cycle_id,
         )
+        if timing_out is not None and isinstance(result, dict):
+            timing_out["pingStartedAt"] = result.get("pingStartedAt")
+            timing_out["pingCompletedAt"] = result.get("pingCompletedAt")
+            timing_out["responseTime"] = result.get("responseTime")
         return "scanned"
     except Exception as error:  # noqa: BLE001
         logger.exception(
@@ -629,6 +640,53 @@ def _scan_device_safe(device, *, suppress_offline: bool, cycle_id: str) -> str:
             error,
         )
         return "failed"
+
+
+def scan_claimed_device(
+    device,
+    *,
+    claim_id: str,
+    suppress_offline: bool = False,
+    cycle_id: str,
+    timing_out: dict | None = None,
+) -> str:
+    """
+    Dispatch-mode scan entrypoint for a device that is already claimed.
+
+    Requires a non-empty ``claim_id``. Delegates entirely to the existing
+    ``_scan_device`` / ``ping_device`` / ``apply_ping_result`` pipeline via
+    ``_scan_device_safe`` — no alternate ping or apply path.
+
+    Optional ``timing_out`` receives ``pingStartedAt`` / ``pingCompletedAt``
+    for dispatch observability (Phase 8); does not alter apply semantics.
+    """
+    device_id = (device or {}).get("_id")
+    if not claim_id:
+        logger.error(
+            "Refusing scan - missing claimId | deviceId=%s | cycleId=%s",
+            device_id,
+            cycle_id,
+        )
+        return "failed"
+
+    owned = (device or {}).get("scanClaimId")
+    if owned is not None and owned != claim_id:
+        logger.error(
+            "Refusing scan - claimId mismatch | deviceId=%s | cycleId=%s | "
+            "expected=%s | deviceClaimId=%s",
+            device_id,
+            cycle_id,
+            claim_id,
+            owned,
+        )
+        return "failed"
+
+    return _scan_device_safe(
+        device,
+        suppress_offline=suppress_offline,
+        cycle_id=cycle_id,
+        timing_out=timing_out,
+    )
 
 
 def monitor_all_devices():

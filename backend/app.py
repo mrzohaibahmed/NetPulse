@@ -208,9 +208,20 @@ bootstrap()
 
 # Start monitoring unless we're the Flask debug reloader parent process.
 # Default OFF — production must not run the interactive debugger.
+# When FLASK_DEBUG=true, Werkzeug spawns a parent (watch) + child (serve).
+# Only the child has WERKZEUG_RUN_MAIN=true — starting in both would create
+# two APScheduler instances and two competing ownerIds in one "logical" app.
 DEBUG = os.getenv("FLASK_DEBUG", "false").lower() in ("1", "true", "yes")
-if not DEBUG or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
+_should_start_scheduler = (not DEBUG) or (
+    os.environ.get("WERKZEUG_RUN_MAIN") == "true"
+)
+if _should_start_scheduler:
     start_scheduler()
+else:
+    _bootstrap_logger.info(
+        "Skipping start_scheduler in Flask reloader parent "
+        "(FLASK_DEBUG=true, WERKZEUG_RUN_MAIN unset)"
+    )
 
 
 if __name__ == "__main__":

@@ -281,7 +281,44 @@ def get_monitor_ping_concurrency() -> int:
         return max(1, min(int(DEFAULT_SETTINGS["pingConcurrency"]), 64))
 
 
+def get_monitor_runtime_mode() -> str:
+    """
+    Ping monitoring runtime mode.
+
+    ``legacy`` (default): existing APScheduler wave / ``monitor_all_devices`` path.
+    ``dispatch``: claim/dispatcher architecture (Phase 4+).
+
+    Env: MONITOR_RUNTIME_MODE. Unknown values fall back to ``legacy``.
+    """
+    raw = (os.getenv("MONITOR_RUNTIME_MODE") or "legacy").strip().lower()
+    if raw in ("legacy", "dispatch"):
+        return raw
+    return "legacy"
+
+
+def get_monitor_dispatcher_interval_seconds() -> int:
+    """
+    APScheduler period for the dispatch-mode monitor job.
+
+    Independent of ``pingInterval``. Env: MONITOR_DISPATCHER_INTERVAL_SECONDS.
+    Default 5, clamped to 1–15.
+    """
+    raw = os.getenv("MONITOR_DISPATCHER_INTERVAL_SECONDS", "5")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = 5
+    return max(1, min(value, 15))
+
+
 def get_ping_config(device=None):
+    """
+    Resolve ping interval / timeout / retries for a device (or globals).
+
+    ``interval`` (from ``pingInterval``) is the per-device cadence used when
+    advancing ``nextCheckAt`` at claim time in dispatch mode. It is **not** the
+    APScheduler dispatcher period — that is ``get_monitor_dispatcher_interval_seconds``.
+    """
     settings = get_settings()
     interval = settings.get("pingInterval", 30)
     timeout_ms = settings.get("pingTimeoutMs", 1000)
