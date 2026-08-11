@@ -33,6 +33,11 @@ def _is_switch(device_type: str | None) -> bool:
     return "switch" in (device_type or "").lower()
 
 
+def _is_infrastructure_device(device_type: str | None) -> bool:
+    dt = (device_type or "").lower()
+    return any(x in dt for x in ["switch", "router", "firewall", "gateway", "wlc", "ap", "controller", "hub"])
+
+
 def _device_type(device: dict) -> str:
     return device.get("deviceType") or device.get("type") or "Unknown"
 
@@ -592,8 +597,11 @@ def _build_topology_data(device_filter=None):
         devices_by_id[device_id] = d
         _register_device_indexes(d, known_devices_by_ip, known_devices_by_hostname)
 
+        # Only proactively add infrastructure devices as standalone nodes.
+        # Endpoints/Ping devices will only be added if a switch connects to them.
         if not device_filter or device_id == device_filter:
-            nodes[device_id] = _device_node(d)
+            if _is_infrastructure_device(_device_type(d)) or device_id == device_filter:
+                nodes[device_id] = _device_node(d)
 
     for iface in interfaces:
         device_id = str(iface.get("deviceId") or "")
