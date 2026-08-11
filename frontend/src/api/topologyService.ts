@@ -43,6 +43,8 @@ export interface TopologyEdge {
   isTrunk: boolean
   linkType: 'trunk' | 'access' | 'unknown' | string
   protocol: string
+  description?: string
+  speed?: string
   animated?: boolean
 }
 

@@ -528,6 +528,8 @@ def _merge_raw_edges(raw_edges: list[dict]) -> list[dict]:
                 "isTrunk": bool(edge.get("isTrunk")),
                 "linkType": edge.get("linkType") or "unknown",
                 "protocol": edge.get("protocol") or "CDP/LLDP",
+                "description": edge.get("description") or "",
+                "speed": edge.get("speed") or "",
                 "animated": True,
             }
         )
@@ -544,6 +546,8 @@ def _merge_raw_edges(raw_edges: list[dict]) -> list[dict]:
                 "isTrunk": bool(raw.get("isTrunk")),
                 "linkType": raw.get("linkType") or "unknown",
                 "protocol": raw.get("protocol") or "Direct",
+                "description": raw.get("description") or "",
+                "speed": raw.get("speed") or "",
                 "animated": True,
             }
         )
@@ -663,6 +667,8 @@ def _build_topology_data(device_filter=None):
                 "isTrunk": is_trunk,
                 "linkType": link_type,
                 "protocol": protocol,
+                "description": iface.get("description") or "",
+                "speed": iface.get("speed") or "",
             }
         )
 
