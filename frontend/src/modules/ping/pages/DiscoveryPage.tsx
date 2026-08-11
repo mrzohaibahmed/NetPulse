@@ -295,13 +295,21 @@ export function DiscoveryPage() {
     }
   }
 
+  const scrollToProgress = () => {
+    setTimeout(() => {
+      document.getElementById('discovery-progress-section')?.scrollIntoView({ behavior: 'smooth' })
+    }, 100)
+  }
+
   const handleScanSelected = () => {
     if (selectedIds.length === 0) return
     runScan({ networkIds: selectedIds })
+    scrollToProgress()
   }
 
   const handleScanAllEnabled = () => {
     runScan({ scanAllEnabled: true })
+    scrollToProgress()
   }
 
   const scanning = scanMutation.isPending
@@ -450,7 +458,7 @@ export function DiscoveryPage() {
 
       {/* Discovery Progress */}
       {scanning ? (
-        <section className="space-y-4" aria-label="Discovery progress">
+        <section id="discovery-progress-section" className="space-y-4" aria-label="Discovery progress">
           <SectionHeading
             title="Discovery Progress"
             description="Probing hosts in parallel across the selected target ranges."
