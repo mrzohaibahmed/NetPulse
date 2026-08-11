@@ -1,28 +1,299 @@
+import ipaddress
 from flask import Blueprint, jsonify, request
+from bson import ObjectId
 
-from services.discovery_service import discover_devices, get_local_network_hint
+from config.database import db
+from services.discovery_service import discover_ips, get_local_network_hint
 from utils.auth import require_auth
+from utils.secret_crypto import encrypt_secret
+from utils.serializers import format_datetime
+from utils.utc import utc_now
+from utils.ip_parser import parse_scan_targets
 
 discovery_bp = Blueprint("discovery", __name__)
 
+
+# ── Network Stats Helper ──────────────────────────────────────────────────────
+
+def calculate_network_stats(cidr_str: str) -> dict:
+    """Calculate device metrics for a network's CIDR dynamically."""
+    try:
+        net = ipaddress.IPv4Network(cidr_str.strip(), strict=False)
+    except Exception:
+        return {"devices": 0, "switches": 0, "online": 0}
+
+    # Fetch active devices in inventory
+    devices = list(db.devices.find({}, {"ipAddress": 1, "deviceType": 1, "status": 1}))
+    
+    device_count = 0
+    switch_count = 0
+    online_count = 0
+    
+    for d in devices:
+        ip_str = d.get("ipAddress")
+        if not ip_str:
+            continue
+        try:
+            ip = ipaddress.IPv4Address(ip_str)
+            if ip in net:
+                device_count += 1
+                device_type = str(d.get("deviceType") or "").lower()
+                if "switch" in device_type:
+                    switch_count += 1
+                if d.get("status") == "Online":
+                    online_count += 1
+        except Exception:
+            pass
+            
+    return {
+        "devices": device_count,
+        "switches": switch_count,
+        "online": online_count
+    }
+
+
+def serialize_network(network: dict) -> dict:
+    stats = calculate_network_stats(network.get("cidr", ""))
+    return {
+        "id": str(network["_id"]),
+        "name": network.get("name"),
+        "type": network.get("type", "ETHERNET"),
+        "cidr": network.get("cidr"),
+        "scanTargets": network.get("scanTargets"),
+        "gateway": network.get("gateway"),
+        "description": network.get("description", ""),
+        "enabled": bool(network.get("enabled", True)),
+        "sshUsername": network.get("sshUsername", ""),
+        "sshPasswordSet": bool(network.get("sshPassword")),
+        "snmpCommunity": network.get("snmpCommunity", "public"),
+        "createdAt": format_datetime(network.get("createdAt")),
+        "updatedAt": format_datetime(network.get("updatedAt")),
+        "devices": stats["devices"],
+        "switches": stats["switches"],
+        "online": stats["online"]
+    }
+
+
+# ── CRUD Endpoints for Configured Networks ────────────────────────────────────
+
+@discovery_bp.route("/networks", methods=["GET"])
+@require_auth()
+def list_networks():
+    try:
+        networks = list(db.networks.find().sort("name", 1))
+        return jsonify({
+            "success": True,
+            "data": [serialize_network(n) for n in networks]
+        }), 200
+    except Exception as error:
+        return jsonify({
+            "success": False,
+            "message": "Failed to list networks",
+            "error": str(error)
+        }), 500
+
+
+@discovery_bp.route("/networks", methods=["POST"])
+@require_auth(roles=["admin"])
+def create_network():
+    try:
+        data = request.get_json() or {}
+        name = (data.get("name") or "").strip()
+        net_type = (data.get("type") or "ETHERNET").strip().upper()
+        cidr = (data.get("cidr") or "").strip()
+        scan_targets = (data.get("scanTargets") or "").strip()
+        gateway = (data.get("gateway") or "").strip()
+        description = (data.get("description") or "").strip()
+        enabled = bool(data.get("enabled", True))
+        ssh_username = (data.get("sshUsername") or "").strip()
+        ssh_password = data.get("sshPassword") or ""
+        snmp_community = (data.get("snmpCommunity") or "public").strip()
+
+        if not name:
+            return jsonify({"success": False, "message": "Name is required"}), 400
+        if not cidr:
+            return jsonify({"success": False, "message": "CIDR is required"}), 400
+        if not scan_targets:
+            return jsonify({"success": False, "message": "Scan Targets is required"}), 400
+
+        # Validate CIDR
+        try:
+            ipaddress.IPv4Network(cidr, strict=False)
+        except ValueError as err:
+            return jsonify({"success": False, "message": f"Invalid CIDR: {err}"}), 400
+
+        # Validate Scan Targets parsing
+        try:
+            parse_scan_targets(scan_targets)
+        except ValueError as err:
+            return jsonify({"success": False, "message": str(err)}), 400
+
+        # Validate Gateway if provided
+        if gateway:
+            try:
+                ipaddress.IPv4Address(gateway)
+            except ValueError:
+                return jsonify({"success": False, "message": "Invalid Gateway IP address"}), 400
+
+        now = utc_now()
+        doc = {
+            "name": name,
+            "type": net_type,
+            "cidr": cidr,
+            "scanTargets": scan_targets,
+            "gateway": gateway,
+            "description": description,
+            "enabled": enabled,
+            "sshUsername": ssh_username,
+            "sshPassword": encrypt_secret(ssh_password) if ssh_password else "",
+            "snmpCommunity": snmp_community,
+            "createdAt": now,
+            "updatedAt": now
+        }
+
+        result = db.networks.insert_one(doc)
+        doc["_id"] = result.inserted_id
+
+        return jsonify({
+            "success": True,
+            "message": "Network added successfully",
+            "data": serialize_network(doc)
+        }), 201
+
+    except Exception as error:
+        return jsonify({
+            "success": False,
+            "message": "Failed to add network",
+            "error": str(error)
+        }), 500
+
+
+@discovery_bp.route("/networks/<network_id>", methods=["PUT"])
+@require_auth(roles=["admin"])
+def update_network(network_id):
+    try:
+        if not ObjectId.is_valid(network_id):
+            return jsonify({"success": False, "message": "Invalid network ID"}), 400
+
+        network = db.networks.find_one({"_id": ObjectId(network_id)})
+        if not network:
+            return jsonify({"success": False, "message": "Network not found"}), 404
+
+        data = request.get_json() or {}
+        update = {}
+
+        if "name" in data:
+            name = str(data["name"]).strip()
+            if not name:
+                return jsonify({"success": False, "message": "Name cannot be empty"}), 400
+            update["name"] = name
+
+        if "type" in data:
+            update["type"] = str(data["type"]).strip().upper()
+
+        if "cidr" in data:
+            cidr = str(data["cidr"]).strip()
+            if not cidr:
+                return jsonify({"success": False, "message": "CIDR cannot be empty"}), 400
+            try:
+                ipaddress.IPv4Network(cidr, strict=False)
+            except ValueError as err:
+                return jsonify({"success": False, "message": f"Invalid CIDR: {err}"}), 400
+            update["cidr"] = cidr
+
+        if "scanTargets" in data:
+            scan_targets = str(data["scanTargets"]).strip()
+            if not scan_targets:
+                return jsonify({"success": False, "message": "Scan Targets cannot be empty"}), 400
+            try:
+                parse_scan_targets(scan_targets)
+            except ValueError as err:
+                return jsonify({"success": False, "message": str(err)}), 400
+            update["scanTargets"] = scan_targets
+
+        if "gateway" in data:
+            gateway = str(data["gateway"]).strip()
+            if gateway:
+                try:
+                    ipaddress.IPv4Address(gateway)
+                except ValueError:
+                    return jsonify({"success": False, "message": "Invalid Gateway IP address"}), 400
+            update["gateway"] = gateway
+
+        if "description" in data:
+            update["description"] = str(data["description"]).strip()
+
+        if "enabled" in data:
+            update["enabled"] = bool(data["enabled"])
+
+        if "sshUsername" in data:
+            update["sshUsername"] = str(data["sshUsername"]).strip()
+
+        if "sshPassword" in data and data["sshPassword"]:
+            update["sshPassword"] = encrypt_secret(str(data["sshPassword"]))
+
+        if "snmpCommunity" in data:
+            update["snmpCommunity"] = str(data["snmpCommunity"]).strip()
+
+        if update:
+            update["updatedAt"] = utc_now()
+            db.networks.update_one({"_id": ObjectId(network_id)}, {"$set": update})
+
+        updated = db.networks.find_one({"_id": ObjectId(network_id)})
+        return jsonify({
+            "success": True,
+            "message": "Network updated successfully",
+            "data": serialize_network(updated)
+        }), 200
+
+    except Exception as error:
+        return jsonify({
+            "success": False,
+            "message": "Failed to update network",
+            "error": str(error)
+        }), 500
+
+
+@discovery_bp.route("/networks/<network_id>", methods=["DELETE"])
+@require_auth(roles=["admin"])
+def delete_network(network_id):
+    try:
+        if not ObjectId.is_valid(network_id):
+            return jsonify({"success": False, "message": "Invalid network ID"}), 400
+
+        res = db.networks.delete_one({"_id": ObjectId(network_id)})
+        if res.deleted_count == 0:
+            return jsonify({"success": False, "message": "Network not found"}), 404
+
+        return jsonify({
+            "success": True,
+            "message": "Network deleted successfully"
+        }), 200
+
+    except Exception as error:
+        return jsonify({
+            "success": False,
+            "message": "Failed to delete network",
+            "error": str(error)
+        }), 500
+
+
+# ── Scan Range & Scan Networks Routing ────────────────────────────────────────
 
 @discovery_bp.route("/discovery/network-hint", methods=["GET"])
 @require_auth()
 def network_hint():
     try:
         hint = get_local_network_hint()
-
         if hint is None:
             return jsonify({
                 "success": False,
                 "message": "Could not detect local network",
             }), 404
-
         return jsonify({
             "success": True,
             "hint": hint,
         }), 200
-
     except Exception as error:
         return jsonify({
             "success": False,
@@ -35,14 +306,7 @@ def network_hint():
 @require_auth(roles=["admin"])
 def scan_range():
     try:
-        data = request.get_json()
-
-        if not data:
-            return jsonify({
-                "success": False,
-                "message": "Request body is required",
-            }), 400
-
+        data = request.get_json() or {}
         start_ip = data.get("startIP")
         end_ip = data.get("endIP")
 
@@ -52,6 +316,7 @@ def scan_range():
                 "message": "startIP and endIP are required",
             }), 400
 
+        from services.discovery_service import discover_devices
         devices = discover_devices(start_ip, end_ip)
 
         online = sum(1 for device in devices if device["status"] == "Online")
@@ -74,10 +339,80 @@ def scan_range():
             "success": False,
             "message": str(error),
         }), 400
-
     except Exception as error:
         return jsonify({
             "success": False,
             "message": "Failed to scan IP range",
+            "error": str(error),
+        }), 500
+
+
+@discovery_bp.route("/discovery/scan-networks", methods=["POST"])
+@require_auth(roles=["admin"])
+def scan_networks():
+    try:
+        data = request.get_json() or {}
+        network_ids = data.get("networkIds")
+        scan_all_enabled = bool(data.get("scanAllEnabled", False))
+
+        target_networks = []
+        if scan_all_enabled:
+            target_networks = list(db.networks.find({"enabled": True}))
+        elif network_ids:
+            # Map strings to ObjectIds safely
+            valid_ids = [ObjectId(nid) for nid in network_ids if ObjectId.is_valid(nid)]
+            if valid_ids:
+                target_networks = list(db.networks.find({"_id": {"$in": valid_ids}}))
+
+        if not target_networks:
+            return jsonify({
+                "success": False,
+                "message": "No valid networks found to scan",
+            }), 400
+
+        # Collect and parse all targets
+        combined_targets = []
+        for net in target_networks:
+            targets_str = net.get("scanTargets", "")
+            if targets_str:
+                combined_targets.append(targets_str)
+
+        # Resolve to flat unique IP list
+        try:
+            resolved_ips = parse_scan_targets(",".join(combined_targets))
+        except ValueError as err:
+            return jsonify({
+                "success": False,
+                "message": str(err),
+            }), 400
+
+        if not resolved_ips:
+            return jsonify({
+                "success": False,
+                "message": "No IP addresses resolved from the selected scan targets",
+            }), 400
+
+        # Run sweep
+        devices = discover_ips(resolved_ips)
+
+        online = sum(1 for device in devices if device["status"] == "Online")
+        offline = sum(1 for device in devices if device["status"] == "Offline")
+        newly_saved = sum(1 for device in devices if device["saved"])
+
+        return jsonify({
+            "success": True,
+            "summary": {
+                "totalScanned": len(devices),
+                "online": online,
+                "offline": offline,
+                "newlySaved": newly_saved,
+            },
+            "devices": devices,
+        }), 200
+
+    except Exception as error:
+        return jsonify({
+            "success": False,
+            "message": "Failed to scan networks",
             "error": str(error),
         }), 500
