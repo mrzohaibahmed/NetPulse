@@ -53,6 +53,8 @@ type TopologyEdgeData = {
   isTrunk?: boolean
   linkType?: string
   protocol?: string
+  description?: string
+  speed?: string
   centerLabel?: string
 }
 
@@ -416,6 +418,7 @@ const TopologyEdge = memo(function TopologyEdge({
         id={id}
         path={edgePath}
         markerEnd={markerEnd}
+        interactionWidth={20}
         style={{
           stroke,
           strokeWidth: isTrunk ? 2.5 : 2,
@@ -446,6 +449,31 @@ export function TopologyPage() {
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
   const [canvasSize, setCanvasSize] = useState({ width: 960, height: 560 })
   const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null)
+  
+  const [hoveredEdge, setHoveredEdge] = useState<{
+    x: number
+    y: number
+    data: TopologyEdgeData
+  } | null>(null)
+
+  const onEdgeMouseEnter = useCallback((event: React.MouseEvent, edge: Edge) => {
+    setHoveredEdge({
+      x: event.clientX,
+      y: event.clientY,
+      data: (edge.data || {}) as TopologyEdgeData,
+    })
+  }, [])
+
+  const onEdgeMouseMove = useCallback((event: React.MouseEvent) => {
+    setHoveredEdge((prev) => {
+      if (!prev) return prev
+      return { ...prev, x: event.clientX, y: event.clientY }
+    })
+  }, [])
+
+  const onEdgeMouseLeave = useCallback(() => {
+    setHoveredEdge(null)
+  }, [])
 
   const viewKey = selectedSwitchId ?? 'full'
   const shouldFitViewRef = useRef(true)
@@ -518,6 +546,8 @@ export function TopologyPage() {
           isTrunk: e.isTrunk,
           linkType: e.linkType,
           protocol: e.protocol,
+          description: e.description,
+          speed: e.speed,
           centerLabel: e.isTrunk ? 'Trunk' : e.linkType || e.protocol,
         } satisfies TopologyEdgeData,
         style: { stroke, strokeWidth: isTrunk ? 2.5 : 2 },
@@ -681,6 +711,9 @@ export function TopologyPage() {
                 onNodesChange={onNodesChange}
                 onEdgesChange={onEdgesChange}
                 onNodeDragStop={onNodeDragStop}
+                onEdgeMouseEnter={onEdgeMouseEnter}
+                onEdgeMouseMove={onEdgeMouseMove}
+                onEdgeMouseLeave={onEdgeMouseLeave}
                 onInit={setRfInstance}
                 nodeTypes={nodeTypes}
                 edgeTypes={edgeTypes}
@@ -705,6 +738,35 @@ export function TopologyPage() {
           )}
         </div>
       </div>
+      {hoveredEdge && (
+        <div
+          className="pointer-events-none fixed z-50 rounded-lg border border-border/70 bg-card/95 p-3 text-sm text-foreground shadow-xl backdrop-blur-md transition-opacity"
+          style={{
+            left: hoveredEdge.x + 15,
+            top: hoveredEdge.y + 15,
+          }}
+        >
+          <div className="mb-2 font-semibold flex items-center gap-2">
+            <span className="text-muted-foreground">{hoveredEdge.data.sourcePort || 'Unknown'}</span>
+            <span className="text-muted-foreground">⟷</span>
+            <span>{hoveredEdge.data.targetPort || 'Unknown'}</span>
+          </div>
+          <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
+            <div className="text-muted-foreground">Name:</div>
+            <div className="text-foreground">{hoveredEdge.data.description || 'Unknown'}</div>
+            <div className="text-muted-foreground">Type:</div>
+            <div className="text-foreground capitalize">{hoveredEdge.data.linkType || hoveredEdge.data.protocol || 'Unknown'}</div>
+            <div className="text-muted-foreground">Speed:</div>
+            <div className="text-foreground">
+              {hoveredEdge.data.speed 
+                ? (hoveredEdge.data.speed.match(/^\d+$/) || hoveredEdge.data.speed.match(/^a-\d+$/) 
+                    ? `${hoveredEdge.data.speed} Mbps` 
+                    : hoveredEdge.data.speed)
+                : 'Unknown'}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

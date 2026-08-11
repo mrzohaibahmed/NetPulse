@@ -94,6 +94,26 @@ def scan_single_ip(ip_address):
         }
 
 
+def discover_ips(ip_addresses):
+    if len(ip_addresses) > 1024:
+        raise ValueError("Scan target list is too large. Maximum 1024 addresses per scan.")
+
+    results = []
+    with ThreadPoolExecutor(max_workers=20) as executor:
+        futures = [
+            executor.submit(scan_single_ip, ip)
+            for ip in ip_addresses
+        ]
+
+        for future in as_completed(futures):
+            results.append(future.result())
+
+    results.sort(
+        key=lambda item: ipaddress.IPv4Address(item["ipAddress"])
+    )
+    return results
+
+
 def discover_devices(start_ip, end_ip):
     try:
         start = ipaddress.IPv4Address(start_ip)
@@ -112,20 +132,4 @@ def discover_devices(start_ip, end_ip):
         str(ipaddress.IPv4Address(ip))
         for ip in range(int(start), int(end) + 1)
     ]
-
-    results = []
-
-    with ThreadPoolExecutor(max_workers=20) as executor:
-        futures = [
-            executor.submit(scan_single_ip, ip)
-            for ip in ip_addresses
-        ]
-
-        for future in as_completed(futures):
-            results.append(future.result())
-
-    results.sort(
-        key=lambda item: ipaddress.IPv4Address(item["ipAddress"])
-    )
-
-    return results
+    return discover_ips(ip_addresses)

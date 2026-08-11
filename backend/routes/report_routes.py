@@ -9,6 +9,9 @@ from openpyxl import Workbook
 from config.database import db
 from utils.auth import require_auth
 from utils.serializers import format_datetime, get_device_type
+from services.storm.diagnostics.serializer import serialize_incident
+from services.storm.mitigation.audit import serialize_mitigation_log
+from services.storm.recovery.audit import serialize_recovery_log
 
 report_bp = Blueprint("reports", __name__)
 
@@ -226,12 +229,141 @@ def export_history():
         }), 500
 
 
+def _parse_limit(max_default: int = 5000, max_limit: int = 50000) -> int:
+    """
+    Simple limit parser for report exports.
+
+    We keep it conservative to avoid memory blow-ups when exporting big collections.
+    """
+    raw = (request.args.get("limit") or "").strip()
+    if not raw:
+        return max_default
+    try:
+        limit = int(raw)
+    except ValueError as exc:
+        raise ValueError("Invalid limit") from exc
+    limit = max(1, limit)
+    return min(limit, max_limit)
+
+
+@report_bp.route("/reports/export/storm/incidents", methods=["GET"])
+@require_auth()
+def export_storm_incidents():
+    try:
+        fmt = (request.args.get("format") or "csv").lower()
+        limit = _parse_limit()
+
+        docs = list(
+            db["storm_incidents"]
+            .find({})
+            .sort("createdAt", -1)
+            .limit(limit)
+        )
+
+        headers = ["Incident", "Switch", "Interface", "Severity", "Status", "Created"]
+        rows = [
+            [
+                d.get("incidentId"),
+                d.get("hostname"),
+                d.get("interface"),
+                d.get("severity"),
+                d.get("status"),
+                format_datetime(d.get("createdAt")),
+            ]
+            for d in map(serialize_incident, docs)
+        ]
+        return _export_response("storm_incidents", headers, rows, fmt)
+    except ValueError as error:
+        return jsonify({"success": False, "message": str(error)}), 400
+    except Exception as error:  # noqa: BLE001
+        return jsonify({
+            "success": False,
+            "message": "Failed to export storm incidents",
+            "error": str(error),
+        }), 500
+
+
+@report_bp.route("/reports/export/storm/mitigations", methods=["GET"])
+@require_auth()
+def export_storm_mitigations():
+    try:
+        fmt = (request.args.get("format") or "csv").lower()
+        limit = _parse_limit()
+
+        docs = list(
+            db["storm_mitigation_history"]
+            .find({})
+            .sort("timestamp", -1)
+            .limit(limit)
+        )
+
+        headers = ["Incident", "Interface", "Strategy", "Status", "Operator", "Time"]
+        rows = [
+            [
+                d.get("incidentId"),
+                d.get("interface"),
+                d.get("strategy"),
+                d.get("status"),
+                d.get("operator"),
+                d.get("timestamp"),
+            ]
+            for d in map(serialize_mitigation_log, docs)
+        ]
+        return _export_response("storm_mitigations", headers, rows, fmt)
+    except ValueError as error:
+        return jsonify({"success": False, "message": str(error)}), 400
+    except Exception as error:  # noqa: BLE001
+        return jsonify({
+            "success": False,
+            "message": "Failed to export storm mitigations",
+            "error": str(error),
+        }), 500
+
+
+@report_bp.route("/reports/export/storm/recoveries", methods=["GET"])
+@require_auth()
+def export_storm_recoveries():
+    try:
+        fmt = (request.args.get("format") or "csv").lower()
+        limit = _parse_limit()
+
+        docs = list(
+            db["storm_recovery_history"]
+            .find({})
+            .sort("timestamp", -1)
+            .limit(limit)
+        )
+
+        headers = ["Incident", "Interface", "Status", "Executed By", "Time"]
+        rows = [
+            [
+                d.get("incidentId"),
+                d.get("interface"),
+                d.get("recoveryStatus"),
+                d.get("executedBy") or "",
+                d.get("timestamp"),
+            ]
+            for d in map(serialize_recovery_log, docs)
+        ]
+        return _export_response("storm_recoveries", headers, rows, fmt)
+    except ValueError as error:
+        return jsonify({"success": False, "message": str(error)}), 400
+    except Exception as error:  # noqa: BLE001
+        return jsonify({
+            "success": False,
+            "message": "Failed to export storm recoveries",
+            "error": str(error),
+        }), 500
+
+
 def _export_response(basename, headers, rows, fmt):
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
 
     if fmt in ("xlsx", "excel"):
         workbook = Workbook()
         sheet = workbook.active
+        if sheet is None:
+            sheet = workbook.create_sheet()
         sheet.title = basename
         sheet.append(headers)
         for row in rows:

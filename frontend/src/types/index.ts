@@ -798,3 +798,23 @@ export interface RecoveryLog {
   recoveryMethod?: string | null
 }
 
+export interface NetworkProfile {
+  id: string
+  name: string
+  type: 'ETHERNET' | 'WIFI'
+  cidr: string
+  scanTargets: string
+  gateway?: string
+  description?: string
+  enabled: boolean
+  sshUsername?: string
+  sshPasswordSet?: boolean
+  sshPassword?: string // used on creation/update
+  snmpCommunity?: string
+  createdAt?: string
+  updatedAt?: string
+  devices: number
+  switches: number
+  online: number
+}
+

@@ -285,11 +285,56 @@ export const exportHistoryReport = (params: PaginationParams & { format?: string
   return downloadFile(`/api/reports/export/history${q ? `?${q}` : ''}`, 'status_logs.csv')
 }
 
+export const exportStormIncidentsReport = (params: PaginationParams & { format?: string } = {}) => {
+  const search = new URLSearchParams()
+  if (params.limit) search.set('limit', String(params.limit))
+  if (params.format) search.set('format', params.format)
+  const q = search.toString()
+  return downloadFile(`/api/reports/export/storm/incidents${q ? `?${q}` : ''}`, 'storm_incidents.csv')
+}
+
+export const exportStormMitigationsReport = (params: PaginationParams & { format?: string } = {}) => {
+  const search = new URLSearchParams()
+  if (params.limit) search.set('limit', String(params.limit))
+  if (params.format) search.set('format', params.format)
+  const q = search.toString()
+  return downloadFile(
+    `/api/reports/export/storm/mitigations${q ? `?${q}` : ''}`,
+    'storm_mitigations.csv',
+  )
+}
+
+export const exportStormRecoveriesReport = (params: PaginationParams & { format?: string } = {}) => {
+  const search = new URLSearchParams()
+  if (params.limit) search.set('limit', String(params.limit))
+  if (params.format) search.set('format', params.format)
+  const q = search.toString()
+  return downloadFile(`/api/reports/export/storm/recoveries${q ? `?${q}` : ''}`, 'storm_recoveries.csv')
+}
+
 export const getHealth = () =>
   apiRequest<{ server: string; database: string; error?: string }>('/health', {
     timeoutMs: 5000,
     skipAuth: true,
   })
+
+export const getIsps = () =>
+  apiRequest<{ success: boolean; count: number; data: IspConnection[] }>('/api/isps')
+
+export const updateIsp = (id: string, payload: Partial<IspConnectionPayload>) =>
+  apiRequest<{ success: boolean; message: string; data: IspConnection }>(`/api/isps/${id}`, {
+    method: 'PUT',
+    body: payload,
+  })
+
+export const scanIsp = (id: string) =>
+  apiRequest<{ success: boolean; message: string; data: IspConnection }>(
+    `/api/isps/${id}/scan`,
+    {
+      method: 'POST',
+      timeoutMs: 30000,
+    },
+  )
 
 export const getInterfaces = (params: PaginationParams = {}) =>
   apiRequest<ApiListResponse<NetworkInterface>>(`/api/interfaces${toQuery(params)}`)
@@ -705,32 +750,34 @@ export const retryStormRecovery = (payload: { incidentId: string }) =>
     },
   )
 
-export const getIsps = () =>
-  apiRequest<ApiListResponse<IspConnection>>('/api/isps')
+// ── Custom Networks API ──────────────────────────────────────────────────────
 
-export const getIsp = (id: string) =>
-  apiRequest<ApiItemResponse<IspConnection>>(`/api/isps/${id}`)
+import type { NetworkProfile } from '@/types'
 
-export const createIsp = (payload: IspConnectionPayload) =>
-  apiRequest<ApiItemResponse<IspConnection>>('/api/isps', {
+export const getNetworks = () =>
+  apiRequest<{ success: boolean; data: NetworkProfile[] }>('/api/networks')
+
+export const createNetwork = (payload: Partial<NetworkProfile>) =>
+  apiRequest<{ success: boolean; message: string; data: NetworkProfile }>('/api/networks', {
     method: 'POST',
     body: payload,
   })
 
-export const updateIsp = (id: string, payload: Partial<IspConnectionPayload>) =>
-  apiRequest<ApiItemResponse<IspConnection>>(`/api/isps/${id}`, {
+export const updateNetwork = (id: string, payload: Partial<NetworkProfile>) =>
+  apiRequest<{ success: boolean; message: string; data: NetworkProfile }>(`/api/networks/${id}`, {
     method: 'PUT',
     body: payload,
   })
 
-export const deleteIsp = (id: string) =>
-  apiRequest<{ success: boolean; message: string }>(`/api/isps/${id}`, {
+export const deleteNetwork = (id: string) =>
+  apiRequest<{ success: boolean; message: string }>(`/api/networks/${id}`, {
     method: 'DELETE',
   })
 
-export const scanIsp = (id: string) =>
-  apiRequest<ApiItemResponse<IspConnection>>(`/api/isps/${id}/scan`, {
+export const scanNetworks = (payload: { networkIds?: string[]; scanAllEnabled?: boolean }) =>
+  apiRequest<DiscoveryResult>('/api/discovery/scan-networks', {
     method: 'POST',
-    timeoutMs: 60_000,
+    body: payload,
+    timeoutMs: 300000,
   })
 
