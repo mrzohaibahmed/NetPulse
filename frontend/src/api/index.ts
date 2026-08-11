@@ -285,6 +285,33 @@ export const exportHistoryReport = (params: PaginationParams & { format?: string
   return downloadFile(`/api/reports/export/history${q ? `?${q}` : ''}`, 'status_logs.csv')
 }
 
+export const exportStormIncidentsReport = (params: PaginationParams & { format?: string } = {}) => {
+  const search = new URLSearchParams()
+  if (params.limit) search.set('limit', String(params.limit))
+  if (params.format) search.set('format', params.format)
+  const q = search.toString()
+  return downloadFile(`/api/reports/export/storm/incidents${q ? `?${q}` : ''}`, 'storm_incidents.csv')
+}
+
+export const exportStormMitigationsReport = (params: PaginationParams & { format?: string } = {}) => {
+  const search = new URLSearchParams()
+  if (params.limit) search.set('limit', String(params.limit))
+  if (params.format) search.set('format', params.format)
+  const q = search.toString()
+  return downloadFile(
+    `/api/reports/export/storm/mitigations${q ? `?${q}` : ''}`,
+    'storm_mitigations.csv',
+  )
+}
+
+export const exportStormRecoveriesReport = (params: PaginationParams & { format?: string } = {}) => {
+  const search = new URLSearchParams()
+  if (params.limit) search.set('limit', String(params.limit))
+  if (params.format) search.set('format', params.format)
+  const q = search.toString()
+  return downloadFile(`/api/reports/export/storm/recoveries${q ? `?${q}` : ''}`, 'storm_recoveries.csv')
+}
+
 export const getHealth = () =>
   apiRequest<{ server: string; database: string; error?: string }>('/health', {
     timeoutMs: 5000,

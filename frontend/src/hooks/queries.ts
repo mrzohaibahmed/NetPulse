@@ -66,6 +66,9 @@ import {
   discoverRange,
   exportDevicesReport,
   exportHistoryReport,
+  exportStormIncidentsReport,
+  exportStormMitigationsReport,
+  exportStormRecoveriesReport,
   getNetworks,
   createNetwork,
   updateNetwork,
@@ -1013,6 +1016,30 @@ export function useExportReports() {
       try {
         await exportHistoryReport(params)
         toast.success('History export started')
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Export failed')
+      }
+    },
+    exportStormIncidents: async (params: PaginationParams & { format?: string }) => {
+      try {
+        await exportStormIncidentsReport(params)
+        toast.success('Storm incidents export started')
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Export failed')
+      }
+    },
+    exportStormMitigations: async (params: PaginationParams & { format?: string }) => {
+      try {
+        await exportStormMitigationsReport(params)
+        toast.success('Storm mitigations export started')
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Export failed')
+      }
+    },
+    exportStormRecoveries: async (params: PaginationParams & { format?: string }) => {
+      try {
+        await exportStormRecoveriesReport(params)
+        toast.success('Storm recoveries export started')
       } catch (err) {
         toast.error(err instanceof Error ? err.message : 'Export failed')
       }
