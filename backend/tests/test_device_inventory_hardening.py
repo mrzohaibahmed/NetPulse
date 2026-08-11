@@ -22,19 +22,33 @@ from services.discovery.classifier import ClassificationResult
 
 def test_unique_index_creation_is_idempotent():
     mock_devices = MagicMock()
-    mock_devices.create_index.return_value = "uniq_devices_ipAddress"
+    mock_devices.create_index.side_effect = [
+        "uniq_devices_ipAddress",
+        "idx_devices_monitor_due_claim",
+        "uniq_devices_ipAddress",
+        "idx_devices_monitor_due_claim",
+    ]
 
     with patch("services.device_indexes.db") as mock_db:
         mock_db.devices = mock_devices
         ensure_device_indexes()
         ensure_device_indexes()
 
-    assert mock_devices.create_index.call_count == 2
-    mock_devices.create_index.assert_called_with(
-        [("ipAddress", 1)],
-        unique=True,
-        name="uniq_devices_ipAddress",
-    )
+    # ipAddress unique + due/claim partial, each ensured twice
+    assert mock_devices.create_index.call_count == 4
+    first_keys = [call.args[0] for call in mock_devices.create_index.call_args_list]
+    assert [("ipAddress", 1)] in first_keys
+    assert [("nextCheckAt", 1), ("scanClaimExpiresAt", 1)] in first_keys
+
+    due_calls = [
+        call
+        for call in mock_devices.create_index.call_args_list
+        if call.kwargs.get("name") == "idx_devices_monitor_due_claim"
+        or (call.args and call.args[0] == [("nextCheckAt", 1), ("scanClaimExpiresAt", 1)])
+    ]
+    assert len(due_calls) == 2
+    assert due_calls[0].kwargs["partialFilterExpression"] == {"monitor": True}
+    assert due_calls[0].kwargs.get("unique") is not True
 
 
 def test_duplicate_key_error_during_discovery_insert():

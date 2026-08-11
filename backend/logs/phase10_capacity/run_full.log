@@ -1,0 +1,228 @@
+MongoDB Connected Successfully!
+Database: NetworkMonitor
+Phase 10 capacity validation
+  mode: mocked ping + in-memory store (no production IO)
+  interval=30.0s  fleets=[15, 100, 250, 500, 750, 1000]
+  mixes=['all_up', 'half', 'all_down', 'intermittent', 'slow']
+  concurrency=[20, 30, 40, 50, 60, 64]
+  unreachable_cost=3.0s (timeout=1000ms × retries=3)
+[run] devices=15 mix=all_up concurrency=20 ...
+  -> PASS wave=0.72s overlap=0 ping_p50=11.0 bottleneck=none
+[inherit] devices=15 mix=all_up c=30 -> PASS (from c=20)
+[inherit] devices=15 mix=all_up c=40 -> PASS (from c=30)
+[inherit] devices=15 mix=all_up c=50 -> PASS (from c=40)
+[inherit] devices=15 mix=all_up c=60 -> PASS (from c=50)
+[inherit] devices=15 mix=all_up c=64 -> PASS (from c=60)
+[run] devices=15 mix=half concurrency=20 ...
+  -> PASS wave=3.03s overlap=0 ping_p50=10.0 bottleneck=none
+[inherit] devices=15 mix=half c=30 -> PASS (from c=20)
+[inherit] devices=15 mix=half c=40 -> PASS (from c=30)
+[inherit] devices=15 mix=half c=50 -> PASS (from c=40)
+[inherit] devices=15 mix=half c=60 -> PASS (from c=50)
+[inherit] devices=15 mix=half c=64 -> PASS (from c=60)
+[run] devices=15 mix=all_down concurrency=20 ...
+  -> PASS wave=3.06s overlap=0 ping_p50=3000.0 bottleneck=none
+[inherit] devices=15 mix=all_down c=30 -> PASS (from c=20)
+[inherit] devices=15 mix=all_down c=40 -> PASS (from c=30)
+[inherit] devices=15 mix=all_down c=50 -> PASS (from c=40)
+[inherit] devices=15 mix=all_down c=60 -> PASS (from c=50)
+[inherit] devices=15 mix=all_down c=64 -> PASS (from c=60)
+[run] devices=15 mix=intermittent concurrency=20 ...
+  -> PASS wave=3.06s overlap=0 ping_p50=3000.0 bottleneck=none
+[inherit] devices=15 mix=intermittent c=30 -> PASS (from c=20)
+[inherit] devices=15 mix=intermittent c=40 -> PASS (from c=30)
+[inherit] devices=15 mix=intermittent c=50 -> PASS (from c=40)
+[inherit] devices=15 mix=intermittent c=60 -> PASS (from c=50)
+[inherit] devices=15 mix=intermittent c=64 -> PASS (from c=60)
+[run] devices=15 mix=slow concurrency=20 ...
+  -> PASS wave=0.48s overlap=0 ping_p50=300.00000000000006 bottleneck=none
+[inherit] devices=15 mix=slow c=30 -> PASS (from c=20)
+[inherit] devices=15 mix=slow c=40 -> PASS (from c=30)
+[inherit] devices=15 mix=slow c=50 -> PASS (from c=40)
+[inherit] devices=15 mix=slow c=60 -> PASS (from c=50)
+[inherit] devices=15 mix=slow c=64 -> PASS (from c=60)
+[run] devices=100 mix=all_up concurrency=20 ...
+  -> PASS wave=0.33s overlap=0 ping_p50=11.0 bottleneck=none
+[inherit] devices=100 mix=all_up c=30 -> PASS (from c=20)
+[inherit] devices=100 mix=all_up c=40 -> PASS (from c=30)
+[inherit] devices=100 mix=all_up c=50 -> PASS (from c=40)
+[inherit] devices=100 mix=all_up c=60 -> PASS (from c=50)
+[inherit] devices=100 mix=all_up c=64 -> PASS (from c=60)
+[run] devices=100 mix=half concurrency=20 ...
+  -> PASS wave=9.31s overlap=0 ping_p50=10.0 bottleneck=none
+[inherit] devices=100 mix=half c=30 -> PASS (from c=20)
+[inherit] devices=100 mix=half c=40 -> PASS (from c=30)
+[inherit] devices=100 mix=half c=50 -> PASS (from c=40)
+[inherit] devices=100 mix=half c=60 -> PASS (from c=50)
+[inherit] devices=100 mix=half c=64 -> PASS (from c=60)
+[run] devices=100 mix=all_down concurrency=20 ...
+  -> PASS wave=15.30s overlap=0 ping_p50=3000.0 bottleneck=none
+[inherit] devices=100 mix=all_down c=30 -> PASS (from c=20)
+[inherit] devices=100 mix=all_down c=40 -> PASS (from c=30)
+[inherit] devices=100 mix=all_down c=50 -> PASS (from c=40)
+[inherit] devices=100 mix=all_down c=60 -> PASS (from c=50)
+[inherit] devices=100 mix=all_down c=64 -> PASS (from c=60)
+[run] devices=100 mix=intermittent concurrency=20 ...
+  -> PASS wave=15.25s overlap=0 ping_p50=3000.0 bottleneck=none
+[inherit] devices=100 mix=intermittent c=30 -> PASS (from c=20)
+[inherit] devices=100 mix=intermittent c=40 -> PASS (from c=30)
+[inherit] devices=100 mix=intermittent c=50 -> PASS (from c=40)
+[inherit] devices=100 mix=intermittent c=60 -> PASS (from c=50)
+[inherit] devices=100 mix=intermittent c=64 -> PASS (from c=60)
+[run] devices=100 mix=slow concurrency=20 ...
+  -> PASS wave=1.93s overlap=0 ping_p50=300.00000000000006 bottleneck=none
+[inherit] devices=100 mix=slow c=30 -> PASS (from c=20)
+[inherit] devices=100 mix=slow c=40 -> PASS (from c=30)
+[inherit] devices=100 mix=slow c=50 -> PASS (from c=40)
+[inherit] devices=100 mix=slow c=60 -> PASS (from c=50)
+[inherit] devices=100 mix=slow c=64 -> PASS (from c=60)
+[run] devices=250 mix=all_up concurrency=20 ...
+  -> PASS wave=0.82s overlap=0 ping_p50=11.0 bottleneck=none
+[inherit] devices=250 mix=all_up c=30 -> PASS (from c=20)
+[inherit] devices=250 mix=all_up c=40 -> PASS (from c=30)
+[inherit] devices=250 mix=all_up c=50 -> PASS (from c=40)
+[inherit] devices=250 mix=all_up c=60 -> PASS (from c=50)
+[inherit] devices=250 mix=all_up c=64 -> PASS (from c=60)
+[run] devices=250 mix=half concurrency=20 ...
+  -> PASS WITH LIMITED HEADROOM wave=21.59s overlap=0 ping_p50=10.0 bottleneck=limited_headroom
+[run] devices=250 mix=half concurrency=30 ...
+  -> PASS wave=15.43s overlap=0 ping_p50=10.0 bottleneck=none
+[inherit] devices=250 mix=half c=40 -> PASS (from c=30)
+[inherit] devices=250 mix=half c=50 -> PASS (from c=40)
+[inherit] devices=250 mix=half c=60 -> PASS (from c=50)
+[inherit] devices=250 mix=half c=64 -> PASS (from c=60)
+[run] devices=250 mix=all_down concurrency=20 ...
+  -> FAIL wave=39.95s overlap=0 ping_p50=3000.0 bottleneck=wave_exceeds_interval
+[run] devices=250 mix=all_down concurrency=30 ...
+  -> PASS WITH LIMITED HEADROOM wave=27.44s overlap=0 ping_p50=3000.0 bottleneck=limited_headroom
+[run] devices=250 mix=all_down concurrency=40 ...
+  -> PASS WITH LIMITED HEADROOM wave=21.54s overlap=0 ping_p50=3000.0 bottleneck=limited_headroom
+[run] devices=250 mix=all_down concurrency=50 ...
+  -> PASS wave=15.51s overlap=0 ping_p50=3000.0 bottleneck=none
+[inherit] devices=250 mix=all_down c=60 -> PASS (from c=50)
+[inherit] devices=250 mix=all_down c=64 -> PASS (from c=60)
+[run] devices=250 mix=intermittent concurrency=20 ...
+  -> FAIL wave=39.59s overlap=0 ping_p50=3000.0 bottleneck=wave_exceeds_interval
+[run] devices=250 mix=intermittent concurrency=30 ...
+  -> PASS WITH LIMITED HEADROOM wave=27.61s overlap=0 ping_p50=3000.0 bottleneck=limited_headroom
+[run] devices=250 mix=intermittent concurrency=40 ...
+  -> PASS WITH LIMITED HEADROOM wave=21.41s overlap=0 ping_p50=3000.0 bottleneck=limited_headroom
+[run] devices=250 mix=intermittent concurrency=50 ...
+  -> PASS wave=15.60s overlap=0 ping_p50=3000.0 bottleneck=none
+[inherit] devices=250 mix=intermittent c=60 -> PASS (from c=50)
+[inherit] devices=250 mix=intermittent c=64 -> PASS (from c=60)
+[run] devices=250 mix=slow concurrency=20 ...
+  -> PASS wave=5.01s overlap=0 ping_p50=300.00000000000006 bottleneck=none
+[inherit] devices=250 mix=slow c=30 -> PASS (from c=20)
+[inherit] devices=250 mix=slow c=40 -> PASS (from c=30)
+[inherit] devices=250 mix=slow c=50 -> PASS (from c=40)
+[inherit] devices=250 mix=slow c=60 -> PASS (from c=50)
+[inherit] devices=250 mix=slow c=64 -> PASS (from c=60)
+[run] devices=500 mix=all_up concurrency=20 ...
+  -> PASS wave=2.90s overlap=0 ping_p50=11.0 bottleneck=none
+[inherit] devices=500 mix=all_up c=30 -> PASS (from c=20)
+[inherit] devices=500 mix=all_up c=40 -> PASS (from c=30)
+[inherit] devices=500 mix=all_up c=50 -> PASS (from c=40)
+[inherit] devices=500 mix=all_up c=60 -> PASS (from c=50)
+[inherit] devices=500 mix=all_up c=64 -> PASS (from c=60)
+[run] devices=500 mix=half concurrency=20 ...
+  -> FAIL wave=41.17s overlap=0 ping_p50=10.0 bottleneck=wave_exceeds_interval
+[run] devices=500 mix=half concurrency=30 ...
+  -> PASS WITH LIMITED HEADROOM wave=28.55s overlap=0 ping_p50=10.0 bottleneck=limited_headroom
+[run] devices=500 mix=half concurrency=40 ...
+  -> PASS WITH LIMITED HEADROOM wave=21.73s overlap=0 ping_p50=10.0 bottleneck=limited_headroom
+[run] devices=500 mix=half concurrency=50 ...
+  -> PASS wave=16.24s overlap=0 ping_p50=10.0 bottleneck=none
+[inherit] devices=500 mix=half c=60 -> PASS (from c=50)
+[inherit] devices=500 mix=half c=64 -> PASS (from c=60)
+[run] devices=500 mix=all_down concurrency=20 ...
+  -> FAIL wave=76.80s overlap=0 ping_p50=3000.0 bottleneck=wave_exceeds_interval
+[run] devices=500 mix=all_down concurrency=30 ...
+  -> FAIL wave=52.20s overlap=0 ping_p50=3000.0 bottleneck=wave_exceeds_interval
+[run] devices=500 mix=all_down concurrency=40 ...
+  -> FAIL wave=39.87s overlap=0 ping_p50=3000.0 bottleneck=wave_exceeds_interval
+[run] devices=500 mix=all_down concurrency=50 ...
+  -> FAIL wave=30.87s overlap=0 ping_p50=3000.0 bottleneck=wave_exceeds_interval
+[run] devices=500 mix=all_down concurrency=60 ...
+  -> PASS WITH LIMITED HEADROOM wave=27.88s overlap=0 ping_p50=3000.0 bottleneck=limited_headroom
+[run] devices=500 mix=all_down concurrency=64 ...
+  -> PASS WITH LIMITED HEADROOM wave=24.71s overlap=0 ping_p50=3000.0 bottleneck=limited_headroom
+[run] devices=500 mix=intermittent concurrency=20 ...
+  -> FAIL wave=76.55s overlap=0 ping_p50=3000.0 bottleneck=wave_exceeds_interval
+[run] devices=500 mix=intermittent concurrency=30 ...
+  -> FAIL wave=52.46s overlap=0 ping_p50=3000.0 bottleneck=wave_exceeds_interval
+[run] devices=500 mix=intermittent concurrency=40 ...
+  -> FAIL wave=40.06s overlap=0 ping_p50=3000.0 bottleneck=wave_exceeds_interval
+[run] devices=500 mix=intermittent concurrency=50 ...
+  -> FAIL wave=31.12s overlap=0 ping_p50=3000.0 bottleneck=wave_exceeds_interval
+[run] devices=500 mix=intermittent concurrency=60 ...
+  -> PASS WITH LIMITED HEADROOM wave=27.71s overlap=0 ping_p50=3000.0 bottleneck=limited_headroom
+[run] devices=500 mix=intermittent concurrency=64 ...
+  -> PASS WITH LIMITED HEADROOM wave=24.87s overlap=0 ping_p50=3000.0 bottleneck=limited_headroom
+[run] devices=500 mix=slow concurrency=20 ...
+  -> PASS wave=11.48s overlap=0 ping_p50=300.00000000000006 bottleneck=none
+[inherit] devices=500 mix=slow c=30 -> PASS (from c=20)
+[inherit] devices=500 mix=slow c=40 -> PASS (from c=30)
+[inherit] devices=500 mix=slow c=50 -> PASS (from c=40)
+[inherit] devices=500 mix=slow c=60 -> PASS (from c=50)
+[inherit] devices=500 mix=slow c=64 -> PASS (from c=60)
+[run] devices=750 mix=all_up concurrency=20 ...
+  -> PASS wave=5.28s overlap=0 ping_p50=11.0 bottleneck=none
+[inherit] devices=750 mix=all_up c=30 -> PASS (from c=20)
+[inherit] devices=750 mix=all_up c=40 -> PASS (from c=30)
+[inherit] devices=750 mix=all_up c=50 -> PASS (from c=40)
+[inherit] devices=750 mix=all_up c=60 -> PASS (from c=50)
+[inherit] devices=750 mix=all_up c=64 -> PASS (from c=60)
+[run] devices=750 mix=half concurrency=20 ...
+  -> FAIL wave=62.33s overlap=0 ping_p50=10.0 bottleneck=wave_exceeds_interval
+[run] devices=750 mix=half concurrency=30 ...
+  -> FAIL wave=43.16s overlap=0 ping_p50=10.0 bottleneck=wave_exceeds_interval
+[run] devices=750 mix=half concurrency=40 ...
+  -> FAIL wave=31.89s overlap=0 ping_p50=10.0 bottleneck=wave_exceeds_interval
+[run] devices=750 mix=half concurrency=50 ...
+  -> PASS WITH LIMITED HEADROOM wave=25.18s overlap=0 ping_p50=10.0 bottleneck=limited_headroom
+[run] devices=750 mix=half concurrency=60 ...
+  -> PASS WITH LIMITED HEADROOM wave=21.94s overlap=0 ping_p50=10.0 bottleneck=limited_headroom
+[run] devices=750 mix=half concurrency=64 ...
+  -> PASS wave=19.31s overlap=0 ping_p50=10.0 bottleneck=none
+[run] devices=750 mix=all_down concurrency=20 ...
+  -> FAIL wave=90.05s overlap=0 ping_p50=3000.0 bottleneck=incomplete_wave
+[run] devices=750 mix=all_down concurrency=30 ...
+  -> FAIL wave=77.27s overlap=0 ping_p50=3000.0 bottleneck=wave_exceeds_interval
+[run] devices=750 mix=all_down concurrency=40 ...
+  -> FAIL wave=60.91s overlap=0 ping_p50=3000.0 bottleneck=wave_exceeds_interval
+[run] devices=750 mix=all_down concurrency=50 ...
+  -> FAIL wave=47.98s overlap=0 ping_p50=3000.0 bottleneck=wave_exceeds_interval
+[run] devices=750 mix=all_down concurrency=60 ...
+  -> FAIL wave=41.55s overlap=0 ping_p50=3000.0 bottleneck=wave_exceeds_interval
+[run] devices=750 mix=all_down concurrency=64 ...
+  -> FAIL wave=37.67s overlap=0 ping_p50=3000.0 bottleneck=wave_exceeds_interval
+[run] devices=750 mix=intermittent concurrency=20 ...
+  -> FAIL wave=90.05s overlap=0 ping_p50=3000.0 bottleneck=incomplete_wave
+[run] devices=750 mix=intermittent concurrency=30 ...
+  -> FAIL wave=77.94s overlap=0 ping_p50=3000.0 bottleneck=wave_exceeds_interval
+[run] devices=750 mix=intermittent concurrency=40 ...
+  -> FAIL wave=59.35s overlap=0 ping_p50=3000.0 bottleneck=wave_exceeds_interval
+[run] devices=750 mix=intermittent concurrency=50 ...
+  -> FAIL wave=46.51s overlap=0 ping_p50=3000.0 bottleneck=wave_exceeds_interval
+[run] devices=750 mix=intermittent concurrency=60 ...
+  -> FAIL wave=40.02s overlap=0 ping_p50=3000.0 bottleneck=wave_exceeds_interval
+[run] devices=750 mix=intermittent concurrency=64 ...
+  -> FAIL wave=36.93s overlap=0 ping_p50=3000.0 bottleneck=wave_exceeds_interval
+[run] devices=750 mix=slow concurrency=20 ...
+  -> PASS wave=15.69s overlap=0 ping_p50=300.00000000000006 bottleneck=none
+[inherit] devices=750 mix=slow c=30 -> PASS (from c=20)
+[inherit] devices=750 mix=slow c=40 -> PASS (from c=30)
+[inherit] devices=750 mix=slow c=50 -> PASS (from c=40)
+[inherit] devices=750 mix=slow c=60 -> PASS (from c=50)
+[inherit] devices=750 mix=slow c=64 -> PASS (from c=60)
+[run] devices=1000 mix=all_up concurrency=20 ...
+  -> PASS wave=8.60s overlap=0 ping_p50=11.0 bottleneck=none
+[inherit] devices=1000 mix=all_up c=30 -> PASS (from c=20)
+[inherit] devices=1000 mix=all_up c=40 -> PASS (from c=30)
+[inherit] devices=1000 mix=all_up c=50 -> PASS (from c=40)
+[inherit] devices=1000 mix=all_up c=60 -> PASS (from c=50)
+[inherit] devices=1000 mix=all_up c=64 -> PASS (from c=60)
+[run] devices=1000 mix=half concurrency=20 ...
+  -> FAIL wave=79.81s overlap=0 ping_p50=10.0 bottleneck=wave_exceeds_interval
+[run] devices=1000 mix=half concurrency=30 ...

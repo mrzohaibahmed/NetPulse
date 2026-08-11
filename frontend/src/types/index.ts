@@ -126,6 +126,30 @@ export interface PingHistory {
   timestamp: string
 }
 
+export type IspStatus = 'Online' | 'Offline' | 'Unknown'
+
+export interface IspConnection {
+  id: string
+  name: string
+  target: string
+  monitor: boolean
+  status: IspStatus
+  responseTime: number | null
+  lastSeen: string | null
+  lastCheckedAt?: string | null
+  consecutiveFailures?: number
+  lastPingAttemptId?: string | null
+  lastPingStartedAt?: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface IspConnectionPayload {
+  name: string
+  target?: string
+  monitor?: boolean
+}
+
 export interface DashboardSummary {
   totalDevices: number
   onlineDevices: number

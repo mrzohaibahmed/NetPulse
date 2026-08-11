@@ -11,6 +11,7 @@ from routes.dashboard_routes import dashboard_bp
 from routes.device_routes import device_bp
 from routes.discovery_routes import discovery_bp
 from routes.history_routes import history_bp
+from routes.isp_routes import isp_bp
 from routes.interface_routes import interface_bp
 from routes.nmap_routes import nmap_bp
 from routes.report_routes import report_bp
@@ -20,6 +21,8 @@ from routes.storm_routes import storm_bp
 from routes.topology import topology_bp
 from scheduler import start_scheduler
 from services.device_indexes import ensure_device_indexes
+from services.isp_indexes import ensure_isp_indexes
+from services.isp_service import ensure_isp_connections
 from services.interface_collection.collector import ensure_interface_indexes
 from services.interface_collection.stats_collector import ensure_interface_stats_indexes
 from services.settings_service import ensure_settings
@@ -57,6 +60,7 @@ CORS(app, supports_credentials=True)
 
 app.register_blueprint(auth_bp, url_prefix="/api")
 app.register_blueprint(device_bp, url_prefix="/api")
+app.register_blueprint(isp_bp, url_prefix="/api")
 app.register_blueprint(nmap_bp, url_prefix="/api")
 app.register_blueprint(scan_bp, url_prefix="/api")
 app.register_blueprint(history_bp, url_prefix="/api")
@@ -118,6 +122,8 @@ def bootstrap():
     # MongoDB enforces these under concurrency; application checks are kept
     # for user-friendly errors.
     ensure_device_indexes()
+    ensure_isp_indexes()
+    ensure_isp_connections()
     # Phase 5 — scheduler leader-election lock collection.
     ensure_scheduler_lock_indexes()
     # Idempotent history + active critical-alert uniqueness.
@@ -202,9 +208,20 @@ bootstrap()
 
 # Start monitoring unless we're the Flask debug reloader parent process.
 # Default OFF — production must not run the interactive debugger.
+# When FLASK_DEBUG=true, Werkzeug spawns a parent (watch) + child (serve).
+# Only the child has WERKZEUG_RUN_MAIN=true — starting in both would create
+# two APScheduler instances and two competing ownerIds in one "logical" app.
 DEBUG = os.getenv("FLASK_DEBUG", "false").lower() in ("1", "true", "yes")
-if not DEBUG or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
+_should_start_scheduler = (not DEBUG) or (
+    os.environ.get("WERKZEUG_RUN_MAIN") == "true"
+)
+if _should_start_scheduler:
     start_scheduler()
+else:
+    _bootstrap_logger.info(
+        "Skipping start_scheduler in Flask reloader parent "
+        "(FLASK_DEBUG=true, WERKZEUG_RUN_MAIN unset)"
+    )
 
 
 if __name__ == "__main__":

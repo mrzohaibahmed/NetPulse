@@ -40,4 +40,5 @@ export const queryKeys = {
   users: ['users'] as const,
   networkHint: ['network-hint'] as const,
   uptimeReport: (params: object) => ['uptime-report', params] as const,
+  isps: ['isps'] as const,
 }

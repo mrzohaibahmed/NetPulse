@@ -1,0 +1,214 @@
+[
+  {
+    "devices": 15,
+    "mix": "all_up",
+    "concurrency": 20,
+    "interval_s": 30.0,
+    "wave_s": 1.870273599983193,
+    "start_to_start_ms": {
+      "p50": null,
+      "p95": null,
+      "p99": null,
+      "max": null,
+      "n": 0
+    },
+    "due_lag_ms": {
+      "p50": 1845.0675010681152,
+      "p95": 1886.997938156128,
+      "p99": 1886.997938156128,
+      "max": 1886.997938156128,
+      "n": 15
+    },
+    "ping_duration_ms": {
+      "p50": 11.0,
+      "p95": 14.0,
+      "p99": 14.0,
+      "max": 14.0,
+      "n": 15
+    },
+    "queue_wait_ms": {
+      "p50": 2.673799986951053,
+      "p95": 30.11240001069382,
+      "p99": 30.11240001069382,
+      "max": 30.11240001069382,
+      "n": 15
+    },
+    "worker_util": 0.0,
+    "queue_depth_max": 0,
+    "claims_won": 15,
+    "claims_conflict": 0,
+    "overlapping_claims": 0,
+    "mongo_ops": 31,
+    "mongo_ops_per_s": 16.5095402244771,
+    "mongo_latency_p95_ms": 0.8501000120304525,
+    "mongo_errors": 0,
+    "cpu_percent": null,
+    "rss_mb": null,
+    "threads": 8,
+    "dispatch_p95_ms": 92.4407999846153,
+    "missed_dispatches": 0,
+    "classification": "PASS",
+    "bottleneck": "none",
+    "notes": "completed=15/15",
+    "mode": "wave"
+  },
+  {
+    "devices": 15,
+    "mix": "all_up",
+    "concurrency": 40,
+    "interval_s": 30.0,
+    "wave_s": 1.870273599983193,
+    "start_to_start_ms": {
+      "p50": null,
+      "p95": null,
+      "p99": null,
+      "max": null,
+      "n": 0
+    },
+    "due_lag_ms": {
+      "p50": 1845.0675010681152,
+      "p95": 1886.997938156128,
+      "p99": 1886.997938156128,
+      "max": 1886.997938156128,
+      "n": 15
+    },
+    "ping_duration_ms": {
+      "p50": 11.0,
+      "p95": 14.0,
+      "p99": 14.0,
+      "max": 14.0,
+      "n": 15
+    },
+    "queue_wait_ms": {
+      "p50": 2.673799986951053,
+      "p95": 30.11240001069382,
+      "p99": 30.11240001069382,
+      "max": 30.11240001069382,
+      "n": 15
+    },
+    "worker_util": 0.0,
+    "queue_depth_max": 0,
+    "claims_won": 15,
+    "claims_conflict": 0,
+    "overlapping_claims": 0,
+    "mongo_ops": 31,
+    "mongo_ops_per_s": 16.5095402244771,
+    "mongo_latency_p95_ms": 0.8501000120304525,
+    "mongo_errors": 0,
+    "cpu_percent": null,
+    "rss_mb": null,
+    "threads": null,
+    "dispatch_p95_ms": null,
+    "missed_dispatches": 0,
+    "classification": "PASS",
+    "bottleneck": "none",
+    "notes": "inherited_from_lower_concurrency",
+    "mode": "inherited"
+  },
+  {
+    "devices": 15,
+    "mix": "half",
+    "concurrency": 20,
+    "interval_s": 30.0,
+    "wave_s": 3.0688426999840885,
+    "start_to_start_ms": {
+      "p50": null,
+      "p95": null,
+      "p99": null,
+      "max": null,
+      "n": 0
+    },
+    "due_lag_ms": {
+      "p50": 1076.9402980804443,
+      "p95": 4066.5087699890137,
+      "p99": 4066.5087699890137,
+      "max": 4066.5087699890137,
+      "n": 15
+    },
+    "ping_duration_ms": {
+      "p50": 10.0,
+      "p95": 3000.0,
+      "p99": 3000.0,
+      "max": 3000.0,
+      "n": 15
+    },
+    "queue_wait_ms": {
+      "p50": 2.0770999835804105,
+      "p95": 4.938400001265109,
+      "p99": 4.938400001265109,
+      "max": 4.938400001265109,
+      "n": 15
+    },
+    "worker_util": 23.333333333333332,
+    "queue_depth_max": 0,
+    "claims_won": 15,
+    "claims_conflict": 0,
+    "overlapping_claims": 0,
+    "mongo_ops": 33,
+    "mongo_ops_per_s": 10.616474890361117,
+    "mongo_latency_p95_ms": 1.1021000100299716,
+    "mongo_errors": 0,
+    "cpu_percent": null,
+    "rss_mb": null,
+    "threads": 8,
+    "dispatch_p95_ms": 42.87589999148622,
+    "missed_dispatches": 0,
+    "classification": "PASS",
+    "bottleneck": "none",
+    "notes": "completed=15/15",
+    "mode": "wave"
+  },
+  {
+    "devices": 15,
+    "mix": "half",
+    "concurrency": 40,
+    "interval_s": 30.0,
+    "wave_s": 3.0688426999840885,
+    "start_to_start_ms": {
+      "p50": null,
+      "p95": null,
+      "p99": null,
+      "max": null,
+      "n": 0
+    },
+    "due_lag_ms": {
+      "p50": 1076.9402980804443,
+      "p95": 4066.5087699890137,
+      "p99": 4066.5087699890137,
+      "max": 4066.5087699890137,
+      "n": 15
+    },
+    "ping_duration_ms": {
+      "p50": 10.0,
+      "p95": 3000.0,
+      "p99": 3000.0,
+      "max": 3000.0,
+      "n": 15
+    },
+    "queue_wait_ms": {
+      "p50": 2.0770999835804105,
+      "p95": 4.938400001265109,
+      "p99": 4.938400001265109,
+      "max": 4.938400001265109,
+      "n": 15
+    },
+    "worker_util": 23.333333333333332,
+    "queue_depth_max": 0,
+    "claims_won": 15,
+    "claims_conflict": 0,
+    "overlapping_claims": 0,
+    "mongo_ops": 33,
+    "mongo_ops_per_s": 10.616474890361117,
+    "mongo_latency_p95_ms": 1.1021000100299716,
+    "mongo_errors": 0,
+    "cpu_percent": null,
+    "rss_mb": null,
+    "threads": null,
+    "dispatch_p95_ms": null,
+    "missed_dispatches": 0,
+    "classification": "PASS",
+    "bottleneck": "none",
+    "notes": "inherited_from_lower_concurrency",
+    "mode": "inherited"
+  }
+]

@@ -191,6 +191,25 @@ def _serialize_neighbor(neighbor) -> dict | None:
     }
 
 
+def serialize_isp_connection(isp):
+    """Serialise a document from the ``ispConnections`` collection."""
+    return {
+        "id": str(isp["_id"]),
+        "name": isp.get("name"),
+        "target": isp.get("target"),
+        "monitor": bool(isp.get("monitor", False)),
+        "status": isp.get("status", "Unknown"),
+        "responseTime": isp.get("responseTime"),
+        "lastSeen": format_datetime(isp.get("lastSeen")),
+        "lastCheckedAt": format_datetime(isp.get("lastCheckedAt")),
+        "consecutiveFailures": isp.get("consecutiveFailures", 0),
+        "lastPingAttemptId": isp.get("lastPingAttemptId"),
+        "lastPingStartedAt": format_datetime(isp.get("lastPingStartedAt")),
+        "createdAt": format_datetime(isp.get("createdAt")),
+        "updatedAt": format_datetime(isp.get("updatedAt")),
+    }
+
+
 def serialize_device(device):
     return {
         "_id": str(device["_id"]),

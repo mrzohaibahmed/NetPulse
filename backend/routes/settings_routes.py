@@ -31,8 +31,24 @@ def update_settings_route():
         data = request.get_json() or {}
         updated = update_settings(data)
 
+        # pingInterval: legacy reschedules APScheduler to the new period;
+        # dispatch mode leaves MONITOR_DISPATCHER_INTERVAL_SECONDS alone and
+        # only affects nextCheckAt on future claims (no mass rewrite).
         if "pingInterval" in data:
             reschedule_monitor_job(int(updated.get("pingInterval", 30)))
+
+        # pingConcurrency: safe idle rebuild of the dispatch runtime only —
+        # never recreate the pool on every dispatcher tick.
+        if "pingConcurrency" in data:
+            try:
+                from services.monitor_runtime import (  # noqa: PLC0415
+                    reconfigure_monitor_runtime_concurrency,
+                )
+
+                reconfigure_monitor_runtime_concurrency()
+            except Exception:
+                # Settings write already succeeded; runtime refresh is best-effort.
+                pass
 
         log_audit(
             action="settings_updated",
@@ -42,6 +58,7 @@ def update_settings_route():
                 "pingInterval": updated.get("pingInterval"),
                 "pingTimeoutMs": updated.get("pingTimeoutMs"),
                 "pingRetries": updated.get("pingRetries"),
+                "pingConcurrency": updated.get("pingConcurrency"),
                 "smtpUpdated": "smtp" in data,
                 "mitigationMode": updated.get("mitigationMode"),
                 "autoRecovery": updated.get("autoRecovery"),

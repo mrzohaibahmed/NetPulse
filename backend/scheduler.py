@@ -1,4 +1,5 @@
 import atexit
+import threading
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -8,13 +9,20 @@ from config.database import (
     INTERFACE_STATS_INTERVAL,
     NMAP_SCAN_INTERVAL,
 )
+from services.isp_monitor_service import monitor_all_isp_connections
+from services.monitor_dispatch import dispatch_monitor_due_devices
 from services.monitor_service import monitor_all_devices
 from services.scheduler_ownership import (
     release_scheduler_ownership,
     require_scheduler_leadership,
 )
-from services.settings_service import get_settings
+from services.settings_service import (
+    get_monitor_dispatcher_interval_seconds,
+    get_monitor_runtime_mode,
+    get_settings,
+)
 from utils.monitor_logger import get_monitor_logger
+from utils.utc import format_utc, utc_now
 
 logger = get_monitor_logger("scheduler")
 
@@ -24,6 +32,10 @@ logger = get_monitor_logger("scheduler")
 # Phase 5: only the MongoDB-elected leader executes job bodies.
 scheduler = BackgroundScheduler()
 
+# Process-level lock — prevents concurrent start_scheduler() races before
+# ``scheduler.running`` becomes true.
+_scheduler_init_lock = threading.Lock()
+
 # Job IDs — kept as named constants to make reschedule helpers readable.
 JOB_ID = "device_monitor_job"
 NMAP_JOB_ID = "nmap_scan_job"
@@ -31,6 +43,7 @@ INTERFACE_JOB_ID = "interface_discovery_job"
 INTERFACE_STATS_JOB_ID = "interface_stats_job"
 RECOVERY_JOB_ID = "storm_recovery_job"
 RETENTION_JOB_ID = "data_retention_job"
+ISP_JOB_ID = "isp_monitor_job"
 
 
 def _run_interface_stats_then_eligibility() -> None:
@@ -332,64 +345,191 @@ def _start_retention_job() -> None:
 # Public functions (unchanged signatures for existing callers)
 # ---------------------------------------------------------------------------
 
-def start_scheduler():
-    """Start automatic device monitoring using persisted settings."""
-    if scheduler.running:
-        logger.info("Scheduler already running")
+def _register_isp_monitor_job(interval: int) -> None:
+    """Register ISP connectivity monitoring on the shared scheduler."""
+    scheduler.add_job(
+        func=monitor_all_isp_connections,
+        trigger="interval",
+        seconds=interval,
+        id=ISP_JOB_ID,
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+    logger.info("ISP monitor job registered | interval=%ss", interval)
+
+
+def _register_device_monitor_job() -> None:
+    """
+    Register the device ping monitor job for the active runtime mode.
+
+    legacy  → monitor_all_devices every pingInterval
+    dispatch → dispatch_monitor_due_devices every MONITOR_DISPATCHER_INTERVAL_SECONDS
+    """
+    mode = get_monitor_runtime_mode()
+    settings = get_settings()
+    ping_interval = int(settings.get("pingInterval") or 30)
+
+    if mode == "dispatch":
+        from services.monitor_runtime import start_monitor_runtime  # noqa: PLC0415
+
+        start_monitor_runtime()
+        dispatcher_interval = get_monitor_dispatcher_interval_seconds()
+        scheduler.add_job(
+            func=dispatch_monitor_due_devices,
+            trigger="interval",
+            seconds=dispatcher_interval,
+            id=JOB_ID,
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        logger.info(
+            "Device monitor job registered | mode=dispatch | "
+            "dispatcher_interval=%ss | pingInterval=%ss (device cadence only)",
+            dispatcher_interval,
+            ping_interval,
+        )
         return
 
-    settings = get_settings()
-    interval = int(settings.get("pingInterval") or 30)
-
-    # Job 1: Ping-based online/offline monitoring (unchanged behaviour).
-    # Leadership is enforced inside monitor_all_devices (Phase 5).
     scheduler.add_job(
         func=monitor_all_devices,
         trigger="interval",
-        seconds=interval,
+        seconds=ping_interval,
         id=JOB_ID,
         replace_existing=True,
         max_instances=1,
         coalesce=True,
     )
+    logger.info(
+        "Device monitor job registered | mode=legacy | ping_interval=%ss",
+        ping_interval,
+    )
 
-    scheduler.start()
-    logger.info("Scheduler started | ping_interval=%ss", interval)
 
-    # Job 2: Nmap metadata scan (independent; registered after scheduler.start).
-    _start_nmap_job()
+def start_scheduler():
+    """Start automatic device monitoring using persisted settings."""
+    with _scheduler_init_lock:
+        if scheduler.running:
+            logger.info(
+                "Scheduler already running | ts=%s | skip_duplicate_start=true",
+                format_utc(utc_now()),
+            )
+            return
 
-    # Job 3: SSH interface discovery (independent of ping / Nmap).
-    _start_interface_job()
+        settings = get_settings()
+        interval = int(settings.get("pingInterval") or 30)
 
-    # Job 4: Interface statistics (SNMP preferred, SSH fallback).
-    _start_interface_stats_job()
+        # Job 1: Device reachability monitoring (legacy wave OR dispatch).
+        _register_device_monitor_job()
 
-    # Job 5: Storm Recovery periodic auto-recovery checks (30s interval).
-    _start_recovery_job()
+        # Job 1b: ISP connectivity monitoring (independent job body).
+        _register_isp_monitor_job(interval)
 
-    # Job 6: Data retention (TTL refresh + closed-incident purge) — daily.
-    _start_retention_job()
+        scheduler.start()
+        logger.info(
+            "Scheduler started | ts=%s | runtime_mode=%s | ping_interval=%ss",
+            format_utc(utc_now()),
+            get_monitor_runtime_mode(),
+            interval,
+        )
+
+        # Job 2: Nmap metadata scan (independent; registered after scheduler.start).
+        _start_nmap_job()
+
+        # Job 3: SSH interface discovery (independent of ping / Nmap).
+        _start_interface_job()
+
+        # Job 4: Interface statistics (SNMP preferred, SSH fallback).
+        _start_interface_stats_job()
+
+        # Job 5: Storm Recovery periodic auto-recovery checks (30s interval).
+        _start_recovery_job()
+
+        # Job 6: Data retention (TTL refresh + closed-incident purge) — daily.
+        _start_retention_job()
+
+
+def reschedule_dispatcher_job() -> None:
+    """
+    Re-bind the dispatch-mode device job to MONITOR_DISPATCHER_INTERVAL_SECONDS.
+
+    Independent of ``pingInterval``. Safe to call on env reload; uses
+    ``replace_existing=True`` so a second job is never created. No-op in
+    legacy mode or when the scheduler is not running.
+    """
+    if not scheduler.running:
+        return
+    if get_monitor_runtime_mode() != "dispatch":
+        return
+
+    dispatcher_interval = get_monitor_dispatcher_interval_seconds()
+    scheduler.add_job(
+        func=dispatch_monitor_due_devices,
+        trigger="interval",
+        seconds=dispatcher_interval,
+        id=JOB_ID,
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+    logger.info(
+        "Dispatcher job rescheduled | mode=dispatch | dispatcher_interval=%ss",
+        dispatcher_interval,
+    )
 
 
 def reschedule_monitor_job(interval_seconds: int):
-    """Update ping interval without restarting the server (FR8.3)."""
+    """
+    React to a ``pingInterval`` settings change without restarting the server.
+
+    Legacy mode: APScheduler device job period tracks ``pingInterval``.
+
+    Dispatch mode: does **not** change the dispatcher period (that stays
+    ``MONITOR_DISPATCHER_INTERVAL_SECONDS``). ``pingInterval`` only affects
+    ``nextCheckAt`` on subsequent ``claim_device`` calls. Existing
+    ``nextCheckAt`` values are not mass-rewritten here.
+    """
     interval = max(int(interval_seconds), 5)
 
     if not scheduler.running:
         start_scheduler()
         return
 
-    scheduler.add_job(
-        func=monitor_all_devices,
-        trigger="interval",
-        seconds=interval,
-        id=JOB_ID,
-        replace_existing=True,
-        max_instances=1,
-        coalesce=True,
-    )
-    logger.info("Ping scheduler rescheduled | interval=%ss", interval)
+    mode = get_monitor_runtime_mode()
+    if mode == "legacy":
+        # Legacy: device job period tracks pingInterval.
+        scheduler.add_job(
+            func=monitor_all_devices,
+            trigger="interval",
+            seconds=interval,
+            id=JOB_ID,
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        logger.info("Ping scheduler rescheduled | mode=legacy | interval=%ss", interval)
+    else:
+        # Dispatch: leave device_monitor_job period alone. Never pass
+        # pingInterval into add_job for JOB_ID — that restores the 30s coupling.
+        dispatcher_interval = get_monitor_dispatcher_interval_seconds()
+        existing = scheduler.get_job(JOB_ID)
+        existing_seconds = None
+        if existing is not None and getattr(existing, "trigger", None) is not None:
+            existing_seconds = getattr(existing.trigger, "interval", None)
+            if existing_seconds is not None:
+                existing_seconds = int(existing_seconds.total_seconds())
+
+        logger.info(
+            "Ping interval updated | mode=dispatch | pingInterval=%ss | "
+            "dispatcher_interval unchanged=%ss | jobSeconds=%s",
+            interval,
+            dispatcher_interval,
+            existing_seconds if existing_seconds is not None else dispatcher_interval,
+        )
+
+    # ISP job still follows pingInterval (ISP redesign is out of scope).
+    _register_isp_monitor_job(interval)
 
 
 def reschedule_nmap_job(interval_seconds: int) -> None:
@@ -421,17 +561,53 @@ def reschedule_nmap_job(interval_seconds: int) -> None:
 
 
 def stop_scheduler():
-    if not scheduler.running:
-        return
+    """
+    Graceful shutdown: stop work, then release *our* lease only.
 
-    # Phase 5 — release lease so another instance can take over immediately.
-    try:
-        release_scheduler_ownership()
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Ownership release during shutdown failed: %s", exc)
+    Order matters — stop accepting/dispatching before deleting the Mongo lock
+    so we never release while still running leader job bodies.
+    """
+    with _scheduler_init_lock:
+        if not scheduler.running:
+            return
 
-    scheduler.shutdown(wait=False)
-    logger.info("Scheduler shutdown")
+        # 1–2) Stop accepting new scheduler / runtime work.
+        try:
+            from services.monitor_runtime import (  # noqa: PLC0415
+                signal_monitor_runtime_leadership_lost,
+                stop_monitor_runtime,
+            )
+
+            signal_monitor_runtime_leadership_lost()
+            stop_monitor_runtime(wait=False)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Monitor runtime stop during shutdown failed | ts=%s | error=%s",
+                format_utc(utc_now()),
+                exc,
+            )
+
+        # 3) Stop APScheduler (no new job fires after this).
+        try:
+            scheduler.shutdown(wait=False)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "APScheduler shutdown failed | ts=%s | error=%s",
+                format_utc(utc_now()),
+                exc,
+            )
+
+        # 4) Release Mongo ownership only if this process owns the lease.
+        try:
+            release_scheduler_ownership()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Ownership release during shutdown failed | ts=%s | error=%s",
+                format_utc(utc_now()),
+                exc,
+            )
+
+        logger.info("Scheduler shutdown | ts=%s", format_utc(utc_now()))
 
 
 atexit.register(stop_scheduler)

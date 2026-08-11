@@ -7,14 +7,17 @@ expired leases are stolen atomically — no manual cleanup required.
 
 Lease operations use atomic Mongo filters so renew cannot overwrite a peer
 and release cannot delete another owner's lock.
+
+Internal timestamps are timezone-aware UTC only (see utils.utc).
 """
 
 from __future__ import annotations
 
 import os
 import socket
+import threading
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 from pymongo import ReturnDocument
@@ -22,7 +25,7 @@ from pymongo.errors import DuplicateKeyError
 
 from services.mongo_retry import assert_update_acknowledged, with_mongo_retry
 from utils.monitor_logger import get_monitor_logger
-from utils.utc import ensure_utc, utc_now
+from utils.utc import ensure_utc, format_utc, require_utc_aware, utc_now
 
 logger = get_monitor_logger("scheduler_ownership")
 
@@ -30,9 +33,14 @@ LOCK_COLLECTION = "scheduler_locks"
 LOCK_ID = "monitor_scheduler"
 DEFAULT_TTL_SECONDS = int(os.getenv("SCHEDULER_LOCK_TTL_SECONDS", "90"))
 
+# Process-unique identity: hostname:pid:instance_uuid (UUID fixed at import).
 _OWNER_ID = (
     f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:12]}"
 )
+
+# Tracks whether this process previously held leadership (for loss logging).
+_held_leadership = False
+_held_lock = threading.Lock()
 
 
 def _db():
@@ -67,8 +75,63 @@ def ensure_scheduler_lock_indexes() -> None:
         logger.warning("Failed to ensure scheduler lock indexes: %s", exc)
 
 
-def _expires_at(now):
+def _expires_at(now: datetime) -> datetime:
+    now = require_utc_aware(now, field="now")
     return now + timedelta(seconds=get_lock_ttl_seconds())
+
+
+def _lease_payload(now: datetime, owner: str) -> dict[str, Any]:
+    """UTC-aware fields written on renew / steal / insert."""
+    now = require_utc_aware(now, field="now")
+    return {
+        "ownerId": owner,
+        "hostname": socket.gethostname(),
+        "pid": os.getpid(),
+        "heartbeatAt": now,
+        "expiresAt": _expires_at(now),
+        "updatedAt": now,
+    }
+
+
+def _mark_held(held: bool) -> None:
+    global _held_leadership
+    with _held_lock:
+        _held_leadership = held
+
+
+def _was_held() -> bool:
+    with _held_lock:
+        return _held_leadership
+
+
+def _log_peer_or_lost(owner: str, current: dict | None, *, reason: str) -> None:
+    peer = (current or {}).get("ownerId")
+    expires = (current or {}).get("expiresAt")
+    heartbeat = (current or {}).get("heartbeatAt")
+    now_s = format_utc(utc_now())
+    if _was_held() and peer != owner:
+        _mark_held(False)
+        logger.error(
+            "Scheduler leadership lost | ts=%s | self=%s | peer=%s | "
+            "heartbeatAt=%s | expiresAt=%s | reason=%s",
+            now_s,
+            owner,
+            peer,
+            format_utc(ensure_utc(heartbeat)) if isinstance(heartbeat, datetime) else heartbeat,
+            format_utc(ensure_utc(expires)) if isinstance(expires, datetime) else expires,
+            reason,
+        )
+        return
+
+    logger.info(
+        "Scheduler ownership held by peer | ts=%s | self=%s | peer=%s | "
+        "heartbeatAt=%s | expiresAt=%s | leadership=follower",
+        now_s,
+        owner,
+        peer,
+        format_utc(ensure_utc(heartbeat)) if isinstance(heartbeat, datetime) else heartbeat,
+        format_utc(ensure_utc(expires)) if isinstance(expires, datetime) else expires,
+    )
 
 
 def try_acquire_or_renew() -> bool:
@@ -77,19 +140,14 @@ def try_acquire_or_renew() -> bool:
 
     Returns True only when this process owns the lock after the call.
     All paths use atomic Mongo operations (filtered update / findAndModify / insert).
+
+    Same-process concurrent callers that lose an insert/steal race against
+    *this* ownerId retry renew so they do not falsely report follower status.
     """
     now = utc_now()
-    expires = _expires_at(now)
     owner = get_owner_id()
     coll = _db()[LOCK_COLLECTION]
-    payload = {
-        "ownerId": owner,
-        "hostname": socket.gethostname(),
-        "pid": os.getpid(),
-        "heartbeatAt": now,
-        "expiresAt": expires,
-        "updatedAt": now,
-    }
+    payload = _lease_payload(now, owner)
 
     # 1) Atomic renew — ownerId filter prevents overwriting a peer lease.
     def _renew_own():
@@ -109,6 +167,7 @@ def try_acquire_or_renew() -> bool:
             action="scheduler_lock_renew",
             require_matched=True,
         )
+        _mark_held(True)
         return True
 
     # 2) Atomic steal of expired / malformed lease (single document findAndModify).
@@ -136,10 +195,14 @@ def try_acquire_or_renew() -> bool:
         idempotent=True,
     )
     if stolen and stolen.get("ownerId") == owner:
+        _mark_held(True)
         logger.info(
-            "Scheduler ownership acquired (failover) | owner=%s | ttl=%ss",
+            "Scheduler ownership acquired (failover) | ts=%s | self=%s | "
+            "ttl=%ss | expiresAt=%s | leadership=leader",
+            format_utc(now),
             owner,
             get_lock_ttl_seconds(),
+            format_utc(payload["expiresAt"]),
         )
         return True
 
@@ -163,20 +226,37 @@ def try_acquire_or_renew() -> bool:
         idempotent=True,
     )
     if inserted is not None:
+        _mark_held(True)
         logger.info(
-            "Scheduler ownership acquired (initial) | owner=%s | ttl=%ss",
+            "Scheduler ownership acquired (initial) | ts=%s | self=%s | "
+            "ttl=%ss | expiresAt=%s | leadership=leader",
+            format_utc(now),
             owner,
             get_lock_ttl_seconds(),
+            format_utc(payload["expiresAt"]),
         )
         return True
 
-    current = coll.find_one({"_id": LOCK_ID}, {"ownerId": 1, "expiresAt": 1})
-    logger.info(
-        "Scheduler ownership held by peer | self=%s | peer=%s | expiresAt=%s",
-        owner,
-        (current or {}).get("ownerId"),
-        (current or {}).get("expiresAt"),
+    # 4) Same-process race recovery: a concurrent caller may have just
+    # inserted/stolen as *this* ownerId. Retry renew before conceding.
+    renew_again = with_mongo_retry(
+        _renew_own,
+        action="scheduler_lock_renew_race",
+        idempotent=True,
     )
+    if renew_again.matched_count:
+        _mark_held(True)
+        return True
+
+    current = coll.find_one(
+        {"_id": LOCK_ID},
+        {"ownerId": 1, "expiresAt": 1, "heartbeatAt": 1},
+    )
+    if current and current.get("ownerId") == owner and ensure_not_expired(current):
+        _mark_held(True)
+        return True
+
+    _log_peer_or_lost(owner, current, reason="acquire_or_renew_failed")
     return False
 
 
@@ -185,7 +265,21 @@ def is_scheduler_leader() -> bool:
     try:
         return try_acquire_or_renew()
     except Exception as exc:  # noqa: BLE001
-        logger.error("Scheduler ownership check failed (skipping jobs): %s", exc)
+        if _was_held():
+            _mark_held(False)
+            logger.error(
+                "Scheduler leadership lost | ts=%s | self=%s | reason=mongo_failure | error=%s",
+                format_utc(utc_now()),
+                get_owner_id(),
+                exc,
+            )
+        else:
+            logger.error(
+                "Scheduler ownership check failed (skipping jobs) | ts=%s | self=%s | error=%s",
+                format_utc(utc_now()),
+                get_owner_id(),
+                exc,
+            )
         return False
 
 
@@ -194,7 +288,8 @@ def require_scheduler_leadership(job_name: str) -> bool:
     if is_scheduler_leader():
         return True
     logger.info(
-        "Skipping scheduled job — not scheduler leader | job=%s | owner=%s",
+        "Skipping scheduled job — not scheduler leader | ts=%s | job=%s | self=%s",
+        format_utc(utc_now()),
         job_name,
         get_owner_id(),
     )
@@ -209,14 +304,33 @@ def release_scheduler_ownership() -> None:
             {"_id": LOCK_ID, "ownerId": owner}
         )
         if result.deleted_count:
-            logger.info("Scheduler ownership released | owner=%s", owner)
+            _mark_held(False)
+            logger.info(
+                "Scheduler ownership released | ts=%s | self=%s",
+                format_utc(utc_now()),
+                owner,
+            )
+        else:
+            logger.info(
+                "Scheduler ownership release skipped (not owner or absent) | "
+                "ts=%s | self=%s",
+                format_utc(utc_now()),
+                owner,
+            )
     except Exception as exc:  # noqa: BLE001
-        logger.warning("Scheduler ownership release failed: %s", exc)
+        logger.warning(
+            "Scheduler ownership release failed | ts=%s | self=%s | error=%s",
+            format_utc(utc_now()),
+            owner,
+            exc,
+        )
 
 
 def ensure_not_expired(doc: dict) -> bool:
     expires = doc.get("expiresAt")
     if expires is None:
+        return False
+    if not isinstance(expires, datetime):
         return False
     exp = ensure_utc(expires)
     return exp is not None and exp > utc_now()
@@ -236,6 +350,9 @@ def ownership_status() -> dict[str, Any]:
             "pid": doc.get("pid"),
             "heartbeatAt": doc.get("heartbeatAt"),
             "expiresAt": doc.get("expiresAt"),
+            "acquiredAt": doc.get("acquiredAt"),
+            "createdAt": doc.get("createdAt"),
+            "updatedAt": doc.get("updatedAt"),
         },
     }
 
@@ -283,7 +400,8 @@ class CycleLeadershipGuard:
                 f"cycleId={self.cycle_id}"
             )
             logger.error(
-                "Monitoring cycle abort — scheduler leadership lost | %s",
+                "Monitoring cycle abort — scheduler leadership lost | ts=%s | %s",
+                format_utc(utc_now()),
                 self.abort_reason,
             )
             return False
@@ -291,7 +409,8 @@ class CycleLeadershipGuard:
         self._last_renew_at = utc_now()
         self._devices_since_renew = 0
         logger.debug(
-            "Leadership heartbeat ok | cycleId=%s | reason=%s | heartbeat_s=%s",
+            "Leadership heartbeat ok | ts=%s | cycleId=%s | reason=%s | heartbeat_s=%s",
+            format_utc(utc_now()),
             self.cycle_id,
             reason,
             self.heartbeat_s,

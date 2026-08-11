@@ -20,7 +20,7 @@ import {
   WifiOff,
 } from 'lucide-react'
 import { useAuth } from '@/shared/auth/AuthContext'
-import { useDashboardQuery, useHealthQuery } from '@/hooks/queries'
+import { useDashboardQuery, useHealthQuery, useIspsQuery } from '@/hooks/queries'
 import { computeNetworkHealth, healthColor } from '@/lib/health'
 import { formatDateTime, formatMs, formatPercent, formatRelative } from '@/utils/format'
 import type { AlertItem, PingHistory } from '@/types'
@@ -35,6 +35,7 @@ import { Badge } from '@/shared/ui/badge'
 import { Button } from '@/shared/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/shared/ui/card'
 import { cn } from '@/lib/utils'
+import { IspConnectivitySection } from '@/modules/ping/components/IspConnectivitySection'
 
 function isStormAlert(alert: AlertItem): boolean {
   const category = (alert.category || '').toLowerCase()
@@ -130,6 +131,7 @@ export function DashboardPage() {
   const { isAdmin } = useAuth()
   const dash = useDashboardQuery()
   const healthQuery = useHealthQuery()
+  const ispsQuery = useIspsQuery()
   const health = computeNetworkHealth(dash.summary)
 
   const offlineCount =
@@ -227,6 +229,11 @@ export function DashboardPage() {
       {dash.error ? (
         <ErrorState message={dash.error} onRetry={() => void dash.refetchAll()} className="py-4" />
       ) : null}
+
+      {/* ISP Connectivity — upstream link status */}
+      <motion.div variants={fadeUp}>
+        <IspConnectivitySection isps={ispsQuery.data} isLoading={ispsQuery.isLoading} />
+      </motion.div>
 
       {/* Row 1 — Workspace launchers */}
       <motion.section
