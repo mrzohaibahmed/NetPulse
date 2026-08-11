@@ -1,13 +1,36 @@
 import { apiRequest } from '@/shared/api/client'
 import type { ApiItemResponse } from '@/types'
 
-export interface TopologyNode {
-  id: string
-  label: string
+export interface TopologyNodeDetails {
+  hostname: string
   ip: string
   type: string
   status: string
+  vendor: string
+  platform: string
+  protocol: string
+  managementAddress: string
+  operatingSystem: string
+  lastSeen: string
+  systemDescription: string
+  capabilities: string[]
   isKnownDevice: boolean
+}
+
+export interface TopologyNode {
+  id: string
+  hostname: string
+  label: string
+  ip: string
+  mac?: string
+  type: string
+  status: string
+  vendor: string
+  platform: string
+  protocol: string
+  managementAddress: string
+  isKnownDevice: boolean
+  details: TopologyNodeDetails
 }
 
 export interface TopologyEdge {
@@ -15,6 +38,10 @@ export interface TopologyEdge {
   source: string
   target: string
   label: string
+  sourcePort: string
+  targetPort: string
+  isTrunk: boolean
+  linkType: 'trunk' | 'access' | 'unknown' | string
   protocol: string
   animated?: boolean
 }
