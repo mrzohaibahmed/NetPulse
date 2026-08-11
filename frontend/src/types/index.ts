@@ -412,6 +412,17 @@ export interface NetworkInterface {
   duplex: string
   neighbor?: InterfaceNeighbor | null
   ifIndex?: number | null
+  /**
+   * IP address of the device plugged into this port, derived from the
+   * port's learned MAC(s) resolved against the ARP cache (or, for a
+   * multi-device uplink port, the known device its CDP/LLDP neighbor
+   * identity matches). Absent/null means genuinely unresolved — down
+   * port, or a multi-MAC port with no recognized neighbor — never a
+   * guess, so render nothing rather than a placeholder.
+   */
+  resolvedDeviceIp?: string | null
+  /** How resolvedDeviceIp was determined: "arp" | "neighbor". */
+  resolvedDeviceIpVia?: string | null
   macAddress: string
   vendor: string
   collectionMethod: string
