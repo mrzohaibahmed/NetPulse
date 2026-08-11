@@ -100,8 +100,8 @@ def resolve_port_device_ip(
     if len(macs) == 1:
         entry = arp_cache.get(macs[0])
         if entry and entry.get("ipAddress"):
-            return {"ip": entry["ipAddress"], "via": RESOLUTION_VIA_ARP}
-        return None
+            return {"ip": entry["ipAddress"], "via": RESOLUTION_VIA_ARP, "mac": macs[0]}
+        return {"ip": None, "via": None, "mac": macs[0]}
 
     # Multi-MAC (trunk/uplink) port: never guess one of several MACs.
     # Only show something when the neighbor's identity matches a device
@@ -124,7 +124,7 @@ def resolve_port_device_ip(
         matched = known_by_hostname[n_hostname]
 
     if matched and matched.get("ipAddress"):
-        return {"ip": matched["ipAddress"], "via": RESOLUTION_VIA_NEIGHBOR}
+        return {"ip": matched["ipAddress"], "via": RESOLUTION_VIA_NEIGHBOR, "mac": None}
 
     return None
 
@@ -192,7 +192,8 @@ def attach_resolved_ips(interfaces: list[dict]) -> list[dict]:
             known_devices_by_ip=known_devices_by_ip,
             known_devices_by_hostname=known_devices_by_hostname,
         )
-        iface["resolvedDeviceIp"] = resolution["ip"] if resolution else None
-        iface["resolvedDeviceIpVia"] = resolution["via"] if resolution else None
+        iface["resolvedDeviceIp"] = resolution.get("ip") if resolution else None
+        iface["resolvedDeviceIpVia"] = resolution.get("via") if resolution else None
+        iface["resolvedDeviceMac"] = resolution.get("mac") if resolution else None
 
     return interfaces
