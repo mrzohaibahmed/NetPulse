@@ -66,9 +66,14 @@ import {
   discoverRange,
   exportDevicesReport,
   exportHistoryReport,
+  getNetworks,
+  createNetwork,
+  updateNetwork,
+  deleteNetwork,
+  scanNetworks,
 } from '@/api'
 import { queryKeys } from '@/hooks/queryKeys'
-import type { DevicePayload, IspConnectionPayload, PaginationParams, UserRole } from '@/types'
+import type { DevicePayload, PaginationParams, UserRole, NetworkProfile } from '@/types'
 import { toast } from 'sonner'
 
 const DASHBOARD_INTERVAL = 10_000
@@ -1007,4 +1012,54 @@ export function useExportReports() {
       }
     },
   }
+}
+
+export function useNetworksQuery() {
+  return useQuery({
+    queryKey: ['networks'],
+    queryFn: async () => (await getNetworks()).data,
+    refetchInterval: 15_000,
+  })
+}
+
+export function useNetworkMutation() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      id,
+      payload,
+      isDelete = false,
+    }: {
+      id?: string
+      payload?: Partial<NetworkProfile>
+      isDelete?: boolean
+    }) => {
+      if (isDelete && id) {
+        return deleteNetwork(id)
+      } else if (id) {
+        return updateNetwork(id, payload!)
+      } else {
+        return createNetwork(payload!)
+      }
+    },
+    onSuccess: async (res) => {
+      toast.success(res.message)
+      await qc.invalidateQueries({ queryKey: ['networks'] })
+    },
+    onError: (err: Error) => toast.error(err.message),
+  })
+}
+
+export function useScanNetworksMutation() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: { networkIds?: string[]; scanAllEnabled?: boolean }) =>
+      scanNetworks(payload),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ['devices'] })
+      await qc.invalidateQueries({ queryKey: ['networks'] })
+      await qc.invalidateQueries({ queryKey: queryKeys.dashboard.all })
+    },
+    onError: (err: Error) => toast.error(err.message),
+  })
 }

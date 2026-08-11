@@ -705,32 +705,34 @@ export const retryStormRecovery = (payload: { incidentId: string }) =>
     },
   )
 
-export const getIsps = () =>
-  apiRequest<ApiListResponse<IspConnection>>('/api/isps')
+// ── Custom Networks API ──────────────────────────────────────────────────────
 
-export const getIsp = (id: string) =>
-  apiRequest<ApiItemResponse<IspConnection>>(`/api/isps/${id}`)
+import type { NetworkProfile } from '@/types'
 
-export const createIsp = (payload: IspConnectionPayload) =>
-  apiRequest<ApiItemResponse<IspConnection>>('/api/isps', {
+export const getNetworks = () =>
+  apiRequest<{ success: boolean; data: NetworkProfile[] }>('/api/networks')
+
+export const createNetwork = (payload: Partial<NetworkProfile>) =>
+  apiRequest<{ success: boolean; message: string; data: NetworkProfile }>('/api/networks', {
     method: 'POST',
     body: payload,
   })
 
-export const updateIsp = (id: string, payload: Partial<IspConnectionPayload>) =>
-  apiRequest<ApiItemResponse<IspConnection>>(`/api/isps/${id}`, {
+export const updateNetwork = (id: string, payload: Partial<NetworkProfile>) =>
+  apiRequest<{ success: boolean; message: string; data: NetworkProfile }>(`/api/networks/${id}`, {
     method: 'PUT',
     body: payload,
   })
 
-export const deleteIsp = (id: string) =>
-  apiRequest<{ success: boolean; message: string }>(`/api/isps/${id}`, {
+export const deleteNetwork = (id: string) =>
+  apiRequest<{ success: boolean; message: string }>(`/api/networks/${id}`, {
     method: 'DELETE',
   })
 
-export const scanIsp = (id: string) =>
-  apiRequest<ApiItemResponse<IspConnection>>(`/api/isps/${id}/scan`, {
+export const scanNetworks = (payload: { networkIds?: string[]; scanAllEnabled?: boolean }) =>
+  apiRequest<DiscoveryResult>('/api/discovery/scan-networks', {
     method: 'POST',
-    timeoutMs: 60_000,
+    body: payload,
+    timeoutMs: 300000,
   })
 
