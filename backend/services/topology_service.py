@@ -431,6 +431,7 @@ def _resolve_connected_target(
     """
     iface_name = iface.get("name") or ""
     description = iface.get("description") or ""
+    resolved_ip = str(iface.get("resolvedDeviceIp") or "").strip()
     is_active = str(iface.get("operStatus") or "").lower() == "up"
 
     if neighbor and _neighbor_has_identity(neighbor):
@@ -464,6 +465,11 @@ def _resolve_connected_target(
     )
     if inventory_id:
         return inventory_id, "", "Active Link"
+
+    # Port-resolution enrichment may already know the connected inventory IP
+    # even when there is no direct CDP/LLDP identity on the interface.
+    if resolved_ip and resolved_ip in by_ip:
+        return by_ip[resolved_ip], "", "Active Link"
 
     ip_from_desc = _extract_ipv4(description)
     if ip_from_desc and ip_from_desc in by_ip:

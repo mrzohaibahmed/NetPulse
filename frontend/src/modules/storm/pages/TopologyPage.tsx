@@ -782,7 +782,7 @@ export function TopologyPage() {
             </div>
             <div className="text-muted-foreground">Link:</div>
             <div className="text-foreground capitalize">
-              {hoveredEdge.data.status === 'stale' ? 'Stale (endpoint offline)' : 'Active'}
+              {hoveredEdge.data.status === 'stale' ? 'Stale (unverified endpoint)' : 'Active'}
             </div>
           </div>
         </div>
