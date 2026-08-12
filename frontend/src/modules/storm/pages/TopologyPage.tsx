@@ -510,11 +510,8 @@ export function TopologyPage() {
       return
     }
 
-    // Level 2 is live-only: backend filters stale edges; keep a local guard.
-    const visibleEdges =
-      selectedSwitchId != null
-        ? activeData.edges
-        : activeData.edges.filter((e) => e.status !== 'stale')
+    // Show all edges in both Level 1 and Level 2
+    const visibleEdges = activeData.edges
 
     const { edgeHandles, nodeHandles } = computeHandleAssignments(visibleEdges)
     const savedPositions = loadSavedPositions(viewKey)
@@ -538,11 +535,19 @@ export function TopologyPage() {
       } satisfies TopologyNodeData,
     }))
 
+    const nodeStatusMap = new Map(activeData.nodes.map((n) => [n.id, n.status?.toLowerCase() || '']))
+
     const flowEdges: Edge[] = visibleEdges.map((e) => {
       const handles = edgeHandles.get(e.id)
       const isTrunk = Boolean(e.isTrunk)
       const isStale = e.status === 'stale'
-      const stroke = isStale ? STALE_EDGE_COLOR : isTrunk ? TRUNK_EDGE_COLOR : EDGE_COLOR
+      const sourceStatus = nodeStatusMap.get(e.source)
+      const targetStatus = nodeStatusMap.get(e.target)
+      const isOffline = ['offline', 'critical', 'not reachable'].includes(sourceStatus || '') ||
+                        ['offline', 'critical', 'not reachable'].includes(targetStatus || '')
+      const isInactive = isOffline || isStale
+
+      const stroke = isInactive ? STALE_EDGE_COLOR : isTrunk ? TRUNK_EDGE_COLOR : EDGE_COLOR
       return {
         id: e.id,
         source: e.source,
@@ -550,7 +555,7 @@ export function TopologyPage() {
         sourceHandle: handles?.sourceHandle,
         targetHandle: handles?.targetHandle,
         type: 'topologyEdge',
-        animated: !isTrunk && !isStale,
+        animated: !isTrunk && !isInactive,
         data: {
           sourcePort: e.sourcePort,
           targetPort: e.targetPort,
