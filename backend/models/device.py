@@ -32,6 +32,10 @@ def create_device(
         "createdAt": now,
         "updatedAt": now,
     }
+    # New monitored devices are due immediately for a first check; the
+    # dispatcher / claim path then advances nextCheckAt by pingInterval.
+    if monitor:
+        document["nextCheckAt"] = now
 
     if credentials:
         document["credentials"] = credentials

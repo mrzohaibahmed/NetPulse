@@ -123,7 +123,7 @@ def _base_device(**overrides) -> dict:
 
 
 class TestMonitorRuntimeMode(unittest.TestCase):
-    def test_default_is_legacy(self):
+    def test_default_is_dispatch(self):
         from services.settings_service import get_monitor_runtime_mode
 
         with patch(
@@ -132,7 +132,7 @@ class TestMonitorRuntimeMode(unittest.TestCase):
                 None if key == "MONITOR_RUNTIME_MODE" else default
             ),
         ):
-            self.assertEqual(get_monitor_runtime_mode(), "legacy")
+            self.assertEqual(get_monitor_runtime_mode(), "dispatch")
 
     def test_dispatch_accepted(self):
         from services.settings_service import get_monitor_runtime_mode
@@ -145,7 +145,18 @@ class TestMonitorRuntimeMode(unittest.TestCase):
         ):
             self.assertEqual(get_monitor_runtime_mode(), "dispatch")
 
-    def test_unknown_falls_back_to_legacy(self):
+    def test_legacy_accepted(self):
+        from services.settings_service import get_monitor_runtime_mode
+
+        with patch(
+            "services.settings_service.os.getenv",
+            side_effect=lambda key, default=None: (
+                "legacy" if key == "MONITOR_RUNTIME_MODE" else default
+            ),
+        ):
+            self.assertEqual(get_monitor_runtime_mode(), "legacy")
+
+    def test_unknown_falls_back_to_dispatch(self):
         from services.settings_service import get_monitor_runtime_mode
 
         with patch(
@@ -154,8 +165,7 @@ class TestMonitorRuntimeMode(unittest.TestCase):
                 "experimental" if key == "MONITOR_RUNTIME_MODE" else default
             ),
         ):
-            self.assertEqual(get_monitor_runtime_mode(), "legacy")
-
+            self.assertEqual(get_monitor_runtime_mode(), "dispatch")
 
 class TestClaimTtl(unittest.TestCase):
     @patch(
@@ -362,6 +372,56 @@ class TestClaimDevice(unittest.TestCase):
     @patch(
         "services.monitor_claim.get_ping_config",
         return_value={
+            "interval": 60,
+            "timeout_ms": 1000,
+            "retries": 2,
+            "failure_confirmation_scans": 2,
+        },
+    )
+    def test_next_check_at_advances_from_previous_deadline(self, _cfg):
+        from services.monitor_claim import claim_device
+
+        now = utc_now()
+        previous = now - timedelta(seconds=2)
+        doc = _base_device(nextCheckAt=previous)
+        _coll, db_patch = self._patch_db(doc)
+        with db_patch:
+            claimed = claim_device(doc["_id"], device=doc, now=now)
+        self.assertIsNotNone(claimed)
+        assert claimed is not None
+        next_check = ensure_utc(claimed["nextCheckAt"])
+        assert next_check is not None
+        expected = previous + timedelta(seconds=60)
+        self.assertEqual(next_check, expected)
+
+    @patch(
+        "services.monitor_claim.get_ping_config",
+        return_value={
+            "interval": 60,
+            "timeout_ms": 1000,
+            "retries": 2,
+            "failure_confirmation_scans": 2,
+        },
+    )
+    def test_overdue_device_clamps_to_claim_now_plus_interval(self, _cfg):
+        from services.monitor_claim import claim_device
+
+        now = utc_now()
+        # Overdue by > 1 interval: previous + 60 is still in the past.
+        previous = now - timedelta(seconds=150)
+        doc = _base_device(nextCheckAt=previous)
+        _coll, db_patch = self._patch_db(doc)
+        with db_patch:
+            claimed = claim_device(doc["_id"], device=doc, now=now)
+        self.assertIsNotNone(claimed)
+        assert claimed is not None
+        next_check = ensure_utc(claimed["nextCheckAt"])
+        assert next_check is not None
+        self.assertAlmostEqual((next_check - now).total_seconds(), 60.0, places=3)
+
+    @patch(
+        "services.monitor_claim.get_ping_config",
+        return_value={
             "interval": 30,
             "timeout_ms": 1000,
             "retries": 2,
@@ -394,6 +454,43 @@ class TestClaimDevice(unittest.TestCase):
         winners = [r for r in results if r is not None]
         self.assertEqual(len(winners), 1)
         self.assertEqual(winners[0]["scanClaimId"], coll.doc["scanClaimId"])
+
+
+class TestComputeNextCheckAt(unittest.TestCase):
+    def test_missing_previous_uses_claim_now(self):
+        from services.monitor_claim import compute_next_check_at
+
+        now = utc_now()
+        nxt = compute_next_check_at(
+            claim_now=now,
+            previous_next_check_at=None,
+            interval_seconds=60,
+        )
+        self.assertEqual(nxt, now + timedelta(seconds=60))
+
+    def test_deadline_progression(self):
+        from services.monitor_claim import compute_next_check_at
+
+        now = utc_now()
+        previous = now - timedelta(seconds=1)
+        nxt = compute_next_check_at(
+            claim_now=now,
+            previous_next_check_at=previous,
+            interval_seconds=60,
+        )
+        self.assertEqual(nxt, previous + timedelta(seconds=60))
+
+    def test_substantial_overdue_clamps(self):
+        from services.monitor_claim import compute_next_check_at
+
+        now = utc_now()
+        previous = now - timedelta(seconds=200)
+        nxt = compute_next_check_at(
+            claim_now=now,
+            previous_next_check_at=previous,
+            interval_seconds=60,
+        )
+        self.assertEqual(nxt, now + timedelta(seconds=60))
 
 
 class TestReleaseClaim(unittest.TestCase):

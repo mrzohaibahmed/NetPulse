@@ -461,7 +461,7 @@ def _register_device_monitor_job() -> None:
     """
     mode = get_monitor_runtime_mode()
     settings = get_settings()
-    ping_interval = int(settings.get("pingInterval") or 30)
+    ping_interval = int(settings.get("pingInterval") or 60)
 
     if mode == "dispatch":
         from services.monitor_runtime import start_monitor_runtime  # noqa: PLC0415
@@ -511,7 +511,7 @@ def start_scheduler():
             return
 
         settings = get_settings()
-        interval = int(settings.get("pingInterval") or 30)
+        interval = int(settings.get("pingInterval") or 60)
 
         # Job 1: Device reachability monitoring (legacy wave OR dispatch).
         _register_device_monitor_job()
@@ -610,7 +610,8 @@ def reschedule_monitor_job(interval_seconds: int):
         logger.info("Ping scheduler rescheduled | mode=legacy | interval=%ss", interval)
     else:
         # Dispatch: leave device_monitor_job period alone. Never pass
-        # pingInterval into add_job for JOB_ID — that restores the 30s coupling.
+        # pingInterval into add_job for JOB_ID — that restores legacy
+        # scheduler-period coupling (avoid in dispatch mode).
         dispatcher_interval = get_monitor_dispatcher_interval_seconds()
         existing = scheduler.get_job(JOB_ID)
         existing_seconds = None

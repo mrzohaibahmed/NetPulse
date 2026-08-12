@@ -70,7 +70,7 @@ Roles:
           ┌─────────────┬───────────────────┼───────────────────┬──────────────┐
           ▼             ▼                   ▼                   ▼              ▼
      ICMP ping     Nmap profiling    SSH iface discovery   SNMP/SSH stats   SMTP email
-     (~30s)        (~1 hour)         (~1 hour)             (~60s → storm)   critical
+     (~60s)        (~1 hour)         (~1 hour)             (~60s → storm)   critical
 ```
 
 1. On startup, Flask loads settings, ensures indexes, seeds default users if needed, and starts APScheduler.
@@ -86,14 +86,14 @@ Roles:
 
 **Where:** `backend/scheduler.py` → `services/monitor_service.py` → `services/ping_service.py`
 
-1. APScheduler runs `monitor_all_devices` on the global interval from Settings (`pingInterval`, default from `SCAN_INTERVAL`, usually 30s).
-2. For each device with `monitor: true`, if enough time has passed since `lastCheckedAt` (honoring optional per-device overrides), the service sends an ICMP echo via `ping3`.
+1. With `MONITOR_RUNTIME_MODE=dispatch` (default), APScheduler runs the due-device **dispatcher** every `MONITOR_DISPATCHER_INTERVAL_SECONDS` (1–5s, default 5). Per-device cadence is Settings `pingInterval` (default **60s** from `SCAN_INTERVAL`), advanced via `nextCheckAt` at claim time—not a 60s “scan all devices” tick.
+2. The dispatcher atomically claims due monitored devices up to free `pingConcurrency` worker slots (default **40**), then bounded workers run ICMP via `ping3`.
 3. Results update the device:
    - **Success** → `Online`, reset `consecutiveFailures`, set `lastSeen` and `responseTime`
    - **Failure + critical** → `Offline (Critical)`
    - **Failure + non-critical** → `Not Reachable`
 4. Every check is stored in `pingHistory` with `scanType` of `Automatic` or `Manual`.
-5. Changing `pingInterval` in Settings reschedules the loop without restarting Flask.
+5. Changing `pingInterval` in Settings updates the per-device cadence (legacy mode also retargets the APScheduler period; dispatch mode keeps the fast dispatcher tick).
 
 ### 2. Nmap deep scanning
 
@@ -366,7 +366,7 @@ DEFAULT_ADMIN_USER=admin
 DEFAULT_ADMIN_PASSWORD=admin123
 
 # Ping defaults (also adjustable in Settings UI)
-SCAN_INTERVAL=30
+SCAN_INTERVAL=60
 PING_TIMEOUT_MS=1000
 PING_RETRIES=3
 

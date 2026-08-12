@@ -21,11 +21,11 @@ from utils.utc import ensure_utc, utc_now
 
 logger = get_monitor_logger("monitor_metrics")
 
-# SLO targets for start-to-start cadence (ms) when pingInterval ≈ 30s.
-SLO_P50_TARGET_MS = 30_000
-SLO_P95_BUDGET_MS = 35_000
-SLO_P99_BUDGET_MS = 45_000
-SLO_MAX_ALERT_MS = 60_000
+# SLO targets for start-to-start cadence (ms) when pingInterval ≈ 60s.
+SLO_P50_TARGET_MS = 60_000
+SLO_P95_BUDGET_MS = 70_000
+SLO_P99_BUDGET_MS = 90_000
+SLO_MAX_ALERT_MS = 120_000
 
 HEARTBEAT_MIN_INTERVAL_SECONDS = 45
 SAMPLE_WINDOW = 500

@@ -35,7 +35,7 @@ def update_settings_route():
         # dispatch mode leaves MONITOR_DISPATCHER_INTERVAL_SECONDS alone and
         # only affects nextCheckAt on future claims (no mass rewrite).
         if "pingInterval" in data:
-            reschedule_monitor_job(int(updated.get("pingInterval", 30)))
+            reschedule_monitor_job(int(updated.get("pingInterval", 60)))
 
         # pingConcurrency: safe idle rebuild of the dispatch runtime only —
         # never recreate the pool on every dispatcher tick.

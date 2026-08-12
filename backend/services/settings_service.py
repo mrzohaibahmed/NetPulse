@@ -10,7 +10,8 @@ SETTINGS_ID = "global"
 
 DEFAULT_SETTINGS: dict[str, Any] = {
     "_id": SETTINGS_ID,
-    "pingInterval": int(os.getenv("SCAN_INTERVAL", "30")),
+    # Per-device monitoring cadence (seconds). Target: 60s for 500+ fleets.
+    "pingInterval": int(os.getenv("SCAN_INTERVAL", "60")),
     "pingTimeoutMs": int(os.getenv("PING_TIMEOUT_MS", "1000")),
     # Total ICMP attempts per scan (not "retries after first success/fail").
     "pingRetries": int(os.getenv("PING_RETRIES", "3")),
@@ -18,8 +19,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "pingFailureConfirmationScans": int(
         os.getenv("PING_FAILURE_CONFIRMATION_SCANS", "2")
     ),
-    # Max concurrent device pings per monitoring cycle (bounded parallelism).
-    "pingConcurrency": int(os.getenv("MONITOR_PING_CONCURRENCY", "20")),
+    # Max concurrent device pings (bounded workers). Target band: 25–40.
+    # 40 leaves headroom for 500-device all-timeout waves within a 60s cadence.
+    "pingConcurrency": int(os.getenv("MONITOR_PING_CONCURRENCY", "40")),
     "smtp": {
         "enabled": os.getenv("ALERT_EMAIL_ENABLED", "true").lower() in ("1", "true", "yes"),
         "host": (os.getenv("SMTP_HOST") or "smtp.gmail.com").strip(),
@@ -74,7 +76,7 @@ def get_public_settings():
     settings = get_settings()
     smtp = settings.get("smtp", {})
     return {
-        "pingInterval": settings.get("pingInterval", 30),
+        "pingInterval": settings.get("pingInterval", 60),
         "pingTimeoutMs": settings.get("pingTimeoutMs", 1000),
         "pingRetries": settings.get("pingRetries", 3),
         "pingFailureConfirmationScans": int(
@@ -285,15 +287,15 @@ def get_monitor_runtime_mode() -> str:
     """
     Ping monitoring runtime mode.
 
-    ``legacy`` (default): existing APScheduler wave / ``monitor_all_devices`` path.
-    ``dispatch``: claim/dispatcher architecture (Phase 4+).
+    ``dispatch`` (default): ``nextCheckAt`` + atomic claim + bounded workers.
+    ``legacy``: APScheduler wave / ``monitor_all_devices`` (compat / rollback).
 
-    Env: MONITOR_RUNTIME_MODE. Unknown values fall back to ``legacy``.
+    Env: MONITOR_RUNTIME_MODE. Unknown values fall back to ``dispatch``.
     """
-    raw = (os.getenv("MONITOR_RUNTIME_MODE") or "legacy").strip().lower()
+    raw = (os.getenv("MONITOR_RUNTIME_MODE") or "dispatch").strip().lower()
     if raw in ("legacy", "dispatch"):
         return raw
-    return "legacy"
+    return "dispatch"
 
 
 def get_monitor_dispatcher_interval_seconds() -> int:
@@ -320,7 +322,7 @@ def get_ping_config(device=None):
     APScheduler dispatcher period — that is ``get_monitor_dispatcher_interval_seconds``.
     """
     settings = get_settings()
-    interval = settings.get("pingInterval", 30)
+    interval = settings.get("pingInterval", 60)
     timeout_ms = settings.get("pingTimeoutMs", 1000)
     retries = settings.get("pingRetries", 3)
     confirmation_scans = settings.get(

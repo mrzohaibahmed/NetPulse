@@ -29,6 +29,7 @@ from services.interface_collection.stats_collector import ensure_interface_stats
 from services.settings_service import ensure_settings
 from services.scheduler_ownership import ensure_scheduler_lock_indexes
 from services.monitor_indexes import ensure_monitoring_idempotency_indexes
+from services.monitor_schedule_migration import ensure_monitor_schedule_migration
 from services.storm.confirmation import ensure_confirmation_indexes
 from services.storm.eligibility import ensure_eligibility_indexes
 from services.storm.incident import ensure_incident_indexes
@@ -118,6 +119,13 @@ def health():
 def bootstrap():
     ensure_secrets_encryption_configured()
     ensure_settings()
+    # 60s dispatch cutover: cadence defaults + staggered nextCheckAt backfill.
+    try:
+        ensure_monitor_schedule_migration()
+    except Exception as exc:  # noqa: BLE001
+        _bootstrap_logger.warning(
+            "[MONITOR-SCHEDULE] migration failed (non-fatal): %s", exc
+        )
 
     # Database-level uniqueness constraints (idempotent).
     # MongoDB enforces these under concurrency; application checks are kept

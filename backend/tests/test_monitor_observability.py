@@ -71,13 +71,13 @@ class TestSloAndCounters(unittest.TestCase):
             is_slo_miss,
         )
 
-        self.assertFalse(is_slo_miss(30_000))
+        self.assertFalse(is_slo_miss(60_000))
         self.assertFalse(is_slo_miss(SLO_P95_BUDGET_MS))
         self.assertTrue(is_slo_miss(SLO_P95_BUDGET_MS + 1))
 
         metrics = get_dispatch_metrics()
-        metrics.record_scan_timing(start_to_start_ms=30_000)
-        metrics.record_scan_timing(start_to_start_ms=36_000)
+        metrics.record_scan_timing(start_to_start_ms=60_000)
+        metrics.record_scan_timing(start_to_start_ms=75_000)
         metrics.record_scan_timing(start_to_start_ms=SLO_MAX_ALERT_MS + 1)
         snap = metrics.snapshot()
         self.assertEqual(snap["slo_misses"], 2)

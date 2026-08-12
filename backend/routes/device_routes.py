@@ -410,6 +410,12 @@ def update_device(device_id):
                 else:
                     update_data[key] = int(update_data[key])
 
+        # Enabling monitor without a schedule: due immediately for first check.
+        if "monitor" in update_data and bool(update_data["monitor"]):
+            if not device.get("monitor") or device.get("nextCheckAt") is None:
+                if "nextCheckAt" not in update_data:
+                    update_data["nextCheckAt"] = datetime.now(timezone.utc)
+
         update_data["updatedAt"] = datetime.now(timezone.utc)
 
         identity_updates = ownership_for_device_edit(device, update_data)

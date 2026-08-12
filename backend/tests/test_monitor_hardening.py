@@ -464,7 +464,7 @@ class TestPingConcurrencyConfig(unittest.TestCase):
     def test_default_concurrency_in_defaults(self):
         from services.settings_service import DEFAULT_SETTINGS
 
-        self.assertEqual(DEFAULT_SETTINGS["pingConcurrency"], 20)
+        self.assertEqual(DEFAULT_SETTINGS["pingConcurrency"], 40)
 
     @patch("services.settings_service.get_settings")
     def test_concurrency_clamped(self, mock_settings):

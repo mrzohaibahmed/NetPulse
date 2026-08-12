@@ -9,7 +9,7 @@ from config.nmap_validation import validate_nmap_scan_profiles
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
 
-SCAN_INTERVAL = int(os.getenv("SCAN_INTERVAL", 30))
+SCAN_INTERVAL = int(os.getenv("SCAN_INTERVAL", 60))
 
 # ── Nmap Scanner configuration ─────────────────────────────────────────────────
 # How often (seconds) the background Nmap scheduler runs. Default: 1 hour.

@@ -51,7 +51,7 @@ export function SettingsPage() {
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
     defaultValues: {
-      pingInterval: 30,
+      pingInterval: 60,
       pingTimeoutMs: 1000,
       pingRetries: 3,
       smtpEnabled: true,

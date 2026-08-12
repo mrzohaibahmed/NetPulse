@@ -99,7 +99,7 @@ Default users are created on first run if `users` is empty.
 
 | Job | Default interval | Purpose |
 |-----|------------------|---------|
-| `device_monitor_job` | Settings `pingInterval` (~30s) | ICMP monitoring |
+| `device_monitor_job` | Dispatch: dispatcher 1–5s; cadence `pingInterval` (**60s**) | ICMP monitoring via `nextCheckAt` |
 | `nmap_scan_job` | `NMAP_SCAN_INTERVAL` (3600s) | Online device profiling |
 | `interface_discovery_job` | `INTERFACE_SCAN_INTERVAL` (3600s) | SSH inventory |
 | `interface_stats_job` | `INTERFACE_STATS_INTERVAL` (60s) | Stats → eligibility → risk → confirmation → safety → prepare → auto-mitigation |

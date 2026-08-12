@@ -67,7 +67,7 @@ Default seeded accounts (empty DB): `admin` / `admin123`, `viewer` / `viewer123`
           ┌─────────────┬───────────────────┼───────────────────┬──────────────┐
           ▼             ▼                   ▼                   ▼              ▼
      ICMP ping     Nmap profiling    SSH iface discovery   SNMP/SSH stats   SMTP email
-     (~30s)        (~1 hour)         (~1 hour)             (~60s → storm)   critical
+     (~60s)        (~1 hour)         (~1 hour)             (~60s → storm)   critical
 ```
 
 **Design choices**

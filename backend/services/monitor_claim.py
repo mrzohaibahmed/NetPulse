@@ -1,20 +1,21 @@
 """
-Atomic per-device scan claims for the dispatch monitoring architecture (Phase 1).
-
-Claiming is independent of the legacy APScheduler wave path. Dispatch wiring is
-intentionally not connected here — callers in later phases use these helpers.
+Atomic per-device scan claims for the dispatch monitoring architecture.
 
 Semantics:
   - Missing ``nextCheckAt`` ⇒ device is due.
   - Missing claim expiry fields ⇒ device is unclaimed.
   - Claim does not touch ``lastCheckedAt`` or ``lastPingStartedAt``.
-  - ``nextCheckAt`` advances to claim_time + pingInterval (start-to-start).
+  - ``nextCheckAt`` advances from the previous deadline when possible
+    (``previous_nextCheckAt + pingInterval``) to avoid completion-time drift.
+  - Overdue policy: if that computed next deadline is still <= claim_now,
+    schedule ``claim_now + pingInterval`` (skip catch-up storms).
 """
 
 from __future__ import annotations
 
+import os
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 from pymongo import ReturnDocument
@@ -22,7 +23,7 @@ from pymongo import ReturnDocument
 from services.mongo_retry import assert_update_acknowledged, with_mongo_retry
 from services.settings_service import get_ping_config
 from utils.monitor_logger import get_monitor_logger
-from utils.utc import utc_now
+from utils.utc import ensure_utc, utc_now
 
 logger = get_monitor_logger("monitor_claim")
 
@@ -40,8 +41,8 @@ def compute_claim_ttl_seconds(device: dict[str, Any] | None = None) -> float:
     """
     Claim lease duration in seconds.
 
-    ``max(15, (timeout_ms/1000) * retries + 10)`` using the device's ping config
-    (global settings with optional per-device overrides).
+    Base: ``max(15, (timeout_ms/1000) * retries + 10)`` using the device's ping
+    config. Optional env ``PING_CLAIM_TTL`` raises the floor when set (seconds).
 
     Intentionally independent of ``pingInterval``: TTL must cover worst-case
     ICMP execution (timeout × retries) plus apply/scheduling slack, not the
@@ -51,7 +52,44 @@ def compute_claim_ttl_seconds(device: dict[str, Any] | None = None) -> float:
     timeout_ms = max(int(config["timeout_ms"]), 100)
     retries = max(int(config["retries"]), 1)
     worst_ping_s = (timeout_ms / 1000.0) * retries
-    return float(max(CLAIM_TTL_FLOOR_SECONDS, worst_ping_s + CLAIM_TTL_SAFETY_SECONDS))
+    computed = float(max(CLAIM_TTL_FLOOR_SECONDS, worst_ping_s + CLAIM_TTL_SAFETY_SECONDS))
+
+    raw = os.getenv("PING_CLAIM_TTL")
+    if raw is None or str(raw).strip() == "":
+        return computed
+    try:
+        configured = float(raw)
+    except (TypeError, ValueError):
+        return computed
+    if configured <= 0:
+        return computed
+    return float(max(computed, configured))
+
+
+def compute_next_check_at(
+    *,
+    claim_now: datetime,
+    previous_next_check_at: datetime | None,
+    interval_seconds: int,
+) -> datetime:
+    """
+    Authoritative schedule progression for a successful claim.
+
+    Policy:
+      1. Prefer ``previous_nextCheckAt + interval`` (deadline-based cadence).
+      2. If previous deadline is missing, use ``claim_now + interval``.
+      3. If the device is substantially overdue so that (1) is still <= claim_now,
+         use ``claim_now + interval`` — one catch-up at most; no burst of
+         back-to-back catch-up claims after restart or prolonged outage.
+    """
+    interval_s = max(int(interval_seconds), 1)
+    if previous_next_check_at is None:
+        return claim_now + timedelta(seconds=interval_s)
+
+    candidate = previous_next_check_at + timedelta(seconds=interval_s)
+    if candidate <= claim_now:
+        return claim_now + timedelta(seconds=interval_s)
+    return candidate
 
 
 def is_claim_active(device: dict[str, Any] | None, *, now=None) -> bool:
@@ -66,7 +104,6 @@ def is_claim_active(device: dict[str, Any] | None, *, now=None) -> bool:
     if expires is None:
         # Claim id without expiry — treat as active until explicitly cleared.
         return True
-    from utils.utc import ensure_utc  # noqa: PLC0415
 
     exp = ensure_utc(expires)
     if exp is None:
@@ -127,7 +164,16 @@ def claim_device(
     interval_s = max(int(config["interval"]), 1)
     ttl_s = compute_claim_ttl_seconds(device)
     claim_id = uuid.uuid4().hex
-    next_check_at = claim_now + timedelta(seconds=interval_s)
+
+    previous_deadline = None
+    if device is not None:
+        previous_deadline = ensure_utc(device.get("nextCheckAt"))
+
+    next_check_at = compute_next_check_at(
+        claim_now=claim_now,
+        previous_next_check_at=previous_deadline,
+        interval_seconds=interval_s,
+    )
     expires_at = claim_now + timedelta(seconds=ttl_s)
 
     filt = build_claimable_filter(device_id, claim_now)
@@ -173,7 +219,7 @@ def claim_device(
     logger.info(
         "Device scan claimed | deviceId=%s | claimId=%s | claimedAt=%s | "
         "nextCheckAt=%s | scanClaimExpiresAt=%s | ttlSeconds=%.1f | "
-        "intervalSeconds=%s",
+        "intervalSeconds=%s | previousNextCheckAt=%s",
         device_id,
         claim_id,
         claim_now.isoformat(),
@@ -181,6 +227,7 @@ def claim_device(
         expires_at.isoformat(),
         ttl_s,
         interval_s,
+        previous_deadline.isoformat() if previous_deadline else None,
     )
     return updated
 

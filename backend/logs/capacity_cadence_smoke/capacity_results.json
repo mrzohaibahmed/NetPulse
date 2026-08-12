@@ -1,0 +1,46 @@
+{
+  "generatedAt": "2026-08-12T04:03:25.658258+00:00",
+  "config": {
+    "interval": 60.0,
+    "concurrency": 30,
+    "cycles": 2,
+    "dispatcher": 1.0,
+    "timeout_ms": 1000,
+    "retries": 3,
+    "tolerance_s": 5.0
+  },
+  "results": [
+    {
+      "devices": 100,
+      "mix": "all_up",
+      "interval_s": 60.0,
+      "concurrency": 30,
+      "dispatcher_s": 1.0,
+      "cycles": 2,
+      "timeout_ms": 1000,
+      "retries": 3,
+      "attempts_started": 204,
+      "attempts_completed": 204,
+      "missed_deadlines": 0,
+      "significantly_late": 0,
+      "intervals_gt_target": 56,
+      "avg_interval_s": 60.045178615384614,
+      "median_interval_s": 60.046153000000004,
+      "p95_interval_s": 60.842739,
+      "max_interval_s": 61.420587,
+      "avg_completion_latency_s": 0.019605083333333332,
+      "p95_completion_latency_s": 0.059741,
+      "p99_completion_latency_s": 0.110574,
+      "max_active_workers": 2,
+      "max_queue_depth": 3,
+      "duplicate_claims": 0,
+      "stale_overwrites": 0,
+      "mongo_errors": 0,
+      "mongo_ops": 731,
+      "wall_s": 122.96441370001412,
+      "verdict": "PASS",
+      "notes": ""
+    }
+  ],
+  "overall": "PASS"
+}
