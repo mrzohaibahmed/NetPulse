@@ -523,12 +523,18 @@ def _apply_edge_statuses(
     """
     result: list[dict] = []
     for edge in edges:
-        status = _derive_edge_status(edge["source"], edge["target"], devices_by_id)
+        oper = (edge.get("operStatus") or "").lower()
+        if oper == "up":
+            status = "active"
+        elif oper == "down":
+            status = "stale"
+        else:
+            status = _derive_edge_status(edge["source"], edge["target"], devices_by_id)
+            
         edge["status"] = status
         if status == "stale":
             edge["animated"] = False
-            if live_only:
-                continue
+            
         result.append(edge)
     return result
 
@@ -593,6 +599,10 @@ def _merge_raw_edges(raw_edges: list[dict]) -> list[dict]:
             existing["linkType"] = "trunk"
         if not existing.get("protocol") and raw.get("protocol"):
             existing["protocol"] = raw["protocol"]
+        if (raw.get("operStatus") or "").lower() == "up":
+            existing["operStatus"] = "up"
+        elif not existing.get("operStatus") and raw.get("operStatus"):
+            existing["operStatus"] = raw["operStatus"]
 
     normalized: list[dict] = []
     for pair, edge in merged.items():
@@ -617,6 +627,7 @@ def _merge_raw_edges(raw_edges: list[dict]) -> list[dict]:
                 "protocol": edge.get("protocol") or "CDP/LLDP",
                 "description": edge.get("description") or "",
                 "speed": edge.get("speed") or "",
+                "operStatus": edge.get("operStatus") or "",
                 "animated": True,
             }
         )
@@ -635,6 +646,7 @@ def _merge_raw_edges(raw_edges: list[dict]) -> list[dict]:
                 "protocol": raw.get("protocol") or "Direct",
                 "description": raw.get("description") or "",
                 "speed": raw.get("speed") or "",
+                "operStatus": raw.get("operStatus") or "",
                 "animated": True,
             }
         )
@@ -765,6 +777,7 @@ def _build_topology_data(device_filter=None, *, live_only: bool = False):
                 "protocol": protocol,
                 "description": iface.get("description") or "",
                 "speed": iface.get("speed") or "",
+                "operStatus": iface.get("operStatus") or "",
             }
         )
 
@@ -777,6 +790,23 @@ def _build_topology_data(device_filter=None, *, live_only: bool = False):
         devices_by_id,
         live_only=live_only,
     )
+    
+    # Override endpoint node status based on real-time interface status
+    for edge in edges:
+        target_id = edge["target"]
+        if target_id in nodes:
+            node = nodes[target_id]
+            # Only override for endpoints, let switches keep their ping status
+            if not _is_infrastructure_device(node.get("type")):
+                if edge["status"] == "active":
+                    node["status"] = "Online"
+                    if "details" in node:
+                        node["details"]["status"] = "Online"
+                elif edge["status"] == "stale":
+                    node["status"] = "Offline"
+                    if "details" in node:
+                        node["details"]["status"] = "Offline"
+
     node_list = list(nodes.values())
     if live_only:
         node_list = _prune_unconnected_synthetic_nodes(node_list, edges)
@@ -797,5 +827,5 @@ def get_level_1_topology(device_id: str):
 
 
 def get_level_2_topology():
-    # Live view: only Online↔Online inventory links; no Mongo mutation.
-    return _build_topology_data(device_filter=None, live_only=True)
+    # Show all connections including endpoints (matching Level 1 behavior)
+    return _build_topology_data(device_filter=None, live_only=False)
