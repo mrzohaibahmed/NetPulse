@@ -6,14 +6,16 @@ Flask REST API for LAN monitoring, switch interface collection, and storm protec
 
 - **Authentication** — JWT login, roles (`super-admin` / `admin` / `operator` / `viewer`), account management
 - **Device CRUD** — create, list, update, delete, CSV import, cascade delete
-- **ICMP monitoring** — scheduled + manual ping with per-device overrides
-- **Nmap profiling** — scheduled + on-demand deep scans for Online devices
+- **ICMP monitoring** — scheduled + manual ping (per-device and bulk ping-all) with per-device overrides
+- **Nmap profiling** — scheduled + on-demand deep scans for Online devices (incl. scan-all)
 - **Subnet discovery** — IP range sweep with optional auto-register
-- **Interface discovery** — SSH inventory (status, VLANs, neighbors, monitoring intent)
+- **Interface discovery** — SSH inventory (status, VLANs, CDP/LLDP neighbors, monitoring intent)
+- **Network topology** — CDP/LLDP graph API + React Flow UI (Level 1 / Level 2 views)
+- **ISP monitoring** — up to three upstream ping targets on dashboard
 - **Interface stats** — SNMP preferred, SSH fallback; feeds the storm pipeline
 - **Storm protection** — eligibility → risk → confirmation → safety → prepare → mitigation → recovery
 - **Manual shutdown / recover** — operator actions on individual interfaces
-- **Alerts + email** — critical offline transitions
+- **Alerts + email** — critical offline transitions (hysteresis + alert threshold)
 - **Settings** — ping, SMTP, mitigation mode, auto-recovery, retention
 - **Audit logging** — administrative and storm execution trail
 - **Data retention** — TTL indexes + daily closed-incident purge
@@ -100,6 +102,8 @@ Default users are created on first run if `users` is empty.
 | Job | Default interval | Purpose |
 |-----|------------------|---------|
 | `device_monitor_job` | Dispatch: dispatcher 1–5s; cadence `pingInterval` (**60s**) | ICMP monitoring via `nextCheckAt` |
+| `isp_monitor_job` | Same as `pingInterval` | Upstream ISP target pings |
+| `isp_monitor_job` | Same as `pingInterval` | Upstream ISP target pings |
 | `nmap_scan_job` | `NMAP_SCAN_INTERVAL` (3600s) | Online device profiling |
 | `interface_discovery_job` | `INTERFACE_SCAN_INTERVAL` (3600s) | SSH inventory |
 | `interface_stats_job` | `INTERFACE_STATS_INTERVAL` (60s) | Stats → eligibility → risk → confirmation → safety → prepare → auto-mitigation |
@@ -128,10 +132,12 @@ Prepare requires **live CONFIRMED**, current high risk, and SAFE fresher than co
 | Prefix | Purpose |
 |--------|---------|
 | `/api/auth`, `/api/users` | Login, account, users |
-| `/api/devices`, `/api/devices/<id>/scan*` | Inventory, ping, Nmap |
+| `/api/devices`, `/api/devices/<id>/scan*`, `/api/devices/ping-all` | Inventory, ping, bulk ping, Nmap |
 | `/api/history`, `/api/dashboard`, `/api/reports` | History, KPIs, export |
 | `/api/discovery` | Subnet sweep |
 | `/api/interfaces` | Discovery, stats, monitoring, manual shutdown/recover |
+| `/api/topology` | CDP/LLDP neighbor graphs (Level 1 / Level 2) |
+| `/api/isps` | Upstream ISP ping targets |
 | `/api/storm` | Eligibility, risk, confirmation, safety, incidents, mitigation, recovery |
 | `/api/alerts`, `/api/settings` | Alerts, global settings |
 | `/health` | Liveness + MongoDB |

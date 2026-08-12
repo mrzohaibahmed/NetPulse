@@ -1,6 +1,6 @@
 # NetPulse (Network Monitor)
 
-Full-stack LAN monitoring and switch storm-protection platform. NetPulse continuously pings devices, profiles them with Nmap, discovers hosts on your subnet, inventories switch interfaces over SSH, scores storm risk from live counters, and can automatically shut down / recover ports when a broadcast storm is confirmed safe to mitigate.
+Full-stack LAN monitoring and switch storm-protection platform. NetPulse continuously pings devices (and upstream ISP links), profiles them with Nmap, discovers hosts on your subnet, inventories switch interfaces over SSH, visualizes CDP/LLDP topology, scores storm risk from live counters, and can automatically shut down / recover ports when a broadcast storm is confirmed safe to mitigate.
 
 ---
 
@@ -8,6 +8,7 @@ Full-stack LAN monitoring and switch storm-protection platform. NetPulse continu
 
 - [What this project does](#what-this-project-does)
 - [How it works](#how-it-works)
+- [Network topology](#network-topology)
 - [Storm protection pipeline](#storm-protection-pipeline)
 - [System architecture](#system-architecture)
 - [Tech stack](#tech-stack)
@@ -23,27 +24,29 @@ Full-stack LAN monitoring and switch storm-protection platform. NetPulse continu
 
 ## What this project does
 
-NetPulse answers five operational questions continuously:
+NetPulse answers six operational questions continuously:
 
-1. **Is the device reachable?** — ICMP ping on a schedule (or on demand).
+1. **Is the device reachable?** — ICMP ping on a schedule (or on demand, including bulk **Ping all**).
 2. **What is running on it?** — Periodic Nmap scans for OS, open ports, services, MAC, and vendor.
 3. **What interfaces exist on the switch?** — SSH discovery of port inventory, VLANs, neighbors, and monitoring intent.
-4. **Is a storm forming?** — Stats → eligibility → risk → confirmation → safety → prepare → mitigation.
-5. **Did something important go down?** — In-app alerts plus optional email when a critical device goes offline.
+4. **How are switches connected?** — CDP/LLDP neighbor graphs rendered as an interactive topology map.
+5. **Is a storm forming?** — Stats → eligibility → risk → confirmation → safety → prepare → mitigation.
+6. **Did something important go down?** — In-app alerts plus optional email when a **critical** device is confirmed offline.
 
 Operators use the React UI to:
 
 | Page | Purpose |
 |------|---------|
-| **Dashboard** | Live KPIs, status charts, response-time trends, recent activity |
-| **Devices** | CRUD inventory, CSV import, manual ping / Nmap, per-device ping + SSH overrides |
+| **Dashboard** | Live KPIs, status charts, response-time trends, **ISP upstream links**, recent activity |
+| **Devices** | CRUD inventory, CSV import, manual **Ping** / **Ping all**, **Nmap scan all**, per-device ping + SSH overrides |
 | **Interfaces** | Switch inventory, discovery, stats, monitoring mode, manual shutdown / recover |
+| **Topology** | Level 1 switch-neighbor view and Level 2 live inventory graph from CDP/LLDP |
 | **Storm Protection** | Eligibility, risk, confirmation, safety, incidents, mitigation & recovery history |
 | **Discovery** | Suggest local `/24` range and sweep IPs; auto-register new online hosts |
 | **History** | Filterable ping history and per-device uptime |
 | **Alerts** | Acknowledge or dismiss critical outage alerts |
 | **Reports** | Uptime reports; export devices/history as CSV or Excel |
-| **Settings** | Ping interval, SMTP, mitigation mode, auto-recovery, retention |
+| **Settings** | Ping interval, failure confirmation, SMTP, ISP targets, mitigation mode, auto-recovery, retention |
 | **Account** | Change username/password; admins manage users |
 
 Roles:
@@ -52,8 +55,8 @@ Roles:
 |------|--------|
 | **super-admin** | Full admin rights plus exclusive management of other super-admins |
 | **admin** | Full write access (devices, discovery, settings, users, storm mitigation/recovery) |
-| **operator** | Viewer access plus on-demand Nmap, alert ack/dismiss, selected storm actions |
-| **viewer** | Read-only dashboard, devices, interfaces, history, reports, alerts |
+| **operator** | Viewer access plus on-demand ping/Nmap (incl. bulk), alert ack/dismiss, selected storm actions |
+| **viewer** | Read-only dashboard, devices, interfaces, history, reports, alerts, topology |
 
 ---
 
@@ -71,16 +74,18 @@ Roles:
           ▼             ▼                   ▼                   ▼              ▼
      ICMP ping     Nmap profiling    SSH iface discovery   SNMP/SSH stats   SMTP email
      (~60s)        (~1 hour)         (~1 hour)             (~60s → storm)   critical
+     ISP ping      CDP/LLDP → topology graph (on demand)
 ```
 
-1. On startup, Flask loads settings, ensures indexes, seeds default users if needed, and starts APScheduler.
-2. The **ping job** monitors devices with `monitor: true`, writes `pingHistory`, and may create alerts.
-3. The **Nmap job** scans currently **Online** devices and stores OS/ports under `networkInfo`.
-4. The **interface discovery job** SSHs into eligible switches and upserts the `interfaces` inventory.
-5. The **stats + storm chain** polls counters, then runs eligibility → risk → confirmation → safety → prepare → optional auto-mitigation.
-6. The **recovery job** (30s) evaluates MITIGATED / MONITORING incidents for auto-recovery and re-mitigation.
-7. The **retention job** (daily) refreshes TTL indexes and purges closed incidents per settings.
-8. The frontend authenticates with JWT and polls APIs so the UI stays live without WebSockets.
+1. On startup, Flask loads settings, ensures indexes, seeds default users and ISP slots if needed, and starts APScheduler.
+2. The **ping job** (dispatch mode) claims due monitored devices every few seconds and pings them with bounded concurrency; results go to `pingHistory` and may create alerts.
+3. The **ISP monitor job** pings up to three configured upstream targets on the same cadence as `pingInterval`.
+4. The **Nmap job** scans currently **Online** devices and stores OS/ports under `networkInfo`.
+5. The **interface discovery job** SSHs into eligible switches and upserts the `interfaces` inventory (incl. CDP/LLDP neighbors).
+6. The **stats + storm chain** polls counters, then runs eligibility → risk → confirmation → safety → prepare → optional auto-mitigation.
+7. The **recovery job** (30s) evaluates MITIGATED / MONITORING incidents for auto-recovery and re-mitigation.
+8. The **retention job** (daily) refreshes TTL indexes and purges closed incidents per settings.
+9. The frontend authenticates with JWT and polls APIs so the UI stays live without WebSockets.
 
 ### 1. Automatic ping monitoring
 
@@ -90,10 +95,11 @@ Roles:
 2. The dispatcher atomically claims due monitored devices up to free `pingConcurrency` worker slots (default **40**), then bounded workers run ICMP via `ping3`.
 3. Results update the device:
    - **Success** → `Online`, reset `consecutiveFailures`, set `lastSeen` and `responseTime`
-   - **Failure + critical** → `Offline (Critical)`
-   - **Failure + non-critical** → `Not Reachable`
+   - **Failure + critical** → after `pingFailureConfirmationScans` (default **2**) failed scans → `Offline (Critical)`
+   - **Failure + non-critical** → after the same threshold → `Not Reachable`
 4. Every check is stored in `pingHistory` with `scanType` of `Automatic` or `Manual`.
-5. Changing `pingInterval` in Settings updates the per-device cadence (legacy mode also retargets the APScheduler period; dispatch mode keeps the fast dispatcher tick).
+5. **Manual ping:** per-device `POST /api/devices/<id>/scan` or bulk `POST /api/devices/ping-all` (operator+) from the Devices page — same `apply_ping_result` path as the scheduler, without partition suppression.
+6. Changing `pingInterval` in Settings updates the per-device cadence (legacy mode also retargets the APScheduler period; dispatch mode keeps the fast dispatcher tick).
 
 ### 2. Nmap deep scanning
 
@@ -132,11 +138,27 @@ Requires the **Nmap binary** on `PATH` (or `NMAP_PATH`). Aggressive flags often 
 
 **Where:** `services/alert_service.py` + `services/email_service.py`
 
-1. Transition of a **critical** device into `Offline (Critical)` creates an `alerts` document once per outage.
-2. If SMTP is enabled, a background thread sends email using Settings / `.env`.
-3. Operators (and admins) acknowledge or dismiss alerts; viewers can view only.
+Applies only to devices with **`critical: true`**. Non-critical failures become **Not Reachable** with no alert or email.
 
-### 6. Authentication and roles
+1. After **`pingFailureConfirmationScans`** (default **2**) consecutive failed scans, status becomes `Offline (Critical)`.
+2. An in-app alert is created once **`consecutiveFailures >= 3`** and no active alert exists for that device (so the alert can lag the UI status by one scan cycle).
+3. If SMTP is enabled and fully configured (host, user, password, from, to), email is sent in the same step; the alert stores `emailSent: true/false`.
+4. At most **one active** critical-offline alert per device (unique index + idempotent insert).
+5. When the device returns **Online**, active alerts are auto-resolved (no recovery email).
+6. Operators (and admins) acknowledge or dismiss alerts; viewers can view only.
+
+Configure SMTP under **Settings → SMTP alerts** or via `.env` (`ALERT_EMAIL_*`, `SMTP_*`).
+
+### 6. ISP upstream monitoring
+
+**Where:** `services/isp_monitor_service.py`, `routes/isp_routes.py`, Dashboard **ISP Connectivity**
+
+1. Up to **three ISP slots** (`ispConnections` collection) are seeded on first boot.
+2. Each slot has a ping target (IP or hostname); the scheduler pings them on `pingInterval`.
+3. Dashboard shows live status/latency; Settings lets admins configure targets.
+4. Manual scan: `POST /api/isps/<id>/scan`.
+
+### 7. Authentication and roles
 
 **Where:** `utils/auth.py`, `services/user_service.py`, `routes/auth_routes.py`
 
@@ -146,13 +168,41 @@ Requires the **Nmap binary** on `PATH` (or `NMAP_PATH`). Aggressive flags often 
 - Roles inherit privileges: `super-admin` ⊃ `admin` ⊃ `operator` ⊃ `viewer`.
 - First boot with an empty `users` collection seeds default admin and viewer accounts.
 
-### 7. Frontend data loading
+### 8. Frontend data loading
 
 **Where:** `frontend/src/hooks/queries.ts`, Vite proxy in `vite.config.ts`
 
 - TanStack Query polls the API (dashboard ~10s, devices ~15s, history ~20s, storm panels as configured).
 - In development, Vite proxies `/api` and `/health` to `http://127.0.0.1:5000`.
 - In production, `npm run build` produces `frontend/dist`; Flask serves that SPA when present.
+
+---
+
+## Network topology
+
+**Where:** `services/topology_service.py`, `routes/topology.py`, `frontend/src/modules/storm/pages/TopologyPage.tsx`
+
+Interactive CDP/LLDP neighbor graphs built **on read** from MongoDB `interfaces.neighbor` — there is no separate topology collection or WebSocket feed.
+
+### Data sources
+
+| Source | Role |
+|--------|------|
+| **SSH CDP/LLDP** (Cisco IOS/XE/NX-OS) | Primary — `show cdp/lldp neighbors detail` during interface discovery |
+| **Inventory match** | Neighbor IP/hostname matched to known devices |
+| **ARP/MAC** | Optional endpoint IP enrichment via `port_mac_table` / `arp_cache` |
+| **SNMP** | Not used for topology neighbors |
+
+### Views
+
+| View | API | Behavior |
+|------|-----|----------|
+| **Level 1 — Switch neighbors** | `GET /api/topology/switch/<device_id>` | One switch + direct neighbors; stale/offline links shown dashed |
+| **Level 2 — Full topology** | `GET /api/topology/full` | **Live only** — edges where **both** ends are inventory devices with status **Online** |
+
+Level 2 intentionally excludes unresolved CDP neighbors and offline links. An empty Full Topology with a populated Level 1 view usually means peers are not Online inventory devices — not a broken pipeline.
+
+Neighbor data refreshes on `INTERFACE_SCAN_INTERVAL` (default hourly). The UI polls topology every 30–60s for device status changes.
 
 ---
 
@@ -217,6 +267,9 @@ Additional gates:
 
 | Setting | Meaning | Default |
 |---------|---------|---------|
+| `pingInterval` | Per-device monitoring cadence (seconds) | `60` |
+| `pingFailureConfirmationScans` | Failed scans before status leaves Online | `2` |
+| `pingConcurrency` | Max parallel ping workers | `40` |
 | `mitigationMode` | `automatic` \| `manual` | `manual` |
 | `autoRecovery` | Scheduler may recover MITIGATED ports | `true` |
 | `cooldownMinutes` | Wait after mitigation before recovery | `5` |
@@ -237,18 +290,20 @@ Deep dive on interface collection: [`backend/services/interface_collection/READM
 ┌─────────────────────────────────────────────────────────────┐
 │                    React frontend (NetPulse)                │
 │         Vite + TypeScript + Tailwind + TanStack Query       │
-│  Dashboard · Devices · Interfaces · Storm · Discovery · …   │
+│  Dashboard · Devices · Interfaces · Storm · Topology · Discovery · …   │
 └──────────────────────────────┬──────────────────────────────┘
                                │ HTTP + Bearer JWT
 ┌──────────────────────────────▼──────────────────────────────┐
 │                   Flask backend (app.py)                    │
 │  Blueprints: auth, devices, scan, nmap, history, dashboard, │
-│  discovery, interfaces, storm, alerts, settings, reports    │
+│  discovery, interfaces, storm, alerts, settings, reports,   │
+│  topology, isps                                             │
 │                                                             │
 │  APScheduler                                                │
-│  • device_monitor_job      → ping monitoring                │
+│  • device_monitor_job      → ping monitoring (dispatch)     │
+│  • isp_monitor_job         → upstream ISP ping targets      │
 │  • nmap_scan_job           → Online device profiling        │
-│  • interface_discovery_job → SSH inventory                  │
+│  • interface_discovery_job → SSH inventory + CDP/LLDP     │
 │  • interface_stats_job     → stats → storm pipeline chain   │
 │  • storm_recovery_job      → auto-recovery / remmitigation  │
 │  • data_retention_job      → TTL + closed-incident purge    │
@@ -257,11 +312,12 @@ Deep dive on interface collection: [`backend/services/interface_collection/READM
 ┌──────────────────────────────▼──────────────────────────────┐
 │                         MongoDB                             │
 │  devices · pingHistory · alerts · settings · users ·        │
-│  auditLogs · interfaces · interface_stats ·                 │
-│  eligibility_results · storm_risk_history ·                 │
-│  storm_confirmation_history · storm_safety_history ·        │
-│  storm_incidents · storm_mitigation_history ·               │
-│  storm_recovery_history · storm_*_locks                     │
+│  ispConnections · auditLogs · interfaces · interface_stats ·│
+│  port_mac_table · arp_cache · eligibility_results ·         │
+│  storm_risk_history · storm_confirmation_history ·          │
+│  storm_safety_history · storm_incidents ·                   │
+│  storm_mitigation_history · storm_recovery_history ·        │
+│  storm_*_locks                                              │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -292,9 +348,10 @@ NetPulse/
 │   ├── .env / .env.example
 │   ├── config/                     # MongoDB + env (Nmap, SSH, SNMP, storm)
 │   ├── models/                     # Device, interface, ping history helpers
-│   ├── routes/                     # REST blueprints (incl. interfaces + storm)
+│   ├── routes/                     # REST blueprints (incl. interfaces + storm + topology)
 │   ├── services/
 │   │   ├── interface_collection/   # SSH discovery, stats, monitoring state
+│   │   ├── topology_service.py     # CDP/LLDP graph builder (on-read)
 │   │   ├── storm/                  # Eligibility → risk → confirm → safety → …
 │   │   │   ├── diagnostics/        # Read-only evidence capture
 │   │   │   ├── mitigation/         # Shutdown engine, verifier, audit
@@ -309,7 +366,7 @@ NetPulse/
     │   ├── auth/                   # Auth context
     │   ├── components/             # Layout, devices, interfaces, shared UI
     │   ├── hooks/                  # React Query hooks (polling)
-    │   ├── pages/                  # Dashboard, Devices, Interfaces, Storm, …
+    │   ├── modules/                # Feature pages (ping, storm, topology, …)
     │   └── types/
     ├── package.json
     └── vite.config.ts              # Dev server + /api proxy
@@ -325,12 +382,14 @@ More detail: [`backend/README.md`](backend/README.md), [`frontend/README.md`](fr
 |------------|---------|
 | `devices` | Inventory, status, ping overrides, SSH/SNMP creds, Nmap `networkInfo` |
 | `pingHistory` | Time-series of every manual/automatic ping |
-| `alerts` | Critical offline events (acknowledge / dismiss) |
+| `alerts` | Critical offline events (acknowledge / dismiss); storm notifications |
 | `settings` | Global ping, SMTP, storm mitigation/recovery, retention |
 | `users` | Accounts with bcrypt password hashes |
+| `ispConnections` | Up to three upstream ISP ping targets |
 | `auditLogs` | Admin / storm action trail |
-| `interfaces` | Discovered switch ports + monitoring intent |
+| `interfaces` | Discovered switch ports + CDP/LLDP `neighbor` + monitoring intent |
 | `interface_stats` | Counter / rate samples for risk scoring |
+| `port_mac_table` / `arp_cache` | MAC/ARP tables for endpoint IP enrichment |
 | `eligibility_results` | Latest eligibility decisions |
 | `storm_risk_history` | Append-only risk scores |
 | `storm_confirmation_history` | Append-only confirmation / reset rows |
@@ -365,10 +424,14 @@ SECRETS_ENCRYPTION_KEY=replace-with-fernet-generate-key-output
 DEFAULT_ADMIN_USER=admin
 DEFAULT_ADMIN_PASSWORD=admin123
 
-# Ping defaults (also adjustable in Settings UI)
+# Ping defaults (also adjustable in Settings UI; runtime SoT is Mongo `settings`)
 SCAN_INTERVAL=60
 PING_TIMEOUT_MS=1000
 PING_RETRIES=3
+PING_FAILURE_CONFIRMATION_SCANS=2
+MONITOR_PING_CONCURRENCY=40
+MONITOR_RUNTIME_MODE=dispatch
+MONITOR_DISPATCHER_INTERVAL_SECONDS=5
 
 # Email alerts (optional)
 ALERT_EMAIL_ENABLED=true
@@ -414,6 +477,10 @@ STORM_RE_MITIGATION_THRESHOLD=75
 | `MONGO_URI` / `DATABASE_NAME` | MongoDB connection (required) |
 | `JWT_*` / `SECRETS_ENCRYPTION_KEY` | Token signing + encrypted SSH/SMTP secrets |
 | `SCAN_INTERVAL` | Default ping interval (seconds) |
+| `PING_FAILURE_CONFIRMATION_SCANS` | Failed scans before leaving `Online` (default 2) |
+| `MONITOR_PING_CONCURRENCY` | Max parallel ping workers (1–64, default 40) |
+| `MONITOR_RUNTIME_MODE` | `dispatch` (default) or `legacy` wave scheduler |
+| `MONITOR_DISPATCHER_INTERVAL_SECONDS` | Dispatch tick when mode is `dispatch` (1–5s) |
 | `INTERFACE_SCAN_INTERVAL` | SSH rediscovery interval (`0` disables schedule) |
 | `INTERFACE_STATS_INTERVAL` | Stats + storm chain interval (`0` disables) |
 | `STORM_MITIGATION_MODE` | Bootstrap default for Settings `mitigationMode` |
@@ -436,9 +503,13 @@ All JSON APIs are under `/api` except `/health`. Most routes require `Authorizat
 | PUT | `/api/auth/account` | Update own account |
 | GET/PUT | `/api/users` … | User management (admin+) |
 | CRUD | `/api/devices` … | Device inventory + CSV import |
-| POST | `/api/devices/<id>/scan` | Manual ICMP ping |
-| POST | `/api/devices/<id>/scan-details` | Manual Nmap scan |
+| POST | `/api/devices/<id>/scan` | Manual ICMP ping (any authenticated role) |
+| POST | `/api/devices/ping-all` | Bulk manual ping — all inventory devices (operator+) |
+| POST | `/api/devices/<id>/scan-details` | Manual Nmap scan (operator+) |
+| POST | `/api/devices/scan-all-details` | Bulk Nmap on all Online devices (operator+) |
 | GET | `/api/history` | Ping history |
+| GET/PUT | `/api/isps` … | ISP upstream targets (admin configure; all roles read) |
+| POST | `/api/isps/<id>/scan` | Manual ISP ping |
 | GET | `/api/discovery/network-hint` | Suggest LAN range |
 | POST | `/api/discovery/scan-range` | Subnet sweep |
 | GET | `/api/dashboard/*` | Summary, stats, charts |
@@ -446,6 +517,14 @@ All JSON APIs are under `/api` except `/health`. Most routes require `Authorizat
 | GET/PUT | `/api/settings` | Global settings (incl. storm) |
 | GET | `/api/reports/*` | Uptime + CSV/XLSX export |
 | GET | `/health` | Server + MongoDB ping |
+
+### Topology
+
+| Method | Route | Description |
+|--------|-------|-------------|
+| GET | `/api/topology/switches` | List switch devices for the topology picker |
+| GET | `/api/topology/switch/<device_id>` | Level 1 — switch + neighbors (incl. stale links) |
+| GET | `/api/topology/full` | Level 2 — live Online↔Online inventory graph only |
 
 ### Interfaces
 
@@ -563,6 +642,9 @@ Change these immediately for any shared or production environment. Generate stro
 | MongoDB connection errors | Bad URI / DB down | Check `MONGO_URI` and that MongoDB is reachable |
 | Duplicate scheduler jobs | Debug reloader | Scheduler starts only in the child process when `FLASK_DEBUG=true` |
 | Decrypt / SSH secret errors | Key rotated | Keep `SECRETS_ENCRYPTION_KEY` stable or re-enter secrets |
-| No email on outage | SMTP off or misconfigured | Enable in Settings / `.env`; use an app password for Gmail |
+| No email on outage | SMTP off or misconfigured | Enable in Settings / `.env`; use an app password for Gmail; device must be **critical** with **3+** consecutive failures |
+| Alert missing but device offline | Failure hysteresis / alert threshold | Status flips after `pingFailureConfirmationScans` (default 2); alert fires at `consecutiveFailures >= 3` |
+| Full Topology empty | Level 2 live filter | Peers must be Online inventory devices; use Level 1 per-switch view for CDP-only neighbors |
+| Topology has no links | No CDP/LLDP or non-Cisco | Run interface discovery on Cisco switches with CDP/LLDP enabled |
 
 Logs: `backend/logs/monitor.log` (also printed to the console).

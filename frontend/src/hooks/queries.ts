@@ -55,6 +55,7 @@ import {
   manualShutdownInterface,
   setInterfaceMonitoring,
   scanDevice,
+  pingAllDevices,
   scanDeviceNmap,
   scanAllDevicesNmap,
   scanIsp,
@@ -943,6 +944,31 @@ export function useNmapScanAllMutation() {
       await Promise.all([
         qc.invalidateQueries({ queryKey: ['devices'] }),
         qc.invalidateQueries({ queryKey: ['device-history'] }),
+        qc.invalidateQueries({ queryKey: queryKeys.dashboard.all }),
+      ])
+    },
+    onError: (err: Error) => toast.error(err.message),
+  })
+}
+
+export function usePingAllDevicesMutation() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => pingAllDevices(),
+    onSuccess: async (res) => {
+      const failed = res.failed ?? 0
+      if (failed > 0) {
+        toast.warning(
+          res.message ??
+            `Bulk ping finished: ${res.online}/${res.total} online, ${failed} unreachable`,
+        )
+      } else {
+        toast.success(res.message ?? 'Bulk ping complete')
+      }
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ['devices'] }),
+        qc.invalidateQueries({ queryKey: ['device-history'] }),
+        qc.invalidateQueries({ queryKey: ['history'] }),
         qc.invalidateQueries({ queryKey: queryKeys.dashboard.all }),
       ])
     },
