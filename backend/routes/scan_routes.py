@@ -3,12 +3,44 @@ from flask import Blueprint, jsonify
 from bson import ObjectId
 
 from config.database import db
-from services.monitor_service import apply_ping_result
+from services.monitor_service import apply_ping_result, manual_ping_all_devices
 from services.ping_service import ping_device
 from utils.auth import require_auth
 from utils.serializers import serialize_device
 
 scan_bp = Blueprint("scan", __name__)
+
+
+@scan_bp.route("/devices/ping-all", methods=["POST"])
+@require_auth(roles=["operator"])
+def ping_all_devices():
+    """
+    Manually ping every device in inventory (bounded concurrency).
+
+    Same Manual history / alert path as single-device /scan.
+    """
+    try:
+        summary = manual_ping_all_devices()
+        total = summary.get("total", 0)
+        online = summary.get("online", 0)
+        failed = summary.get("failed", 0)
+        return jsonify({
+            "success": True,
+            "message": (
+                f"Bulk ping completed: {online}/{total} online"
+                + (f", {failed} unreachable" if failed else "")
+            ),
+            "total": total,
+            "online": online,
+            "failed": failed,
+            "errors": summary.get("errors", []),
+        }), 200
+    except Exception as error:
+        return jsonify({
+            "success": False,
+            "message": "Failed to ping all devices",
+            "error": str(error),
+        }), 500
 
 
 @scan_bp.route("/devices/<device_id>/scan", methods=["POST"])

@@ -31,6 +31,7 @@ import {
   useDeviceMutations,
   useDevicesQuery,
   useNmapScanAllMutation,
+  usePingAllDevicesMutation,
 } from '@/hooks/queries'
 import { deviceTypeIcon } from '@/lib/device-icons'
 import { displayDeviceType } from '@/modules/ping/constants/devices'
@@ -97,9 +98,11 @@ export function DevicesPage() {
   const [drawerId, setDrawerId] = useState<string | null>(routeDeviceId ?? null)
   const [deleteTarget, setDeleteTarget] = useState<Device | null>(null)
   const [nmapAllConfirmOpen, setNmapAllConfirmOpen] = useState(false)
+  const [pingAllConfirmOpen, setPingAllConfirmOpen] = useState(false)
 
   const { update, remove, scan, importCsv } = useDeviceMutations()
   const nmapScanAll = useNmapScanAllMutation()
+  const pingAll = usePingAllDevicesMutation()
   const dash = useDashboardQuery()
 
   useEffect(() => {
@@ -365,15 +368,26 @@ export function DevicesPage() {
         actions={
           <>
             {isOperator ? (
-              <Button
-                type="button"
-                variant="secondary"
-                disabled={nmapScanAll.isPending}
-                onClick={() => setNmapAllConfirmOpen(true)}
-              >
-                <Radar className={`h-4 w-4 ${nmapScanAll.isPending ? 'animate-pulse' : ''}`} />
-                {nmapScanAll.isPending ? 'Nmap scanning…' : 'Nmap scan all'}
-              </Button>
+              <>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={pingAll.isPending || nmapScanAll.isPending}
+                  onClick={() => setPingAllConfirmOpen(true)}
+                >
+                  <Wifi className={`h-4 w-4 ${pingAll.isPending ? 'animate-pulse' : ''}`} />
+                  {pingAll.isPending ? 'Pinging all…' : 'Ping all'}
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={nmapScanAll.isPending || pingAll.isPending}
+                  onClick={() => setNmapAllConfirmOpen(true)}
+                >
+                  <Radar className={`h-4 w-4 ${nmapScanAll.isPending ? 'animate-pulse' : ''}`} />
+                  {nmapScanAll.isPending ? 'Nmap scanning…' : 'Nmap scan all'}
+                </Button>
+              </>
             ) : null}
             {isAdmin ? (
               <>
@@ -624,6 +638,35 @@ export function DevicesPage() {
               }}
             >
               Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={pingAllConfirmOpen} onOpenChange={setPingAllConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Ping all devices now?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This runs a manual ICMP ping for every device in inventory and updates status,
+              latency, and ping history. It may take a minute on large fleets.
+              {dash.summary?.totalDevices != null
+                ? ` About ${dash.summary.totalDevices} device(s) will be pinged.`
+                : ''}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={pingAll.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={pingAll.isPending}
+              onClick={(e) => {
+                e.preventDefault()
+                pingAll.mutate(undefined, {
+                  onSettled: () => setPingAllConfirmOpen(false),
+                })
+              }}
+            >
+              {pingAll.isPending ? 'Pinging…' : 'Start ping all'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

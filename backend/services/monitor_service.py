@@ -835,3 +835,101 @@ def monitor_all_devices():
         run_integrity_audit(cycle_id=cycle_id)
     except Exception as exc:  # noqa: BLE001
         logger.warning("Integrity audit error | cycleId=%s | error=%s", cycle_id, exc)
+
+
+def _manual_ping_one(device: dict[str, Any]) -> dict[str, Any]:
+    """Worker for manual bulk ping — mirrors single-device /scan semantics."""
+    ip_address = device.get("ipAddress") or "unknown"
+    hostname = device.get("hostname") or "unknown"
+    try:
+        result = ping_device(
+            ip_address,
+            critical=bool(device.get("critical")),
+            device=device,
+        )
+        # Manual scans never use partition suppression — operator intent wins.
+        apply_ping_result(device, result, scan_type="Manual")
+        return {
+            "success": bool(result.get("success")),
+            "ip": ip_address,
+            "hostname": hostname,
+            "status": result.get("status"),
+            "error": None if result.get("success") else (result.get("message") or "Unreachable"),
+        }
+    except Exception as exc:  # noqa: BLE001
+        logger.exception(
+            "Manual bulk ping failed | hostname=%s | ip=%s | error=%s",
+            hostname,
+            ip_address,
+            exc,
+        )
+        return {
+            "success": False,
+            "ip": ip_address,
+            "hostname": hostname,
+            "status": None,
+            "error": str(exc),
+        }
+
+
+def manual_ping_all_devices() -> dict[str, Any]:
+    """
+    Manually ping every device in inventory with bounded parallelism.
+
+    Same apply_ping_result / Manual history path as POST /devices/<id>/scan.
+    Does not require scheduler leadership (operator-triggered).
+    """
+    cycle_id = f"manual-{uuid.uuid4().hex[:12]}"
+    concurrency = get_monitor_ping_concurrency()
+    devices = list(_db().devices.find({}))
+    total = len(devices)
+
+    logger.info(
+        "Manual bulk ping started | cycleId=%s | total=%s | concurrency=%s",
+        cycle_id,
+        total,
+        concurrency,
+    )
+
+    if total == 0:
+        return {"total": 0, "online": 0, "failed": 0, "errors": []}
+
+    online = 0
+    failed = 0
+    errors: list[dict[str, str]] = []
+    workers = max(1, min(concurrency, total))
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = [pool.submit(_manual_ping_one, device) for device in devices]
+        for fut in as_completed(futures):
+            outcome = fut.result()
+            if outcome.get("success"):
+                online += 1
+            else:
+                failed += 1
+                errors.append({
+                    "ip": str(outcome.get("ip") or "unknown"),
+                    "hostname": str(outcome.get("hostname") or "unknown"),
+                    "error": str(outcome.get("error") or "Unreachable"),
+                })
+
+    logger.info(
+        "Manual bulk ping finished | cycleId=%s | total=%s | online=%s | failed=%s",
+        cycle_id,
+        total,
+        online,
+        failed,
+    )
+
+    if total > 0:
+        publish(
+            EVENT_DASHBOARD_METRICS_CHANGED,
+            {"cycleId": cycle_id, "scanned": total, "online": online, "failed": failed},
+        )
+
+    return {
+        "total": total,
+        "online": online,
+        "failed": failed,
+        "errors": errors,
+    }

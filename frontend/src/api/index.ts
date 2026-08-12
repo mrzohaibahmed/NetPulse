@@ -158,6 +158,19 @@ export const scanDevice = (id: string) =>
     timeoutMs: 30000,
   })
 
+export const pingAllDevices = () =>
+  apiRequest<{
+    success: boolean
+    message: string
+    total: number
+    online: number
+    failed: number
+    errors: Array<{ ip: string; hostname?: string; error: string }>
+  }>('/api/devices/ping-all', {
+    method: 'POST',
+    timeoutMs: 600000,
+  })
+
 export const scanDeviceNmap = (id: string) =>
   apiRequest<{ success: boolean; message: string; data: Device }>(`/api/devices/${id}/scan-details`, {
     method: 'POST',
