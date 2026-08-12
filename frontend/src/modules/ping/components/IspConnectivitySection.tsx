@@ -81,42 +81,42 @@ function IspStatusCard({ isp, isLoading }: { isp: IspConnection; isLoading?: boo
           !online && !offline && 'bg-muted-foreground/30',
         )}
       />
-      <CardContent className="space-y-4 p-5">
-        <div className="flex items-start justify-between gap-3">
+      <CardContent className="flex flex-col gap-2 p-2.5">
+        <div className="flex items-start justify-between gap-1.5">
           <div className="min-w-0">
-            <p className="truncate text-sm font-semibold tracking-tight">{isp.name}</p>
+            <p className="truncate text-xs font-semibold tracking-tight leading-none mb-0.5">{isp.name}</p>
             {isp.target ? (
-              <p className="truncate text-xs text-muted-foreground">{isp.target}</p>
+              <p className="truncate text-[10px] text-muted-foreground leading-none">{isp.target}</p>
             ) : (
-              <p className="text-xs text-muted-foreground">No target configured</p>
+              <p className="text-[10px] text-muted-foreground leading-none">No target configured</p>
             )}
           </div>
           <div
             className={cn(
-              'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg',
+              'flex h-6 w-6 shrink-0 items-center justify-center rounded-md',
               online && 'bg-success/15 text-success',
               offline && 'bg-danger/15 text-danger',
               !online && !offline && 'bg-secondary text-muted-foreground',
             )}
           >
-            {online ? <Wifi className="h-4 w-4" /> : offline ? <WifiOff className="h-4 w-4" /> : <Globe className="h-4 w-4" />}
+            {online ? <Wifi className="h-3 w-3" /> : offline ? <WifiOff className="h-3 w-3" /> : <Globe className="h-3 w-3" />}
           </div>
         </div>
 
-        <div className="space-y-1">
-          <div className="flex items-center gap-2">
+        <div>
+          <div className="flex items-center gap-1.5 mb-1">
             <span
               className={cn(
-                'h-2.5 w-2.5 rounded-full',
-                online && 'bg-success shadow-[0_0_8px_rgba(34,197,94,0.65)]',
-                offline && 'bg-danger shadow-[0_0_8px_rgba(239,68,68,0.55)]',
+                'h-1.5 w-1.5 rounded-full',
+                online && 'bg-success shadow-[0_0_6px_rgba(34,197,94,0.65)]',
+                offline && 'bg-danger shadow-[0_0_6px_rgba(239,68,68,0.55)]',
                 !online && !offline && 'bg-muted-foreground/50',
               )}
               aria-hidden="true"
             />
             <span
               className={cn(
-                'text-xs font-bold uppercase tracking-wider',
+                'text-[9px] font-bold uppercase tracking-wider leading-none',
                 online && 'text-success',
                 offline && 'text-danger',
                 !online && !offline && 'text-muted-foreground',
@@ -127,7 +127,7 @@ function IspStatusCard({ isp, isLoading }: { isp: IspConnection; isLoading?: boo
           </div>
           <p
             className={cn(
-              'text-2xl font-bold tracking-tight',
+              'text-base font-bold tracking-tight leading-none',
               online && 'text-foreground',
               offline && 'text-muted-foreground',
             )}
@@ -136,7 +136,7 @@ function IspStatusCard({ isp, isLoading }: { isp: IspConnection; isLoading?: boo
           </p>
         </div>
 
-        <p className="text-xs text-muted-foreground">
+        <p className="text-[9px] text-muted-foreground mt-0.5 leading-none">
           Last seen:{' '}
           <span className="font-medium text-foreground">
             {isp.lastSeen ? formatRelative(isp.lastSeen) : '—'}
