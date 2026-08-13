@@ -289,11 +289,13 @@ class SSHInterfaceCollector:
     # outputs == {"status": "...", "description": "...", ...}
     """
 
-    def __init__(self, credentials: SSHCredentials):
+    def __init__(self, credentials: SSHCredentials, *, ssh_slot_kind: str = "collector"):
         _ensure_paramiko()
         self.credentials = credentials
+        self.ssh_slot_kind = ssh_slot_kind
         self._client: Any = None
         self._shell: Any = None
+        self._slot_cm = None
 
     def __enter__(self) -> "SSHInterfaceCollector":
         self.connect()
@@ -303,7 +305,14 @@ class SSHInterfaceCollector:
         self.close()
 
     def connect(self) -> None:
+        from services.collector_concurrency import ssh_session_slot  # noqa: PLC0415
+
         creds = self.credentials
+        self._slot_cm = ssh_session_slot(
+            kind=self.ssh_slot_kind,
+            label=f"{creds.host}:{creds.port}",
+        )
+        self._slot_cm.__enter__()
         logger.info(
             "[IFACE] SSH connecting | host=%s port=%s user=%s vendor=%s",
             creds.host,
@@ -337,6 +346,7 @@ class SSHInterfaceCollector:
                 client.close()
             except Exception:  # noqa: BLE001
                 pass
+            self.close()
             raise SSHCollectorError(
                 f"SSH authentication failed for {creds.host}: {exc}"
             ) from exc
@@ -345,6 +355,7 @@ class SSHInterfaceCollector:
                 client.close()
             except Exception:  # noqa: BLE001
                 pass
+            self.close()
             raise SSHCollectorError(
                 f"SSH connection failed for {creds.host}: {exc}"
             ) from exc
@@ -368,6 +379,12 @@ class SSHInterfaceCollector:
             pass
         self._shell = None
         self._client = None
+        if self._slot_cm is not None:
+            try:
+                self._slot_cm.__exit__(None, None, None)
+            except Exception:  # noqa: BLE001
+                pass
+            self._slot_cm = None
 
     def collect_raw_outputs(self) -> dict[str, str]:
         """

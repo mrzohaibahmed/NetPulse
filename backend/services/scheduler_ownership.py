@@ -420,3 +420,32 @@ class CycleLeadershipGuard:
     def note_device_visited(self) -> None:
         """Count a loop iteration toward device-based renewal."""
         self._devices_since_renew += 1
+
+
+def get_scheduler_status() -> dict[str, Any]:
+    """Safe scheduler ownership snapshot for health/metrics (no secrets)."""
+    owner = get_owner_id()
+    try:
+        doc = _db()[LOCK_COLLECTION].find_one({"_id": LOCK_ID}) or {}
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "self": owner,
+            "isLeader": False,
+            "error": "mongo_unavailable",
+            "detail": type(exc).__name__,
+        }
+
+    peer = doc.get("ownerId")
+    is_leader = bool(peer == owner and ensure_not_expired(doc))
+    return {
+        "self": owner,
+        "peer": peer,
+        "isLeader": is_leader,
+        "heartbeatAt": format_utc(ensure_utc(doc.get("heartbeatAt")))
+        if doc.get("heartbeatAt")
+        else None,
+        "expiresAt": format_utc(ensure_utc(doc.get("expiresAt")))
+        if doc.get("expiresAt")
+        else None,
+        "ttlSeconds": get_lock_ttl_seconds(),
+    }

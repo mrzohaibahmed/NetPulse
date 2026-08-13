@@ -279,7 +279,6 @@ class SchedulerJobSplitTests(unittest.TestCase):
         import scheduler as sched
 
         cycle = {"_id": "c-safe"}
-        execute = MagicMock(return_value={"status": "SUCCESS"})
 
         with (
             patch.object(sched, "require_scheduler_leadership", return_value=True),
@@ -300,24 +299,23 @@ class SchedulerJobSplitTests(unittest.TestCase):
                 return_value={"mitigationMode": "automatic"},
             ),
             patch(
-                "config.database.db"
-            ) as mock_db,
-            patch(
-                "services.storm.mitigation.engine.execute_mitigation",
-                execute,
-            ),
+                "services.storm.auto_mitigation.run_automatic_mitigation_batch",
+                return_value={
+                    "batchSize": 5,
+                    "readyFetched": 1,
+                    "executed": 1,
+                    "success": 1,
+                    "failed": 0,
+                    "results": [{"incidentId": "storm-1", "success": True}],
+                },
+            ) as auto_batch,
             patch(
                 "services.storm.pipeline_cycles.mark_safety_complete"
             ) as mark_done,
         ):
-            mock_db.storm_incidents.find.return_value = [
-                {"incidentId": "storm-1"}
-            ]
             sched._run_storm_safety_prepare_job()
 
-        execute.assert_called_once_with(
-            "storm-1", "SHUTDOWN", operator="SYSTEM"
-        )
+        auto_batch.assert_called_once()
         mark_done.assert_called_once()
 
 

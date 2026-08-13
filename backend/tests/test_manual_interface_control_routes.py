@@ -62,13 +62,29 @@ class ManualInterfaceControlRouteTests(unittest.TestCase):
     def test_missing_confirm_rejected(self, mock_create_incident, mock_execute):
         res = self.client.post(
             f"/api/interfaces/{self.device_id}/{self.interface}/manual-shutdown",
-            json={},
-            headers=self._auth_headers("operator"),
+            json={"reason": "break-glass test"},
+            headers=self._auth_headers("admin"),
         )
 
         self.assertEqual(res.status_code, 400)
         mock_create_incident.assert_not_called()
         mock_execute.assert_not_called()
+
+    def test_missing_reason_rejected(self):
+        res = self.client.post(
+            f"/api/interfaces/{self.device_id}/{self.interface}/manual-shutdown",
+            json={"confirm": True},
+            headers=self._auth_headers("admin"),
+        )
+        self.assertEqual(res.status_code, 400)
+
+    def test_operator_forbidden(self):
+        res = self.client.post(
+            f"/api/interfaces/{self.device_id}/{self.interface}/manual-shutdown",
+            json={"confirm": True, "reason": "test"},
+            headers=self._auth_headers("operator"),
+        )
+        self.assertEqual(res.status_code, 403)
 
     @patch("services.storm.mitigation.audit.log_audit")
     @patch("routes.interface_routes.log_audit")
@@ -108,8 +124,8 @@ class ManualInterfaceControlRouteTests(unittest.TestCase):
 
         res = self.client.post(
             f"/api/interfaces/{self.device_id}/{self.interface}/manual-shutdown",
-            json={"confirm": True},
-            headers=self._auth_headers("operator", "op1"),
+            json={"confirm": True, "reason": "operator break-glass"},
+            headers=self._auth_headers("admin", "admin1"),
         )
 
         self.assertEqual(res.status_code, 200)
@@ -122,10 +138,12 @@ class ManualInterfaceControlRouteTests(unittest.TestCase):
         for cmd in expected_commands:
             self.assertIn(cmd, run_cmds)
 
-        fake_db.storm_incidents.update_one.assert_called_with(
+        update_call = fake_db.storm_incidents.update_one.call_args
+        self.assertEqual(
+            update_call[0][0],
             {"incidentId": self.incident_doc["incidentId"]},
-            {"$set": {"status": "MITIGATED", "updatedAt": unittest.mock.ANY}},
         )
+        self.assertEqual(update_call[0][1]["$set"]["status"], "MITIGATED")
         mock_route_audit.assert_called_once()
 
     @patch("services.storm.mitigation.audit.log_audit")
@@ -164,7 +182,7 @@ class ManualInterfaceControlRouteTests(unittest.TestCase):
 
         res = self.client.post(
             f"/api/interfaces/{self.device_id}/{self.interface}/manual-shutdown",
-            json={"confirm": True},
+            json={"confirm": True, "reason": "SSH failure test"},
             headers=self._auth_headers("admin", "admin1"),
         )
 

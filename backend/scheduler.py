@@ -31,6 +31,23 @@ logger = get_monitor_logger("scheduler")
 
 # Single shared scheduler instance.
 # Ping, Nmap, interface discovery, and storm stages share one scheduler.
+#
+# Job overlap policy (all leader-gated via require_scheduler_leadership):
+# | Job ID                    | Interval | max_inst | coalesce | External I/O      |
+# |---------------------------|----------|----------|----------|-------------------|
+# | device_monitor_job        | 5s disp. | 1        | yes      | ICMP              |
+# | isp_monitor_job           | pingInt  | 1        | yes      | ICMP              |
+# | nmap_scan_job             | 3600s    | 1        | yes      | Nmap              |
+# | interface_discovery_job   | 3600s    | 1        | yes      | SSH               |
+# | interface_stats_job       | 60s      | 1        | yes      | SNMP/SSH          |
+# | storm_analysis_job        | 60s      | 1        | yes      | Mongo             |
+# | storm_confirmation_job    | 60s      | 1        | yes      | Mongo/SSH         |
+# | storm_safety_prepare_job  | 60s      | 1        | yes      | SSH/mitigation    |
+# | mac_arp_poll_job          | 90s      | 1        | yes      | SSH               |
+# | arp_active_sweep_job      | 1800s    | 1        | yes      | SSH/ping          |
+# | storm_recovery_job        | 30s      | 1        | yes      | SSH               |
+# | data_retention_job        | daily    | 1        | yes      | Mongo TTL         |
+#
 # Storm stages are separate leader-owned jobs coordinated by storm_pipeline_cycles.
 # Phase 5: only the MongoDB-elected leader executes job bodies.
 scheduler = BackgroundScheduler()
@@ -252,37 +269,13 @@ def _run_storm_safety_prepare_job() -> None:
 
             settings = get_settings()
             if settings.get("mitigationMode") == "automatic":
-                from config.database import db  # noqa: PLC0415
-                from services.storm.mitigation.engine import (  # noqa: PLC0415
-                    execute_mitigation,
+                from services.storm.auto_mitigation import (  # noqa: PLC0415
+                    run_automatic_mitigation_batch,
                 )
 
-                ready_incidents = list(
-                    db.storm_incidents.find({"status": "READY_FOR_MITIGATION"})
-                )
-                summary["readyIncidents"] = len(ready_incidents)
-                if ready_incidents:
-                    logger.info(
-                        "[SCHEDULER] Automatic mitigation active. Found %d ready incident(s) | cycleId=%s",
-                        len(ready_incidents),
-                        cycle_id,
-                    )
-                    for inc in ready_incidents:
-                        inc_id = inc.get("incidentId")
-                        logger.info(
-                            "[SCHEDULER] Auto-executing mitigation for %s | cycleId=%s",
-                            inc_id,
-                            cycle_id,
-                        )
-                        res = execute_mitigation(
-                            inc_id, "SHUTDOWN", operator="SYSTEM"
-                        )
-                        logger.info(
-                            "[SCHEDULER] Auto-mitigation status for %s: %s | cycleId=%s",
-                            inc_id,
-                            res.get("status"),
-                            cycle_id,
-                        )
+                auto_summary = run_automatic_mitigation_batch(cycle_id=cycle_id)
+                summary["autoMitigation"] = auto_summary
+                summary["readyIncidents"] = auto_summary.get("readyFetched", 0)
         except Exception as exc:  # noqa: BLE001
             summary["errors"] = int(summary.get("errors") or 0) + 1
             logger.error(
@@ -347,6 +340,8 @@ def _start_nmap_job() -> None:
             seconds=interval,
             id=NMAP_JOB_ID,
             replace_existing=True,
+            max_instances=1,
+            coalesce=True,
         )
         logger.info(
             "Nmap scan job registered | interval=%ss (%dm)",
@@ -386,6 +381,8 @@ def _start_interface_job() -> None:
             seconds=interval,
             id=INTERFACE_JOB_ID,
             replace_existing=True,
+            max_instances=1,
+            coalesce=True,
         )
         logger.info(
             "Interface discovery job registered | interval=%ss (%dm)",
@@ -886,6 +883,8 @@ def reschedule_nmap_job(interval_seconds: int) -> None:
             seconds=interval,
             id=NMAP_JOB_ID,
             replace_existing=True,
+            max_instances=1,
+            coalesce=True,
         )
         logger.info("Nmap scan job rescheduled | interval=%ss", interval)
     except Exception as exc:  # noqa: BLE001

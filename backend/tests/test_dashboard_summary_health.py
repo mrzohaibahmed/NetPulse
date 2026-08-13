@@ -35,7 +35,18 @@ def _count_side_effect(query=None):
 class DashboardSummaryContractTests(unittest.TestCase):
     @patch("routes.dashboard_routes.db")
     def test_summary_exposes_numeric_health_fields(self, mock_db):
-        mock_db.devices.count_documents.side_effect = _count_side_effect
+        mock_db.devices.aggregate.return_value = iter([
+            {
+                "total": [{"n": 200}],
+                "online": [{"n": 180}],
+                "notReachable": [{"n": 20}],
+                "offlineCritical": [{"n": 0}],
+                "legacyOffline": [{"n": 0}],
+                "unknown": [{"n": 0}],
+                "criticalFlag": [{"n": 0}],
+                "monitored": [{"n": 200}],
+            }
+        ])
 
         from routes.dashboard_routes import dashboard_summary
 

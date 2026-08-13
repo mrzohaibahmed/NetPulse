@@ -454,15 +454,22 @@ def set_interface_monitoring(device_id: str, interface_name: str):
     "/interfaces/<device_id>/<path:interface_name>/manual-shutdown",
     methods=["POST"],
 )
-@require_auth(roles=["operator"])
+@require_auth(roles=["admin"])
 def manual_shutdown_interface(device_id: str, interface_name: str):
-    """Create a MANUAL incident and execute shutdown without storm pipeline gates."""
+    """Emergency manual shutdown — explicit break-glass, not storm pipeline automation."""
     try:
         body = request.get_json(silent=True) or {}
         if not _bool_flag(body.get("confirm")):
             return jsonify({
                 "success": False,
                 "message": "confirm=true is required for manual shutdown",
+            }), 400
+
+        reason = (body.get("reason") or "").strip()
+        if not reason:
+            return jsonify({
+                "success": False,
+                "message": "reason is required for emergency manual shutdown",
             }), 400
 
         if not ObjectId.is_valid(device_id):
@@ -488,7 +495,6 @@ def manual_shutdown_interface(device_id: str, interface_name: str):
 
         username = (getattr(g, "user", {}) or {}).get("username") or "SYSTEM"
         role = (getattr(g, "user", {}) or {}).get("role") or "viewer"
-        reason = (body.get("reason") or "").strip() or None
 
         incident = create_manual_incident(
             device_id=oid,
@@ -506,11 +512,12 @@ def manual_shutdown_interface(device_id: str, interface_name: str):
             str(incident["incidentId"]),
             "SHUTDOWN",
             operator=username,
+            execution_mode="EMERGENCY",
             audit_context={"reason": reason},
         )
 
         log_audit(
-            action="manual_shutdown",
+            action="emergency_manual_shutdown",
             entity_type="incident",
             entity_id=incident.get("incidentId"),
             details={

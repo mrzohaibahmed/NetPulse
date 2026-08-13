@@ -107,6 +107,14 @@ from utils.serializers import (
 storm_bp = Blueprint("storm", __name__)
 
 
+def _bool_flag(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+
 def _parse_device_id(device_id: str):
     if not ObjectId.is_valid(device_id):
         return None
@@ -1202,12 +1210,28 @@ def execute_mitigation_route():
         body = request.get_json(silent=True) or {}
         incident_id = body.get("incidentId") or body.get("incident_id")
         strategy = body.get("strategy") or "SHUTDOWN"
+        execution_mode = (body.get("executionMode") or body.get("execution_mode") or "STANDARD").strip().upper()
 
         if not incident_id:
             return jsonify({
                 "success": False,
                 "message": "incidentId is required",
             }), 400
+
+        if execution_mode == "EMERGENCY":
+            if not _bool_flag(body.get("confirm")):
+                return jsonify({
+                    "success": False,
+                    "message": "confirm=true is required for emergency mitigation",
+                }), 400
+            reason = (body.get("reason") or "").strip()
+            if not reason:
+                return jsonify({
+                    "success": False,
+                    "message": "reason is required for emergency mitigation",
+                }), 400
+        else:
+            reason = None
 
         operator = "SYSTEM"
         if hasattr(g, "user") and g.user:
@@ -1217,6 +1241,8 @@ def execute_mitigation_route():
             str(incident_id).strip(),
             str(strategy).strip().upper(),
             operator=operator,
+            execution_mode=execution_mode,
+            audit_context={"reason": reason} if reason else None,
         )
         status_code = 200 if res.get("success") else 400
         return jsonify(res), status_code

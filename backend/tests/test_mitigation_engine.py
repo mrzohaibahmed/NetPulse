@@ -33,6 +33,7 @@ class MitigationEngineTests(unittest.TestCase):
             "deviceId": self.device_id,
             "interface": self.interface,
             "status": "READY_FOR_MITIGATION",
+            "incidentType": "STORM",
             "hostname": "sw1",
             "ipAddress": "10.0.0.1",
             "severity": "CRITICAL",
@@ -49,6 +50,20 @@ class MitigationEngineTests(unittest.TestCase):
                 "sshVendor": "cisco_ios",
             },
         }
+
+    def _fake_db(self):
+        """DB mock with live Confirmation + Safety for STANDARD admin shutdown."""
+        fake_db = MagicMock()
+        fake_db.devices.find_one.return_value = self.device_doc
+        fake_db.storm_confirmation_history.find_one.return_value = {
+            "confirmed": True,
+            "timestamp": datetime.now(timezone.utc),
+        }
+        fake_db.storm_safety_history.find_one.return_value = {
+            "safe": True,
+            "timestamp": datetime.now(timezone.utc),
+        }
+        return fake_db
 
     def test_safe_command_whitelisting(self):
         """Verify that whitelisted commands pass and dynamic injection fails."""
@@ -82,10 +97,7 @@ class MitigationEngineTests(unittest.TestCase):
         """Test successful shutdown mitigation execution and verification."""
         mock_get_incident.return_value = self.incident_doc
 
-        # Mock database setup
-        fake_db = MagicMock()
-        fake_db.devices.find_one.return_value = self.device_doc
-        # Lock insertion succeeds
+        fake_db = self._fake_db()
         mock_db_fn.return_value = fake_db
         with patch(
             "services.storm.mitigation.engine.LockService.acquire_mitigation_locks",
@@ -108,10 +120,9 @@ class MitigationEngineTests(unittest.TestCase):
 
         # Verify locks were cleaned up
         # Verify incident status was updated to MITIGATED
-        fake_db.storm_incidents.update_one.assert_called_with(
-            {"incidentId": self.incident_id},
-            {"$set": {"status": "MITIGATED", "updatedAt": unittest.mock.ANY}},
-        )
+        update_call = fake_db.storm_incidents.update_one.call_args
+        self.assertEqual(update_call[0][0], {"incidentId": self.incident_id})
+        self.assertEqual(update_call[0][1]["$set"]["status"], "MITIGATED")
 
     @patch("services.storm.mitigation.engine.get_incident")
     @patch("services.storm.mitigation.engine._db")
@@ -120,9 +131,7 @@ class MitigationEngineTests(unittest.TestCase):
         """Test that verification failure triggers automatic rollback."""
         mock_get_incident.return_value = self.incident_doc
 
-        # Mock database setup
-        fake_db = MagicMock()
-        fake_db.devices.find_one.return_value = self.device_doc
+        fake_db = self._fake_db()
         mock_db_fn.return_value = fake_db
 
         with patch(
@@ -160,7 +169,7 @@ class MitigationEngineTests(unittest.TestCase):
         """Test lock conflict raises ValueError."""
         mock_get_incident.return_value = self.incident_doc
 
-        fake_db = MagicMock()
+        fake_db = self._fake_db()
         mock_db_fn.return_value = fake_db
 
         with patch(
@@ -181,8 +190,7 @@ class MitigationEngineTests(unittest.TestCase):
         """Test that SSH timeout/connection drops trigger rollback with new connection."""
         mock_get_incident.return_value = self.incident_doc
 
-        fake_db = MagicMock()
-        fake_db.devices.find_one.return_value = self.device_doc
+        fake_db = self._fake_db()
         mock_db_fn.return_value = fake_db
 
         # Collector connect raises error
@@ -212,8 +220,7 @@ class MitigationEngineTests(unittest.TestCase):
         """Test that rollback failure updates status correctly."""
         mock_get_incident.return_value = self.incident_doc
 
-        fake_db = MagicMock()
-        fake_db.devices.find_one.return_value = self.device_doc
+        fake_db = self._fake_db()
         mock_db_fn.return_value = fake_db
 
         # Execute fails

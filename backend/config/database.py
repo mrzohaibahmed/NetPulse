@@ -4,6 +4,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from pymongo import MongoClient
 
+from config.mongo_config import build_mongo_client_kwargs, safe_mongo_log_summary
 from config.nmap_validation import validate_nmap_scan_profiles
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -84,16 +85,23 @@ if not MONGO_URI:
 if not DATABASE_NAME:
     raise ValueError("DATABASE_NAME not found in .env file")
 
+_MONGO_CLIENT_KWARGS = build_mongo_client_kwargs()
+
 try:
-    client = MongoClient(MONGO_URI)
+    client = MongoClient(MONGO_URI, **_MONGO_CLIENT_KWARGS)
 
     # Verify MongoDB connection
     client.admin.command("ping")
 
     db = client[DATABASE_NAME]
 
+    _mongo_summary = safe_mongo_log_summary(MONGO_URI, _MONGO_CLIENT_KWARGS)
     print("MongoDB Connected Successfully!")
     print(f"Database: {DATABASE_NAME}")
+    print(
+        "Mongo pool | host={host}:{port} maxPoolSize={maxPoolSize} "
+        "waitQueueTimeoutMS={waitQueueTimeoutMS}".format(**_mongo_summary)
+    )
 
 except Exception as e:
     print(f"MongoDB Connection Failed: {e}")

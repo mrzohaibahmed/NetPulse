@@ -16,24 +16,70 @@ dashboard_bp = Blueprint("dashboard", __name__)
 @require_auth()
 def dashboard_summary():
     try:
-        total = db.devices.count_documents({})
-        online = db.devices.count_documents({"status": STATUS_ONLINE})
-        not_reachable = db.devices.count_documents({"status": STATUS_NOT_REACHABLE})
-        # Backward-compat: treat legacy "Offline" as critical offline if critical flag set
-        offline_critical = db.devices.count_documents({
-            "$or": [
-                {"status": STATUS_OFFLINE_CRITICAL},
-                {"status": "Offline", "critical": True},
-            ]
-        })
-        # Also count non-critical legacy Offline as not reachable for percentages
-        legacy_offline_noncritical = db.devices.count_documents({
-            "status": "Offline",
-            "critical": {"$ne": True},
-        })
-        not_reachable += legacy_offline_noncritical
-
-        unknown = db.devices.count_documents({"status": "Unknown"})
+        pipeline = [
+            {
+                "$facet": {
+                    "total": [{"$count": "n"}],
+                    "online": [
+                        {"$match": {"status": STATUS_ONLINE}},
+                        {"$count": "n"},
+                    ],
+                    "notReachable": [
+                        {"$match": {"status": STATUS_NOT_REACHABLE}},
+                        {"$count": "n"},
+                    ],
+                    "offlineCritical": [
+                        {
+                            "$match": {
+                                "$or": [
+                                    {"status": STATUS_OFFLINE_CRITICAL},
+                                    {"status": "Offline", "critical": True},
+                                ]
+                            }
+                        },
+                        {"$count": "n"},
+                    ],
+                    "legacyOffline": [
+                        {
+                            "$match": {
+                                "status": "Offline",
+                                "critical": {"$ne": True},
+                            }
+                        },
+                        {"$count": "n"},
+                    ],
+                    "unknown": [
+                        {"$match": {"status": "Unknown"}},
+                        {"$count": "n"},
+                    ],
+                    "criticalFlag": [
+                        {"$match": {"critical": True}},
+                        {"$count": "n"},
+                    ],
+                    "monitored": [
+                        {"$match": {"monitor": True}},
+                        {"$count": "n"},
+                    ],
+                }
+            }
+        ]
+        facet = next(db.devices.aggregate(pipeline), {})
+        counts = {
+            key: int((facet.get(key) or [{}])[0].get("n") or 0)
+            for key in (
+                "total",
+                "online",
+                "notReachable",
+                "offlineCritical",
+                "legacyOffline",
+                "unknown",
+                "criticalFlag",
+                "monitored",
+            )
+        }
+        total = counts["total"]
+        not_reachable = counts["notReachable"] + counts["legacyOffline"]
+        offline_critical = counts["offlineCritical"]
 
         def pct(count):
             return round((count / total) * 100, 2) if total else 0
@@ -42,13 +88,13 @@ def dashboard_summary():
             "success": True,
             "summary": {
                 "totalDevices": total,
-                "onlineDevices": online,
+                "onlineDevices": counts["online"],
                 "notReachableDevices": not_reachable,
                 "criticalOfflineDevices": offline_critical,
-                "unknownDevices": unknown,
-                "criticalDevices": db.devices.count_documents({"critical": True}),
-                "monitoredDevices": db.devices.count_documents({"monitor": True}),
-                "onlinePercentage": pct(online),
+                "unknownDevices": counts["unknown"],
+                "criticalDevices": counts["criticalFlag"],
+                "monitoredDevices": counts["monitored"],
+                "onlinePercentage": pct(counts["online"]),
                 "notReachablePercentage": pct(not_reachable),
                 "criticalOfflinePercentage": pct(offline_critical),
                 # Legacy fields for older clients
@@ -64,7 +110,23 @@ def dashboard_summary():
         }), 500
 
 
-@dashboard_bp.route("/dashboard/recent-history", methods=["GET"])
+@dashboard_bp.route("/dashboard/ops-metrics", methods=["GET"])
+@require_auth(roles=["admin"])
+def dashboard_ops_metrics():
+    """Production operational snapshot (no secrets)."""
+    try:
+        from services.ops_health import ops_metrics_snapshot  # noqa: PLC0415
+
+        return jsonify({
+            "success": True,
+            "metrics": ops_metrics_snapshot(),
+        }), 200
+    except Exception as error:
+        return jsonify({
+            "success": False,
+            "message": "Failed to collect operational metrics",
+            "error": str(error),
+        }), 500
 @require_auth()
 def recent_history():
     try:

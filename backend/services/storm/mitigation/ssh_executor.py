@@ -87,7 +87,7 @@ class SSHMitigationExecutor:
 
     def connect(self) -> None:
         try:
-            self.collector = SSHInterfaceCollector(self.creds)
+            self.collector = SSHInterfaceCollector(self.creds, ssh_slot_kind="priority")
             self.collector.connect()
         except SSHCollectorError as exc:
             raise RuntimeError(f"SSH reachability check failed: {exc}") from exc

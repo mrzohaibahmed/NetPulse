@@ -14,6 +14,7 @@ from bson import ObjectId
 from services.storm.incident import append_timeline_event, get_incident
 from services.storm.lock_service import LockService
 from services.storm.mitigation.audit import record_mitigation_history
+from services.storm.mitigation.authorization import validate_mitigation_authorization
 from services.storm.mitigation.rollback import execute_rollback
 from services.storm.mitigation.ssh_executor import SSHMitigationExecutor
 from services.storm.mitigation.strategy import (
@@ -60,17 +61,13 @@ def execute_mitigation(
     if not device_id or not interface:
         raise ValueError(f"Incident {incident_id} is missing deviceId or interface")
 
-    # Allowed incident status checks per strategy
-    allowed_statuses = {
-        "SHUTDOWN": ["READY_FOR_MITIGATION", "PREPARED", "OPEN", "MITIGATION_FAILED"],
-        "NO_SHUTDOWN": ["MITIGATED", "MITIGATION_FAILED", "READY_FOR_MITIGATION", "PREPARED", "OPEN"],
-    }
-    current_status = incident.get("status", "OPEN")
-    if current_status not in allowed_statuses.get(strategy_name, []):
-        raise ValueError(
-            f"Mitigation rejected: Incident {incident_id} is in status '{current_status}', "
-            f"which is not allowed for strategy '{strategy_name}'."
-        )
+    validate_mitigation_authorization(
+        strategy_name=strategy_name,
+        operator=operator,
+        incident=incident,
+        execution_mode=execution_mode,
+        db=db,
+    )
 
     # Defense in depth: automatic SYSTEM shutdowns require a live CONFIRMED
     # storm with a current SAFE safety result.

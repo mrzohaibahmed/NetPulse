@@ -4,6 +4,9 @@ from pathlib import Path
 
 from flask import Flask, jsonify, send_from_directory
 from flask_cors import CORS
+
+from config.cors_config import build_cors_kwargs
+from config.deployment import should_start_scheduler, startup_identity
 from config.database import db, DATABASE_NAME
 from routes.alert_routes import alert_bp
 from routes.auth_routes import auth_bp
@@ -50,6 +53,7 @@ from services.retention_service import ensure_retention_ttl_indexes
 from services.interface_collection.monitoring_state import (
     migrate_interface_monitoring_state,
 )
+from services.ops_health import legacy_health_payload, liveness_payload, readiness_payload
 from utils.monitor_logger import get_monitor_logger
 
 _bootstrap_logger = get_monitor_logger("app.bootstrap")
@@ -64,7 +68,7 @@ app = Flask(
     static_folder=str(FRONTEND_DIST) if HAS_FRONTEND_DIST else None,
     static_url_path="" if HAS_FRONTEND_DIST else None,
 )
-CORS(app, supports_credentials=True)
+CORS(app, **build_cors_kwargs())
 
 app.register_blueprint(auth_bp, url_prefix="/api")
 app.register_blueprint(device_bp, url_prefix="/api")
@@ -106,20 +110,21 @@ def spa_fallback(path: str):
     return send_from_directory(app.static_folder, "index.html")
 
 
+@app.route("/health/live")
+def health_live():
+    return jsonify(liveness_payload()), 200
+
+
+@app.route("/health/ready")
+def health_ready():
+    body, code = readiness_payload()
+    return jsonify(body), code
+
+
 @app.route("/health")
 def health():
-    try:
-        db.command("ping")
-        return jsonify({
-            "server": "Running",
-            "database": "Connected",
-        }), 200
-    except Exception as e:
-        return jsonify({
-            "server": "Running",
-            "database": "Disconnected",
-            "error": str(e),
-        }), 500
+    body, code = legacy_health_payload()
+    return jsonify(body), code
 
 
 def bootstrap():
@@ -237,25 +242,43 @@ def _remove_pipeline_generation_artifacts() -> None:
 
 bootstrap()
 
-# Start monitoring unless we're the Flask debug reloader parent process.
-# Default OFF — production must not run the interactive debugger.
-# When FLASK_DEBUG=true, Werkzeug spawns a parent (watch) + child (serve).
-# Only the child has WERKZEUG_RUN_MAIN=true — starting in both would create
-# two APScheduler instances and two competing ownerIds in one "logical" app.
-DEBUG = os.getenv("FLASK_DEBUG", "false").lower() in ("1", "true", "yes")
-_should_start_scheduler = (not DEBUG) or (
-    os.environ.get("WERKZEUG_RUN_MAIN") == "true"
+_boot = startup_identity()
+_bootstrap_logger.info(
+    "NetPulse process boot | hostname=%s | pid=%s | role=%s | env=%s | "
+    "schedulerEnabled=%s | enableSchedulerSetting=%s | gunicornMultiWorker=%s",
+    _boot["hostname"],
+    _boot["pid"],
+    _boot["role"],
+    _boot["environment"],
+    _boot["schedulerEnabled"],
+    _boot["enableSchedulerSetting"],
+    _boot["gunicornMultiWorker"],
 )
-if _should_start_scheduler:
+
+if should_start_scheduler():
     start_scheduler()
+    _bootstrap_logger.info(
+        "Scheduler started in this process | pid=%s | role=%s",
+        _boot["pid"],
+        _boot["role"],
+    )
 else:
     _bootstrap_logger.info(
-        "Skipping start_scheduler in Flask reloader parent "
-        "(FLASK_DEBUG=true, WERKZEUG_RUN_MAIN unset)"
+        "Scheduler not started in this process | pid=%s | role=%s | reason=%s",
+        _boot["pid"],
+        _boot["role"],
+        "NETPULSE_ROLE=api"
+        if _boot["role"] == "api"
+        else (
+            "multi_worker_wsgi"
+            if _boot["gunicornMultiWorker"]
+            else "explicit_disable_or_reloader_parent"
+        ),
     )
 
 
 if __name__ == "__main__":
+    DEBUG = os.getenv("FLASK_DEBUG", "false").lower() in ("1", "true", "yes")
     # Debug mode must never bind all interfaces (Werkzeug debugger exposure).
     # Non-debug keeps LAN-reachable 0.0.0.0 for normal deployments.
     run_host = "127.0.0.1" if DEBUG else "0.0.0.0"
