@@ -95,6 +95,9 @@ class RiskScoreEngine:
         hostname: Optional[str] = None,
         ip_address: Optional[str] = None,
         persist: bool = False,
+        cycle_id: Optional[str] = None,
+        interface_context: Optional[dict[str, Any]] = None,
+        stats_loaded: bool = False,
     ) -> RiskScoreResult:
         """
         Calculate risk for one interface.
@@ -136,7 +139,9 @@ class RiskScoreEngine:
                 skipped_reason="Interface not eligible",
             )
             if persist:
-                self._store(device_id, name, result, hostname, ip_address)
+                self._store(
+                    device_id, name, result, hostname, ip_address, cycle_id=cycle_id
+                )
             self._log(result, started)
             return result
 
@@ -155,12 +160,16 @@ class RiskScoreEngine:
             self._log(result, started)
             return result
 
-        interface_context = self._load_interface_context(device_id, name)
+        interface_context = interface_context if interface_context is not None else (
+            self._load_interface_context(device_id, name)
+        )
 
         current = current_stats
         previous = previous_stats
-        if current is None:
-            current, previous = load_stats_pair(device_id, name)
+        if current is None and not stats_loaded:
+            current, previous = load_stats_pair(
+                device_id, name, cycle_id=cycle_id
+            )
 
         if current is None:
             result = RiskScoreResult(
@@ -175,7 +184,9 @@ class RiskScoreEngine:
                 skipped_reason="Missing statistics history",
             )
             if persist:
-                self._store(device_id, name, result, hostname, ip_address)
+                self._store(
+                    device_id, name, result, hostname, ip_address, cycle_id=cycle_id
+                )
             self._log(result, started)
             return result
 
@@ -215,6 +226,7 @@ class RiskScoreEngine:
                 result,
                 hostname or current.get("hostname"),
                 ip_address or current.get("ipAddress"),
+                cycle_id=cycle_id,
             )
 
         self._log(result, started)
@@ -227,6 +239,8 @@ class RiskScoreEngine:
         result: RiskScoreResult,
         hostname: Optional[str],
         ip_address: Optional[str],
+        *,
+        cycle_id: Optional[str] = None,
     ) -> None:
         try:
             oid = device_id
@@ -238,8 +252,23 @@ class RiskScoreEngine:
                 result=result,
                 hostname=hostname,
                 ip_address=ip_address,
+                cycle_id=cycle_id,
             )
-            _db()[COLLECTION].insert_one(document)
+            inserted = _db()[COLLECTION].insert_one(document)
+            document["_id"] = inserted.inserted_id
+            try:
+                from services.storm.risk_latest import (  # noqa: PLC0415
+                    risk_latest_enabled,
+                    upsert_risk_latest_from_history_doc,
+                )
+
+                if risk_latest_enabled():
+                    upsert_risk_latest_from_history_doc(document)
+            except Exception as proj_exc:  # noqa: BLE001
+                logger.warning(
+                    "[RISK] Latest projection update failed (history kept): %s",
+                    proj_exc,
+                )
         except Exception as exc:  # noqa: BLE001
             logger.error("[RISK] Failed to store risk history: %s", exc)
 
@@ -305,6 +334,8 @@ def calculate_risk(
     hostname: Optional[str] = None,
     ip_address: Optional[str] = None,
     persist: bool = False,
+    cycle_id: Optional[str] = None,
+    interface_context: Optional[dict[str, Any]] = None,
 ) -> RiskScoreResult:
     """
     Public entry-point for future Storm modules::
@@ -320,6 +351,8 @@ def calculate_risk(
         hostname=hostname,
         ip_address=ip_address,
         persist=persist,
+        cycle_id=cycle_id,
+        interface_context=interface_context,
     )
 
 
@@ -342,28 +375,52 @@ def ensure_risk_indexes() -> None:
             [("severity", ASCENDING), ("timestamp", DESCENDING)],
             name="idx_risk_severity_ts",
         )
+        coll.create_index(
+            [("cycleId", ASCENDING)],
+            name="idx_risk_cycle",
+        )
         logger.info("[RISK] MongoDB indexes ensured on %s", COLLECTION)
     except Exception as exc:  # noqa: BLE001
         logger.warning("[RISK] Failed to ensure indexes: %s", exc)
 
 
-def _latest_eligibility_map() -> dict[tuple[str, str], bool]:
-    """Map (deviceId, interface) → eligible from latest eligibility_results."""
-    pipeline = [
-        {"$sort": {"timestamp": DESCENDING}},
-        {
-            "$group": {
-                "_id": {
-                    "deviceId": "$deviceId",
-                    "interface": "$interface",
-                },
-                "eligible": {"$first": "$eligible"},
-            }
-        },
-    ]
+def _latest_eligibility_map(*, cycle_id: Optional[str] = None) -> dict[tuple[str, str], bool]:
+    """
+    Map (deviceId, interface) → eligible from eligibility_results.
+
+    When ``cycle_id`` is provided (Job B), prefer that cycle's rows — avoids
+    a full-history ``$sort``+``$group`` scan. Falls back to latest-per-iface
+    aggregate when cycle rows are missing.
+    """
     mapping: dict[tuple[str, str], bool] = {}
     try:
-        for row in _db().eligibility_results.aggregate(pipeline):
+        if cycle_id:
+            for row in _db().eligibility_results.find({"cycleId": str(cycle_id)}):
+                device_id = row.get("deviceId")
+                iface = row.get("interface")
+                if device_id is None or not iface:
+                    continue
+                mapping[(str(device_id), str(iface))] = bool(row.get("eligible"))
+            if mapping:
+                return mapping
+            logger.warning(
+                "[RISK] No eligibility rows for cycleId=%s — falling back to latest map",
+                cycle_id,
+            )
+
+        pipeline = [
+            {"$sort": {"timestamp": DESCENDING}},
+            {
+                "$group": {
+                    "_id": {
+                        "deviceId": "$deviceId",
+                        "interface": "$interface",
+                    },
+                    "eligible": {"$first": "$eligible"},
+                }
+            },
+        ]
+        for row in _db().eligibility_results.aggregate(pipeline, allowDiskUse=True):
             key = row.get("_id") or {}
             device_id = key.get("deviceId")
             iface = key.get("interface")
@@ -375,12 +432,55 @@ def _latest_eligibility_map() -> dict[tuple[str, str], bool]:
     return mapping
 
 
-def calculate_all_risks() -> dict[str, Any]:
+def _bulk_interface_context_map() -> dict[tuple[str, str], dict[str, Any]]:
+    out: dict[tuple[str, str], dict[str, Any]] = {}
+    try:
+        cursor = _db().interfaces.find(
+            {},
+            {
+                "deviceId": 1,
+                "name": 1,
+                "portMode": 1,
+                "mode": 1,
+                "isAccess": 1,
+                "isTrunk": 1,
+                "isUplink": 1,
+                "isInfrastructure": 1,
+                "neighbor": 1,
+            },
+        )
+        for row in cursor:
+            device_id = row.get("deviceId")
+            name = row.get("name")
+            if device_id is None or not name:
+                continue
+            out[(str(device_id), str(name))] = row
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[RISK] Failed to load interface context map: %s", exc)
+    return out
+
+
+def _bulk_stats_pairs_map(
+    *,
+    cycle_id: Optional[str] = None,
+) -> dict[tuple[str, str], tuple[Optional[dict], Optional[dict]]]:
+    """
+    Prefetch (current, previous) stats pairs for all interfaces.
+
+    Matches ``load_stats_pair`` semantics, including cycle binding.
+    """
+    from services.storm.history import bulk_load_stats_pairs  # noqa: PLC0415
+
+    return bulk_load_stats_pairs(cycle_id=cycle_id)
+
+
+def calculate_all_risks(*, cycle_id: Optional[str] = None) -> dict[str, Any]:
     """
     Score every interface that has a latest eligibility result.
 
     Safe for APScheduler — never raises. Stops after risk storage;
     does not invoke confirmation/mitigation.
+    Optional ``cycle_id`` stamps risk rows and binds stats pair lookups.
     """
     config = get_risk_config()
     if not config.enable_risk:
@@ -393,15 +493,18 @@ def calculate_all_risks() -> dict[str, Any]:
             "disabled": True,
         }
 
-    logger.info("[RISK] Bulk risk calculation started")
+    logger.info("[RISK] Bulk risk calculation started | cycleId=%s", cycle_id or "-")
     started = time.monotonic()
-    eligibility = _latest_eligibility_map()
+    eligibility = _latest_eligibility_map(cycle_id=cycle_id)
+    context_map = _bulk_interface_context_map()
+    stats_map = _bulk_stats_pairs_map(cycle_id=cycle_id)
 
     total = 0
     scored = 0
     skipped = 0
     errors = 0
     engine = get_risk_engine(force_new=True)
+    documents: list[dict[str, Any]] = []
 
     # Prefer interfaces inventory so we still score eligible ports even if
     # eligibility map is empty after a fresh install (treat missing as False).
@@ -422,15 +525,35 @@ def calculate_all_risks() -> dict[str, Any]:
             if device_id is None or not name:
                 skipped += 1
                 continue
-            eligible = eligibility.get((str(device_id), str(name)), False)
+            map_key = (str(device_id), str(name))
+            eligible = eligibility.get(map_key, False)
+            current_stats, previous_stats = stats_map.get(map_key, (None, None))
             try:
-                engine.calculate(
+                result = engine.calculate(
                     device_id=device_id,
                     interface=name,
                     eligible=eligible,
+                    current_stats=current_stats if eligible else None,
+                    previous_stats=previous_stats if eligible else None,
                     hostname=iface.get("hostname"),
                     ip_address=iface.get("ipAddress"),
-                    persist=True,
+                    persist=False,
+                    cycle_id=cycle_id,
+                    interface_context=context_map.get(map_key),
+                    stats_loaded=bool(eligible),
+                )
+                oid = device_id
+                if isinstance(oid, str) and ObjectId.is_valid(oid):
+                    oid = ObjectId(oid)
+                documents.append(
+                    create_risk_document(
+                        device_id=oid,
+                        interface=name,
+                        result=result,
+                        hostname=iface.get("hostname"),
+                        ip_address=iface.get("ipAddress"),
+                        cycle_id=cycle_id,
+                    )
                 )
                 if eligible:
                     scored += 1
@@ -442,6 +565,25 @@ def calculate_all_risks() -> dict[str, Any]:
                     "[RISK] Failed scoring %s: %s",
                     name,
                     exc,
+                )
+
+        if documents:
+            result = _db()[COLLECTION].insert_many(documents, ordered=False)
+            # Attach inserted ids for projection mirroring.
+            for doc, inserted_id in zip(documents, result.inserted_ids):
+                doc["_id"] = inserted_id
+            try:
+                from services.storm.risk_latest import (  # noqa: PLC0415
+                    risk_latest_enabled,
+                    upsert_risk_latest_many,
+                )
+
+                if risk_latest_enabled():
+                    upsert_risk_latest_many(documents)
+            except Exception as proj_exc:  # noqa: BLE001
+                logger.warning(
+                    "[RISK] Latest projection batch update failed (history kept): %s",
+                    proj_exc,
                 )
     except Exception as exc:  # noqa: BLE001
         logger.exception("[RISK] Bulk calculation aborted: %s", exc)
@@ -456,12 +598,13 @@ def calculate_all_risks() -> dict[str, Any]:
     elapsed = round(time.monotonic() - started, 2)
     logger.info(
         "[RISK] Bulk complete | total=%s scored=%s skipped=%s errors=%s "
-        "elapsed=%.2fs",
+        "elapsed=%.2fs | cycleId=%s",
         total,
         scored,
         skipped,
         errors,
         elapsed,
+        cycle_id or "-",
     )
     return {
         "total": total,

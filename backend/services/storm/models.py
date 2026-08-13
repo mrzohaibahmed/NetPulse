@@ -166,12 +166,13 @@ def create_eligibility_document(
     timestamp: Optional[datetime] = None,
     hostname: Optional[str] = None,
     ip_address: Optional[str] = None,
+    cycle_id: Optional[str] = None,
 ) -> dict[str, Any]:
     """Factory for append-only ``eligibility_results`` documents."""
     from datetime import timezone
 
     now = timestamp or datetime.now(timezone.utc)
-    return {
+    doc = {
         "deviceId": device_id,
         "interface": interface,
         "hostname": hostname,
@@ -183,6 +184,9 @@ def create_eligibility_document(
         "checks": result.checks.to_dict(),
         "timestamp": now,
     }
+    if cycle_id:
+        doc["cycleId"] = str(cycle_id)
+    return doc
 
 
 def _status(value: Any) -> str:
@@ -325,6 +329,7 @@ def create_risk_document(
     timestamp: Optional[datetime] = None,
     hostname: Optional[str] = None,
     ip_address: Optional[str] = None,
+    cycle_id: Optional[str] = None,
 ) -> dict[str, Any]:
     """Factory for append-only ``storm_risk_history`` documents."""
     from datetime import timezone
@@ -344,6 +349,8 @@ def create_risk_document(
         "skippedReason": result.skipped_reason,
         "timestamp": now,
     }
+    if cycle_id:
+        doc["cycleId"] = str(cycle_id)
     if result.source_classification is not None:
         doc["sourceClassification"] = result.source_classification
         doc["sourceConfidence"] = round(float(result.source_confidence), 2)

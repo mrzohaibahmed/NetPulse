@@ -297,6 +297,10 @@ def ensure_eligibility_indexes() -> None:
             [("eligible", ASCENDING), ("timestamp", DESCENDING)],
             name="idx_eligibility_eligible_ts",
         )
+        coll.create_index(
+            [("cycleId", ASCENDING)],
+            name="idx_eligibility_cycle",
+        )
         logger.info("[ELIGIBILITY] MongoDB indexes ensured on %s", COLLECTION)
     except Exception as exc:  # noqa: BLE001
         logger.warning("[ELIGIBILITY] Failed to ensure indexes: %s", exc)
@@ -305,6 +309,8 @@ def ensure_eligibility_indexes() -> None:
 def store_eligibility_result(
     interface_doc: dict[str, Any],
     result: EligibilityResult,
+    *,
+    cycle_id: str | None = None,
 ) -> Optional[ObjectId]:
     """Append an eligibility evaluation to MongoDB history. Never overwrites."""
     try:
@@ -329,6 +335,7 @@ def store_eligibility_result(
             result=result,
             hostname=interface_doc.get("hostname"),
             ip_address=interface_doc.get("ipAddress") or interface_doc.get("ip_address"),
+            cycle_id=cycle_id,
         )
         inserted = _db()[COLLECTION].insert_one(document)
         return inserted.inserted_id
@@ -337,19 +344,26 @@ def store_eligibility_result(
         return None
 
 
-def evaluate_and_store(interface_doc: dict[str, Any]) -> EligibilityResult:
+def evaluate_and_store(
+    interface_doc: dict[str, Any],
+    *,
+    cycle_id: str | None = None,
+) -> EligibilityResult:
     """Evaluate one interface document and append the result to history."""
     result = evaluate(interface_doc)
-    store_eligibility_result(interface_doc, result)
+    store_eligibility_result(interface_doc, result, cycle_id=cycle_id)
     return result
 
 
-def evaluate_all_interfaces() -> dict[str, Any]:
+def evaluate_all_interfaces(*, cycle_id: str | None = None) -> dict[str, Any]:
     """
     Evaluate every interface currently stored in MongoDB.
 
     Safe for the APScheduler thread — never raises.
     Stops after eligibility; does not invoke future Storm engines.
+
+    Append-only history is preserved; documents are written with
+    ``insert_many`` (same content as per-row ``insert_one``).
     """
     config = get_storm_config()
     if not config.enable_eligibility:
@@ -362,24 +376,52 @@ def evaluate_all_interfaces() -> dict[str, Any]:
             "skipped": True,
         }
 
-    logger.info("[ELIGIBILITY] Bulk evaluation started")
+    logger.info(
+        "[ELIGIBILITY] Bulk evaluation started | cycleId=%s",
+        cycle_id or "-",
+    )
     start = datetime.now(timezone.utc)
 
     total = 0
     eligible_count = 0
     ineligible_count = 0
     errors = 0
+    documents: list[dict[str, Any]] = []
 
     try:
         cursor = _db().interfaces.find({})
         for doc in cursor:
             total += 1
             try:
-                result = evaluate_and_store(doc)
+                result = evaluate(doc)
                 if result.eligible:
                     eligible_count += 1
                 else:
                     ineligible_count += 1
+
+                device_id = doc.get("deviceId") or doc.get("device_id")
+                name = (
+                    result.interface
+                    or doc.get("name")
+                    or doc.get("interface")
+                )
+                if device_id is None or not name:
+                    logger.warning(
+                        "[ELIGIBILITY] Skipping persist — missing deviceId/interface"
+                    )
+                    continue
+                if isinstance(device_id, str) and ObjectId.is_valid(device_id):
+                    device_id = ObjectId(device_id)
+                documents.append(
+                    create_eligibility_document(
+                        device_id=device_id,
+                        interface=str(name),
+                        result=result,
+                        hostname=doc.get("hostname"),
+                        ip_address=doc.get("ipAddress") or doc.get("ip_address"),
+                        cycle_id=cycle_id,
+                    )
+                )
             except StormEligibilityError as exc:
                 errors += 1
                 logger.warning(
@@ -392,6 +434,9 @@ def evaluate_all_interfaces() -> dict[str, Any]:
                     "[ELIGIBILITY] Unexpected error evaluating interface: %s",
                     exc,
                 )
+
+        if documents:
+            _db()[COLLECTION].insert_many(documents, ordered=False)
     except Exception as exc:  # noqa: BLE001
         logger.exception("[ELIGIBILITY] Bulk evaluation aborted: %s", exc)
         return {
@@ -405,12 +450,13 @@ def evaluate_all_interfaces() -> dict[str, Any]:
     elapsed = (datetime.now(timezone.utc) - start).total_seconds()
     logger.info(
         "[ELIGIBILITY] Bulk evaluation complete | total=%s eligible=%s "
-        "ineligible=%s errors=%s elapsed=%.2fs",
+        "ineligible=%s errors=%s elapsed=%.2fs | cycleId=%s",
         total,
         eligible_count,
         ineligible_count,
         errors,
         elapsed,
+        cycle_id or "-",
     )
     return {
         "total": total,

@@ -35,11 +35,13 @@ def create_interface_stat(
     if_index=None,
     collection_method="snmp",
     timestamp=None,
+    cycle_id=None,
 ):
     """
     Build a historical interface statistics document.
 
     Documents are always inserted (never updated) so history is preserved.
+    ``cycle_id`` is optional execution metadata for storm pipeline staging.
     """
     ts = timestamp or datetime.now(timezone.utc)
 
@@ -65,6 +67,8 @@ def create_interface_stat(
         "collectionMethod": collection_method or "snmp",
         "timestamp": ts,
     }
+    if cycle_id:
+        doc["cycleId"] = str(cycle_id)
 
     directional = (
         ("rxBroadcastPackets", rx_broadcast_packets),

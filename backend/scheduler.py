@@ -15,6 +15,7 @@ from services.isp_monitor_service import monitor_all_isp_connections
 from services.monitor_dispatch import dispatch_monitor_due_devices
 from services.monitor_service import monitor_all_devices
 from services.scheduler_ownership import (
+    get_owner_id,
     release_scheduler_ownership,
     require_scheduler_leadership,
 )
@@ -29,8 +30,8 @@ from utils.utc import format_utc, utc_now
 logger = get_monitor_logger("scheduler")
 
 # Single shared scheduler instance.
-# Ping, Nmap, interface discovery, interface stats, and eligibility share one
-# scheduler. Eligibility runs after stats in the same job chain.
+# Ping, Nmap, interface discovery, and storm stages share one scheduler.
+# Storm stages are separate leader-owned jobs coordinated by storm_pipeline_cycles.
 # Phase 5: only the MongoDB-elected leader executes job bodies.
 scheduler = BackgroundScheduler()
 
@@ -43,6 +44,9 @@ JOB_ID = "device_monitor_job"
 NMAP_JOB_ID = "nmap_scan_job"
 INTERFACE_JOB_ID = "interface_discovery_job"
 INTERFACE_STATS_JOB_ID = "interface_stats_job"
+STORM_ANALYSIS_JOB_ID = "storm_analysis_job"
+STORM_CONFIRMATION_JOB_ID = "storm_confirmation_job"
+STORM_SAFETY_PREPARE_JOB_ID = "storm_safety_prepare_job"
 RECOVERY_JOB_ID = "storm_recovery_job"
 RETENTION_JOB_ID = "data_retention_job"
 ISP_JOB_ID = "isp_monitor_job"
@@ -50,107 +54,255 @@ MAC_ARP_POLL_JOB_ID = "mac_arp_poll_job"
 ARP_ACTIVE_SWEEP_JOB_ID = "arp_active_sweep_job"
 
 
-def _run_interface_stats_then_eligibility() -> None:
+def _reclaim_expired_storm_leases() -> None:
+    """Leader-only: mark expired running stages for operator review (no auto re-run)."""
+    from services.storm.pipeline_cycles import reclaim_expired_running_cycles  # noqa: PLC0415
+
+    reclaim_expired_running_cycles(leader_id=get_owner_id())
+
+
+def _run_interface_stats_job() -> None:
     """
-    Scheduler chain:
+    JOB A — Interface statistics only.
 
-        Interface Statistics
-        → Eligibility Engine
-        → Risk Score Engine
-        → Confirmation Engine
-        → Safety Engine
-        → Diagnostics Capture
-        → Incident + Orchestrator Prepare
-        → Automatic Mitigation (when mitigationMode == "automatic")
-
-    Failures never abort stats or the scheduler.
-
-    After prepare, if settings.mitigationMode == "automatic", READY_FOR_MITIGATION
-    incidents are shutdown via execute_mitigation. Otherwise the chain stops after
-    prepare and waits for an admin to trigger mitigation manually.
+    Completes a storm pipeline cycle sample so analysis can claim it.
+    Failures on individual switches never abort the fleet cycle.
     """
-    # Phase 5 — skip on non-leader instances.
     if not require_scheduler_leadership("interface_stats_job"):
         return
 
     from services.interface_collection.stats_collector import (  # noqa: PLC0415
         collect_all_interface_stats,
     )
+    from services.storm.pipeline_cycles import (  # noqa: PLC0415
+        begin_stats_cycle,
+        heartbeat_cycle_lease,
+        mark_cycle_failed,
+        mark_stats_complete,
+    )
 
-    collect_all_interface_stats()
-
+    _reclaim_expired_storm_leases()
+    owner = get_owner_id()
+    cycle = begin_stats_cycle(leader=owner)
+    cycle_id = cycle["_id"]
     try:
-        from services.storm.eligibility import evaluate_all_interfaces  # noqa: PLC0415
+        heartbeat_cycle_lease(cycle_id, owner=owner, stage="stats")
+        summary = collect_all_interface_stats(cycle_id=cycle_id)
+        mark_stats_complete(cycle_id, summary)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Interface stats job failed | cycleId=%s | %s", cycle_id, exc)
+        mark_cycle_failed(cycle_id, "stats", str(exc))
 
-        evaluate_all_interfaces()
+
+def _run_storm_analysis_job() -> None:
+    """
+    JOB B — Eligibility + Risk for one completed stats cycle.
+
+    Persists risk immediately (riskPublishedAt) without waiting for confirmation.
+    """
+    if not require_scheduler_leadership("storm_analysis_job"):
+        return
+
+    from services.storm.eligibility import evaluate_all_interfaces  # noqa: PLC0415
+    from services.storm.pipeline_cycles import (  # noqa: PLC0415
+        claim_next_for_analysis,
+        heartbeat_cycle_lease,
+        mark_analysis_complete,
+        mark_cycle_failed,
+    )
+    from services.storm.risk_engine import calculate_all_risks  # noqa: PLC0415
+
+    _reclaim_expired_storm_leases()
+    owner = get_owner_id()
+    cycle = claim_next_for_analysis(owner=owner)
+    if cycle is None:
+        return
+
+    cycle_id = cycle["_id"]
+    errors = 0
+    elig_summary: dict = {}
+    risk_summary: dict = {}
+    try:
+        heartbeat_cycle_lease(cycle_id, owner=owner, stage="analysis")
+        try:
+            elig_summary = evaluate_all_interfaces(cycle_id=cycle_id) or {}
+        except Exception as exc:  # noqa: BLE001
+            errors += 1
+            logger.error(
+                "Eligibility evaluation failed | cycleId=%s | %s",
+                cycle_id,
+                exc,
+            )
+
+        try:
+            risk_summary = calculate_all_risks(cycle_id=cycle_id) or {}
+        except Exception as exc:  # noqa: BLE001
+            errors += 1
+            logger.error(
+                "Risk scoring failed | cycleId=%s | %s",
+                cycle_id,
+                exc,
+            )
+
+        mark_analysis_complete(
+            cycle_id,
+            {
+                "eligibilityTotal": elig_summary.get("total"),
+                "eligible": elig_summary.get("eligible"),
+                "riskTotal": risk_summary.get("total"),
+                "riskScored": risk_summary.get("scored"),
+                "errors": errors
+                + int(elig_summary.get("errors") or 0)
+                + int(risk_summary.get("errors") or 0),
+            },
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Storm analysis job failed | cycleId=%s | %s", cycle_id, exc)
+        mark_cycle_failed(cycle_id, "analysis", str(exc))
+
+
+def _run_storm_confirmation_job() -> None:
+    """
+    JOB C — Confirmation for one completed analysis (risk-published) cycle.
+
+    Does not block risk publication. Skips when no completed analysis awaits.
+    Expired confirmation leases never auto-retry and never fire mitigation.
+    """
+    if not require_scheduler_leadership("storm_confirmation_job"):
+        return
+
+    from services.storm.confirmation import evaluate_all_confirmations  # noqa: PLC0415
+    from services.storm.pipeline_cycles import (  # noqa: PLC0415
+        claim_next_for_confirmation,
+        heartbeat_cycle_lease,
+        mark_confirmation_complete,
+        mark_cycle_failed,
+    )
+
+    _reclaim_expired_storm_leases()
+    owner = get_owner_id()
+    cycle = claim_next_for_confirmation(owner=owner)
+    if cycle is None:
+        return
+
+    cycle_id = cycle["_id"]
+    try:
+        heartbeat_cycle_lease(cycle_id, owner=owner, stage="confirmation")
+        summary = evaluate_all_confirmations(
+            freeze_latest_inputs=True,
+            cycle_id=cycle_id,
+        )
+        mark_confirmation_complete(cycle_id, summary)
     except Exception as exc:  # noqa: BLE001
         logger.error(
-            "Eligibility evaluation failed after interface stats: %s",
+            "Storm confirmation job failed | cycleId=%s | %s",
+            cycle_id,
             exc,
         )
+        mark_cycle_failed(cycle_id, "confirmation", str(exc))
 
+
+def _run_storm_safety_prepare_job() -> None:
+    """
+    JOB D — Safety → prepare → optional automatic mitigation.
+
+    Consumes confirmation-complete cycles only. Mitigation remains lock-guarded.
+    Lease reclaim never re-queues this stage or re-fires mitigation.
+    """
+    if not require_scheduler_leadership("storm_safety_prepare_job"):
+        return
+
+    from services.storm.pipeline_cycles import (  # noqa: PLC0415
+        claim_next_for_safety,
+        heartbeat_cycle_lease,
+        mark_cycle_failed,
+        mark_safety_complete,
+    )
+
+    _reclaim_expired_storm_leases()
+    owner = get_owner_id()
+    cycle = claim_next_for_safety(owner=owner)
+    if cycle is None:
+        return
+
+    cycle_id = cycle["_id"]
+    summary: dict = {"errors": 0}
     try:
-        from services.storm.risk_engine import calculate_all_risks  # noqa: PLC0415
+        heartbeat_cycle_lease(cycle_id, owner=owner, stage="safety")
+        try:
+            from services.storm.safety import evaluate_all_safety  # noqa: PLC0415
 
-        calculate_all_risks()
-    except Exception as exc:  # noqa: BLE001
-        logger.error(
-            "Risk scoring failed after eligibility: %s",
-            exc,
-        )
+            safety_summary = evaluate_all_safety(probe_ssh=True) or {}
+            summary["safety"] = safety_summary
+        except Exception as exc:  # noqa: BLE001
+            summary["errors"] = int(summary.get("errors") or 0) + 1
+            logger.error(
+                "Safety evaluation failed | cycleId=%s | %s",
+                cycle_id,
+                exc,
+            )
 
-    try:
-        from services.storm.confirmation import (  # noqa: PLC0415
-            evaluate_all_confirmations,
-        )
+        try:
+            from services.storm.orchestrator import prepare_all_safe  # noqa: PLC0415
 
-        evaluate_all_confirmations()
-    except Exception as exc:  # noqa: BLE001
-        logger.error(
-            "Confirmation evaluation failed after risk scoring: %s",
-            exc,
-        )
+            prepare_summary = prepare_all_safe(probe_ssh=True) or {}
+            summary["prepare"] = prepare_summary
 
-    try:
-        from services.storm.safety import evaluate_all_safety  # noqa: PLC0415
+            from services.settings_service import get_settings  # noqa: PLC0415
 
-        # Bulk safety may probe SSH; failures are contained per-interface.
-        evaluate_all_safety(probe_ssh=True)
-    except Exception as exc:  # noqa: BLE001
-        logger.error(
-            "Safety evaluation failed after confirmation: %s",
-            exc,
-        )
-
-    try:
-        from services.storm.orchestrator import prepare_all_safe  # noqa: PLC0415
-
-        # Diagnostics + incident prep — prepare itself never shuts ports down.
-        prepare_all_safe(probe_ssh=True)
-
-        # Automatic Mitigation Engine execution check
-        from services.settings_service import get_settings  # noqa: PLC0415
-        settings = get_settings()
-        if settings.get("mitigationMode") == "automatic":
-            from config.database import db  # noqa: PLC0415
-            from services.storm.mitigation.engine import execute_mitigation  # noqa: PLC0415
-
-            ready_incidents = list(db.storm_incidents.find({"status": "READY_FOR_MITIGATION"}))
-            if ready_incidents:
-                logger.info(
-                    "[SCHEDULER] Automatic mitigation active. Found %d ready incident(s)",
-                    len(ready_incidents),
+            settings = get_settings()
+            if settings.get("mitigationMode") == "automatic":
+                from config.database import db  # noqa: PLC0415
+                from services.storm.mitigation.engine import (  # noqa: PLC0415
+                    execute_mitigation,
                 )
-                for inc in ready_incidents:
-                    inc_id = inc.get("incidentId")
-                    logger.info("[SCHEDULER] Auto-executing mitigation for %s", inc_id)
-                    res = execute_mitigation(inc_id, "SHUTDOWN", operator="SYSTEM")
-                    logger.info("[SCHEDULER] Auto-mitigation status for %s: %s", inc_id, res.get("status"))
+
+                ready_incidents = list(
+                    db.storm_incidents.find({"status": "READY_FOR_MITIGATION"})
+                )
+                summary["readyIncidents"] = len(ready_incidents)
+                if ready_incidents:
+                    logger.info(
+                        "[SCHEDULER] Automatic mitigation active. Found %d ready incident(s) | cycleId=%s",
+                        len(ready_incidents),
+                        cycle_id,
+                    )
+                    for inc in ready_incidents:
+                        inc_id = inc.get("incidentId")
+                        logger.info(
+                            "[SCHEDULER] Auto-executing mitigation for %s | cycleId=%s",
+                            inc_id,
+                            cycle_id,
+                        )
+                        res = execute_mitigation(
+                            inc_id, "SHUTDOWN", operator="SYSTEM"
+                        )
+                        logger.info(
+                            "[SCHEDULER] Auto-mitigation status for %s: %s | cycleId=%s",
+                            inc_id,
+                            res.get("status"),
+                            cycle_id,
+                        )
+        except Exception as exc:  # noqa: BLE001
+            summary["errors"] = int(summary.get("errors") or 0) + 1
+            logger.error(
+                "Orchestrator prepare / automatic mitigation failed | cycleId=%s | %s",
+                cycle_id,
+                exc,
+            )
+
+        mark_safety_complete(cycle_id, summary)
     except Exception as exc:  # noqa: BLE001
         logger.error(
-            "Orchestrator prepare / automatic mitigation failed after safety: %s",
+            "Storm safety/prepare job failed | cycleId=%s | %s",
+            cycle_id,
             exc,
         )
+        mark_cycle_failed(cycle_id, "safety", str(exc))
+
+
+# Backward-compatible alias for tests/imports that still reference the old chain.
+_run_interface_stats_then_eligibility = _run_interface_stats_job
 
 
 def _run_nmap_job() -> None:
@@ -249,7 +401,7 @@ def _start_interface_job() -> None:
 
 def _start_interface_stats_job() -> None:
     """
-    Register periodic interface statistics collection.
+    Register JOB A — periodic interface statistics collection.
 
     Completely independent of the ping monitor job — failures here never
     affect device reachability monitoring.
@@ -265,9 +417,8 @@ def _start_interface_stats_job() -> None:
 
         interval = max(interval, 15)
 
-        # Stats collection followed by Port Eligibility Engine (append-only).
         scheduler.add_job(
-            func=_run_interface_stats_then_eligibility,
+            func=_run_interface_stats_job,
             trigger="interval",
             seconds=interval,
             id=INTERFACE_STATS_JOB_ID,
@@ -276,13 +427,89 @@ def _start_interface_stats_job() -> None:
             coalesce=True,
         )
         logger.info(
-            "Interface stats + eligibility job registered | interval=%ss",
+            "Interface stats job registered | interval=%ss",
             interval,
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "Interface stats job could not be registered: %s",
             exc,
+        )
+
+
+def _storm_job_interval_seconds() -> int:
+    interval = int(INTERFACE_STATS_INTERVAL)
+    if interval <= 0:
+        return 0
+    return max(interval, 15)
+
+
+def _start_storm_analysis_job() -> None:
+    """Register JOB B — eligibility + risk for completed stats cycles."""
+    try:
+        interval = _storm_job_interval_seconds()
+        if interval <= 0:
+            logger.info("Storm analysis job disabled (INTERFACE_STATS_INTERVAL<=0)")
+            return
+        scheduler.add_job(
+            func=_run_storm_analysis_job,
+            trigger="interval",
+            seconds=interval,
+            id=STORM_ANALYSIS_JOB_ID,
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        logger.info("Storm analysis job registered | interval=%ss", interval)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Storm analysis job could not be registered: %s", exc)
+
+
+def _start_storm_confirmation_job() -> None:
+    """Register JOB C — confirmation for risk-published cycles."""
+    try:
+        interval = _storm_job_interval_seconds()
+        if interval <= 0:
+            logger.info(
+                "Storm confirmation job disabled (INTERFACE_STATS_INTERVAL<=0)"
+            )
+            return
+        scheduler.add_job(
+            func=_run_storm_confirmation_job,
+            trigger="interval",
+            seconds=interval,
+            id=STORM_CONFIRMATION_JOB_ID,
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        logger.info("Storm confirmation job registered | interval=%ss", interval)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Storm confirmation job could not be registered: %s", exc)
+
+
+def _start_storm_safety_prepare_job() -> None:
+    """Register JOB D — safety + prepare + auto-mitigation."""
+    try:
+        interval = _storm_job_interval_seconds()
+        if interval <= 0:
+            logger.info(
+                "Storm safety/prepare job disabled (INTERFACE_STATS_INTERVAL<=0)"
+            )
+            return
+        scheduler.add_job(
+            func=_run_storm_safety_prepare_job,
+            trigger="interval",
+            seconds=interval,
+            id=STORM_SAFETY_PREPARE_JOB_ID,
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        logger.info("Storm safety/prepare job registered | interval=%ss", interval)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "Storm safety/prepare job could not be registered: %s", exc
         )
 
 
@@ -535,6 +762,11 @@ def start_scheduler():
 
         # Job 4: Interface statistics (SNMP preferred, SSH fallback).
         _start_interface_stats_job()
+
+        # Job 4a–c: Storm analysis / confirmation / safety (decoupled from stats).
+        _start_storm_analysis_job()
+        _start_storm_confirmation_job()
+        _start_storm_safety_prepare_job()
 
         # Job 4b: Passive MAC/ARP table poll (port -> connected-device IP).
         _start_mac_arp_poll_job()

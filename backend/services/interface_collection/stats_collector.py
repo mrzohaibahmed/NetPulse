@@ -78,12 +78,16 @@ def ensure_interface_stats_indexes() -> None:
             [("timestamp", DESCENDING)],
             name="idx_stats_timestamp",
         )
+        coll.create_index(
+            [("cycleId", ASCENDING)],
+            name="idx_stats_cycle",
+        )
         logger.info("[IFACE-STATS] MongoDB indexes ensured on %s", COLLECTION)
     except Exception as exc:  # noqa: BLE001
         logger.warning("[IFACE-STATS] Failed to ensure indexes: %s", exc)
 
 
-def collect_device_interface_stats(device: dict) -> dict:
+def collect_device_interface_stats(device: dict, *, cycle_id: str | None = None) -> dict:
     """
     Collect and persist stats for one device. Never raises.
 
@@ -188,6 +192,7 @@ def collect_device_interface_stats(device: dict) -> dict:
                     if_index=raw.get("if_index"),
                     collection_method=method or "snmp",
                     timestamp=now,
+                    cycle_id=cycle_id,
                 )
             )
 
@@ -240,13 +245,17 @@ def collect_device_interface_stats(device: dict) -> dict:
         }
 
 
-def collect_all_interface_stats() -> dict:
+def collect_all_interface_stats(*, cycle_id: str | None = None) -> dict:
     """
     Poll every eligible online managed switch for interface statistics.
 
     Safe for the APScheduler thread — never raises.
+    Optional ``cycle_id`` stamps samples for storm pipeline staging.
     """
-    logger.info("[IFACE-STATS] Bulk stats collection started")
+    logger.info(
+        "[IFACE-STATS] Bulk stats collection started | cycleId=%s",
+        cycle_id or "-",
+    )
     start = time.monotonic()
 
     candidates = list(db.devices.find({"status": "Online"}))
@@ -271,7 +280,9 @@ def collect_all_interface_stats() -> dict:
     workers = max(int(MAX_INTERFACE_STATS_THREADS), 1)
     with ThreadPoolExecutor(max_workers=workers) as executor:
         futures = {
-            executor.submit(collect_device_interface_stats, device): device
+            executor.submit(
+                collect_device_interface_stats, device, cycle_id=cycle_id
+            ): device
             for device in eligible
         }
         for future in as_completed(futures):
@@ -289,12 +300,13 @@ def collect_all_interface_stats() -> dict:
 
     elapsed = round(time.monotonic() - start, 2)
     logger.info(
-        "[IFACE-STATS] Bulk finished in %.2fs | total=%d ok=%d failed=%d samples=%d",
+        "[IFACE-STATS] Bulk finished in %.2fs | total=%d ok=%d failed=%d samples=%d | cycleId=%s",
         elapsed,
         total,
         succeeded,
         failed,
         samples,
+        cycle_id or "-",
     )
 
     return {

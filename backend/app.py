@@ -30,10 +30,16 @@ from services.settings_service import ensure_settings
 from services.scheduler_ownership import ensure_scheduler_lock_indexes
 from services.monitor_indexes import ensure_monitoring_idempotency_indexes
 from services.monitor_schedule_migration import ensure_monitor_schedule_migration
+from services.storm.pipeline_cycles import ensure_pipeline_cycle_indexes
 from services.storm.confirmation import ensure_confirmation_indexes
 from services.storm.eligibility import ensure_eligibility_indexes
 from services.storm.incident import ensure_incident_indexes
 from services.storm.risk_engine import ensure_risk_indexes
+from services.storm.risk_latest import (
+    ensure_risk_latest_indexes,
+    rebuild_risk_latest,
+    risk_latest_enabled,
+)
 from services.storm.safety import ensure_safety_indexes
 from services.storm.mitigation import ensure_mitigation_indexes
 from services.storm.recovery import ensure_recovery_indexes
@@ -150,8 +156,23 @@ def bootstrap():
     ensure_interface_indexes()
     ensure_interface_stats_indexes()
     ensure_mac_arp_indexes()
+    ensure_pipeline_cycle_indexes()
     ensure_eligibility_indexes()
     ensure_risk_indexes()
+    ensure_risk_latest_indexes()
+    # Rebuild empty projection once so Confirmation can skip history $topN.
+    if risk_latest_enabled():
+        try:
+            if db.storm_risk_latest.estimated_document_count() <= 0:
+                if db.storm_risk_history.estimated_document_count() > 0:
+                    summary = rebuild_risk_latest()
+                    _bootstrap_logger.info(
+                        "[RISK_LATEST] initial rebuild %s", summary
+                    )
+        except Exception as exc:  # noqa: BLE001
+            _bootstrap_logger.warning(
+                "[RISK_LATEST] initial rebuild failed (non-fatal): %s", exc
+            )
     ensure_confirmation_indexes()
     ensure_safety_indexes()
     ensure_incident_indexes()

@@ -160,21 +160,41 @@ def load_stats_pair(
     interface_name: str,
     *,
     db=None,
+    cycle_id: Optional[str] = None,
 ) -> tuple[Optional[dict], Optional[dict]]:
     """
     Load the two newest ``interface_stats`` samples for an interface.
 
     Returns (current, previous). previous may be None.
+
+    When ``cycle_id`` is set, ``current`` is the newest sample for that
+    stats cycle; ``previous`` is the newest older sample (any cycle) used
+    for rate deltas. Decision math is unchanged.
     """
     if db is None:
         from config.database import db as _db  # noqa: PLC0415
 
         db = _db
 
-    rows = list(
-        db.interface_stats.find(
-            {"deviceId": device_id, "interfaceName": interface_name}
+    base = {"deviceId": device_id, "interfaceName": interface_name}
+    if cycle_id:
+        current = db.interface_stats.find_one(
+            {**base, "cycleId": str(cycle_id)},
+            sort=[("timestamp", -1)],
         )
+        if current is None:
+            return None, None
+        previous = db.interface_stats.find_one(
+            {
+                **base,
+                "timestamp": {"$lt": current.get("timestamp")},
+            },
+            sort=[("timestamp", -1)],
+        )
+        return current, previous
+
+    rows = list(
+        db.interface_stats.find(base)
         .sort("timestamp", -1)
         .limit(2)
     )
@@ -183,3 +203,108 @@ def load_stats_pair(
     if len(rows) == 1:
         return rows[0], None
     return rows[0], rows[1]
+
+
+def bulk_load_stats_pairs(
+    *,
+    cycle_id: Optional[str] = None,
+    db=None,
+) -> dict[tuple[str, str], tuple[Optional[dict], Optional[dict]]]:
+    """
+    Prefetch ``load_stats_pair`` results for every inventory interface.
+
+    Same (current, previous) semantics, including optional ``cycle_id`` binding.
+    """
+    from pymongo import DESCENDING  # noqa: PLC0415
+
+    if db is None:
+        from config.database import db as _db  # noqa: PLC0415
+
+        db = _db
+
+    out: dict[tuple[str, str], tuple[Optional[dict], Optional[dict]]] = {}
+    iface_rows = list(db.interfaces.find({}, {"deviceId": 1, "name": 1}))
+    if not iface_rows:
+        return out
+
+    oids = list({r["deviceId"] for r in iface_rows if r.get("deviceId") is not None})
+    if not oids:
+        return out
+
+    recent: dict[tuple[str, str], list[dict]] = {}
+    pipeline = [
+        {"$match": {"deviceId": {"$in": oids}}},
+        {
+            "$group": {
+                "_id": {
+                    "deviceId": "$deviceId",
+                    "interfaceName": "$interfaceName",
+                },
+                "rows": {
+                    "$topN": {
+                        "n": 5,
+                        "sortBy": {"timestamp": DESCENDING},
+                        "output": "$$ROOT",
+                    }
+                },
+            }
+        },
+    ]
+    for row in db.interface_stats.aggregate(pipeline, allowDiskUse=True):
+        key = row.get("_id") or {}
+        device_id = key.get("deviceId")
+        name = key.get("interfaceName")
+        if device_id is None or not name:
+            continue
+        recent[(str(device_id), str(name))] = list(row.get("rows") or [])
+
+    cycle_map: dict[tuple[str, str], dict] = {}
+    if cycle_id:
+        for doc in db.interface_stats.find({"cycleId": str(cycle_id)}):
+            device_id = doc.get("deviceId")
+            name = doc.get("interfaceName")
+            if device_id is None or not name:
+                continue
+            cycle_map[(str(device_id), str(name))] = doc
+
+    for iface in iface_rows:
+        device_id = iface.get("deviceId")
+        name = iface.get("name")
+        if device_id is None or not name:
+            continue
+        key = (str(device_id), str(name))
+        rows = recent.get(key, [])
+
+        if cycle_id:
+            current = cycle_map.get(key)
+            if current is None:
+                out[key] = (None, None)
+                continue
+            cur_ts = current.get("timestamp")
+            previous = None
+            for candidate in rows:
+                if candidate.get("_id") == current.get("_id"):
+                    continue
+                rts = candidate.get("timestamp")
+                if cur_ts is not None and rts is not None and rts < cur_ts:
+                    previous = candidate
+                    break
+            if previous is None and cur_ts is not None:
+                previous = db.interface_stats.find_one(
+                    {
+                        "deviceId": device_id,
+                        "interfaceName": name,
+                        "timestamp": {"$lt": cur_ts},
+                    },
+                    sort=[("timestamp", -1)],
+                )
+            out[key] = (current, previous)
+        else:
+            if not rows:
+                out[key] = (None, None)
+            elif len(rows) == 1:
+                out[key] = (rows[0], None)
+            else:
+                out[key] = (rows[0], rows[1])
+
+    return out
