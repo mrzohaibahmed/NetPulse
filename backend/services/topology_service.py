@@ -523,24 +523,42 @@ def _apply_edge_statuses(
     """
     Attach derived link status to each topology edge.
 
+    Ping/device health is authoritative for inventory endpoints. Last SSH
+    ``operStatus`` may still be ``up`` for up to INTERFACE_SCAN_INTERVAL after
+    a switch goes unreachable, so it must not keep those links active.
+
     Level 1 (live_only=False): keep all edges; mark offline/unresolved as stale.
     Level 2 (live_only=True): include only currently verified active live links.
     Never mutates MongoDB — filtering is response-only.
     """
     result: list[dict] = []
     for edge in edges:
+        source_id = edge["source"]
+        target_id = edge["target"]
+        source_known = source_id in devices_by_id
+        target_known = target_id in devices_by_id
+        source_online = _is_known_device_online(source_id, devices_by_id)
+        target_online = _is_known_device_online(target_id, devices_by_id)
         oper = (edge.get("operStatus") or "").lower()
-        if oper == "up":
-            status = "active"
+
+        # Inventory device down (Not Reachable / Offline) always wins over
+        # stale SSH operStatus from the last interface discovery cycle.
+        if (source_known and not source_online) or (target_known and not target_online):
+            status = "stale"
         elif oper == "down":
             status = "stale"
+        elif oper == "up":
+            # Port last seen up: active for Online↔Online inventory pairs, and
+            # for Online-switch → synthetic endpoint (access hosts).
+            status = "active"
         else:
-            status = _derive_edge_status(edge["source"], edge["target"], devices_by_id)
-            
+            status = _derive_edge_status(source_id, target_id, devices_by_id)
+
         edge["status"] = status
         if status == "stale":
             edge["animated"] = False
-            
+            if live_only:
+                continue
         result.append(edge)
     return result
 

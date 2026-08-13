@@ -236,6 +236,67 @@ class TestLevel2LiveFiltering(unittest.TestCase):
         self.assertEqual(level2, [])
         self.assertFalse(_is_known_device_online("b", devices))
 
+    def test_stale_ssh_oper_up_does_not_keep_offline_switch_active(self):
+        """Last SSH operStatus=up must not hide a switch that ping already marked down."""
+        devices = {
+            "a": _device("a", STATUS_ONLINE),
+            "b": _device("b", STATUS_NOT_REACHABLE),
+        }
+        result = _apply_edge_statuses(
+            [_edge("a", "b", operStatus="up")],
+            devices,
+            live_only=False,
+        )
+        self.assertEqual(result[0]["status"], "stale")
+        self.assertFalse(result[0]["animated"])
+
+    def test_offline_critical_switch_stale_despite_oper_up(self):
+        devices = {
+            "a": _device("a", STATUS_OFFLINE_CRITICAL),
+            "b": _device("b", STATUS_ONLINE),
+        }
+        result = _apply_edge_statuses(
+            [_edge("a", "b", operStatus="up")],
+            devices,
+            live_only=False,
+        )
+        self.assertEqual(result[0]["status"], "stale")
+
+    def test_oper_up_keeps_online_inventory_pair_active(self):
+        devices = {
+            "a": _device("a", STATUS_ONLINE),
+            "b": _device("b", STATUS_ONLINE),
+        }
+        result = _apply_edge_statuses(
+            [_edge("a", "b", operStatus="up")],
+            devices,
+            live_only=False,
+        )
+        self.assertEqual(result[0]["status"], "active")
+
+    def test_oper_up_keeps_online_switch_to_synthetic_endpoint_active(self):
+        devices = {
+            "a": _device("a", STATUS_ONLINE),
+        }
+        result = _apply_edge_statuses(
+            [_edge("a", "endpoint_a_Gi1/0/22", operStatus="up")],
+            devices,
+            live_only=False,
+        )
+        self.assertEqual(result[0]["status"], "active")
+
+    def test_oper_down_stales_even_when_both_online(self):
+        devices = {
+            "a": _device("a", STATUS_ONLINE),
+            "b": _device("b", STATUS_ONLINE),
+        }
+        result = _apply_edge_statuses(
+            [_edge("a", "b", operStatus="down")],
+            devices,
+            live_only=False,
+        )
+        self.assertEqual(result[0]["status"], "stale")
+
 
 class TestPruneSyntheticNodes(unittest.TestCase):
     def test_prunes_orphan_synthetic_nodes(self):

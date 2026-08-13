@@ -70,6 +70,15 @@ function isSwitchType(type: string) {
   return type.toLowerCase().includes('switch')
 }
 
+function isOfflineDeviceStatus(status: string | undefined) {
+  const value = (status || '').toLowerCase()
+  return (
+    value.includes('offline') ||
+    value.includes('not reachable') ||
+    value.includes('critical')
+  )
+}
+
 function displayHostname(data: TopologyNodeData) {
   return data.hostname || data.label || 'Unknown'
 }
@@ -253,6 +262,7 @@ const TopologyDeviceNode = memo(function TopologyDeviceNode({ data }: NodeProps)
   const nodeData = data as TopologyNodeData
   const switchLike = isSwitchType(nodeData.type || '')
   const details = nodeData.details
+  const isOffline = isOfflineDeviceStatus(details?.status || nodeData.status)
 
   const card = (
     <div
@@ -261,6 +271,7 @@ const TopologyDeviceNode = memo(function TopologyDeviceNode({ data }: NodeProps)
         'border-border/70 bg-card/90',
         nodeData.isCentral && 'border-primary ring-1 ring-primary/50 bg-primary/5',
         !nodeData.isKnownDevice && 'border-dashed border-border/60 bg-muted/20',
+        isOffline && 'border-danger/50 bg-danger/5 opacity-70',
       )}
     >
       {(nodeData.handles ?? []).map((handle) => (
@@ -543,9 +554,10 @@ export function TopologyPage() {
       const isStale = e.status === 'stale'
       const sourceStatus = nodeStatusMap.get(e.source)
       const targetStatus = nodeStatusMap.get(e.target)
-      const isOffline = ['offline', 'critical', 'not reachable'].includes(sourceStatus || '') ||
-                        ['offline', 'critical', 'not reachable'].includes(targetStatus || '')
+      const isOffline =
+        isOfflineDeviceStatus(sourceStatus) || isOfflineDeviceStatus(targetStatus)
       const isInactive = isOffline || isStale
+      const edgeStatus: 'active' | 'stale' = isInactive ? 'stale' : 'active'
 
       const stroke = isInactive ? STALE_EDGE_COLOR : isTrunk ? TRUNK_EDGE_COLOR : EDGE_COLOR
       return {
@@ -565,12 +577,12 @@ export function TopologyPage() {
           description: e.description,
           speed: e.speed,
           centerLabel: e.isTrunk ? 'Trunk' : e.linkType || e.protocol,
-          status: e.status ?? 'active',
+          status: edgeStatus,
         } satisfies TopologyEdgeData,
         style: {
           stroke,
           strokeWidth: isTrunk ? 2.5 : 2,
-          opacity: isStale ? 0.45 : 1,
+          opacity: isInactive ? 0.45 : 1,
         },
         markerEnd: {
           type: MarkerType.ArrowClosed,
@@ -681,6 +693,7 @@ export function TopologyPage() {
                 className={cn(
                   'w-56 shrink-0 cursor-pointer border-border/70 bg-card/70 shadow-sm transition-all hover:border-primary',
                   selectedSwitchId === sw.id && 'border-primary bg-primary/5 ring-1 ring-primary',
+                  isOfflineDeviceStatus(sw.status) && 'opacity-70',
                 )}
                 onClick={() => setSelectedSwitchId(sw.id)}
               >
@@ -693,6 +706,7 @@ export function TopologyPage() {
                 <CardContent className="space-y-0.5 p-4 pt-0 text-xs text-muted-foreground">
                   <div>IP: {sw.ip || '—'}</div>
                   <div className="truncate">{sw.type || 'Switch'}</div>
+                  <div>{sw.status || 'Unknown'}</div>
                 </CardContent>
               </Card>
             ))}
@@ -787,7 +801,7 @@ export function TopologyPage() {
             </div>
             <div className="text-muted-foreground">Link:</div>
             <div className="text-foreground capitalize">
-              {hoveredEdge.data.status === 'stale' ? 'Stale (unverified endpoint)' : 'Active'}
+              {hoveredEdge.data.status === 'stale' ? 'Stale (device or link down)' : 'Active'}
             </div>
           </div>
         </div>

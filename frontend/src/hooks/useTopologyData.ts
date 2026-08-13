@@ -8,7 +8,7 @@ export function useTopologySwitches() {
       const res = await getTopologySwitches()
       return res.data
     },
-    refetchInterval: 60000,
+    refetchInterval: 30000,
   })
 }
 
