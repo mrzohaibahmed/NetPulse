@@ -449,9 +449,10 @@ export const manualShutdownInterface = (payload: {
   deviceId: string
   interfaceName: string
   confirm: boolean
-  reason?: string
+  reason: string
 }) => {
   const encoded = encodeURIComponent(payload.interfaceName)
+  const reason = payload.reason.trim()
   return apiRequest<{
     success: boolean
     message: string
@@ -460,7 +461,7 @@ export const manualShutdownInterface = (payload: {
     commandsExecuted?: string[]
   }>(`/api/interfaces/${payload.deviceId}/${encoded}/manual-shutdown`, {
     method: 'POST',
-    body: { confirm: payload.confirm, reason: payload.reason },
+    body: { confirm: payload.confirm, reason },
     timeoutMs: 180000,
   })
 }

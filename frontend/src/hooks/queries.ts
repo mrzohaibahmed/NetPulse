@@ -415,7 +415,7 @@ export function useInterfaceMutations() {
       deviceId: string
       interfaceName: string
       confirm: boolean
-      reason?: string
+      reason: string
     }) => manualShutdownInterface(payload),
     onSuccess: async (res) => {
       toast.success(res.message || 'Manual shutdown complete')

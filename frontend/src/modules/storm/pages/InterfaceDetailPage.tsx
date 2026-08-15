@@ -39,6 +39,8 @@ import { PageHeader } from '@/shared/components/PageHeader'
 import { Badge } from '@/shared/ui/badge'
 import { Button } from '@/shared/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/shared/ui/card'
+import { Input } from '@/shared/ui/input'
+import { Label } from '@/shared/ui/label'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -220,6 +222,7 @@ export function InterfaceDetailPage() {
   const mutations = useInterfaceMutations()
   const [historyLimit, setHistoryLimit] = useState('100')
   const [confirmAction, setConfirmAction] = useState<'shutdown' | 'recover' | null>(null)
+  const [shutdownReason, setShutdownReason] = useState('')
 
   const stormIncidentsQuery = useStormIncidentsQuery({
     limit: 50,
@@ -1142,24 +1145,51 @@ export function InterfaceDetailPage() {
         </CardContent>
       </Card>
 
-      <AlertDialog open={confirmAction === 'shutdown'} onOpenChange={(open) => !open && setConfirmAction(null)}>
+      <AlertDialog
+        open={confirmAction === 'shutdown'}
+        onOpenChange={(open) => {
+          if (!open) {
+            setConfirmAction(null)
+            setShutdownReason('')
+          }
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Shut down interface {interfaceName}?</AlertDialogTitle>
             <AlertDialogDescription>
-              This sends a live shutdown command to the switch port and creates a MANUAL incident record.
+              Emergency break-glass action. This sends a live shutdown to the switch
+              and creates a MANUAL incident. A reason is required for audit.
             </AlertDialogDescription>
           </AlertDialogHeader>
+          <div className="space-y-2 py-2">
+            <Label htmlFor="manual-shutdown-reason">Reason</Label>
+            <Input
+              id="manual-shutdown-reason"
+              value={shutdownReason}
+              onChange={(event) => setShutdownReason(event.target.value)}
+              placeholder="e.g. Port flooding lab traffic — operator shutdown"
+              autoFocus
+            />
+          </div>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              onClick={() => {
+              disabled={!shutdownReason.trim()}
+              onClick={(event) => {
+                const reason = shutdownReason.trim()
+                if (!reason) {
+                  event.preventDefault()
+                  return
+                }
                 mutations.manualShutdown.mutate({
                   deviceId,
                   interfaceName,
                   confirm: true,
+                  reason,
                 })
                 setConfirmAction(null)
+                setShutdownReason('')
               }}
             >
               Yes, shut down interface {interfaceName}

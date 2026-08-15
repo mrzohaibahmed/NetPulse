@@ -9,7 +9,7 @@ Run::
 from __future__ import annotations
 
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 from services.storm.diagnostics.collector import capture_diagnostics
@@ -304,6 +304,42 @@ class OrchestratorPrepareTests(unittest.TestCase):
             )
         self.assertFalse(result["ready"])
         self.assertIn("stale", result["reason"].lower())
+
+    def test_prepare_allows_safety_slightly_before_confirmation_heartbeat(self):
+        """Concurrent confirmation heartbeats must not invalidate a fresh SAFE."""
+        confirm_ts = datetime.now(timezone.utc)
+        safety_ts = confirm_ts - timedelta(seconds=5)
+        with patch(
+            "services.storm.orchestrator.find_open_incident",
+            return_value=None,
+        ), patch(
+            "services.storm.orchestrator.append_timeline_event",
+            return_value=None,
+        ), patch(
+            "services.storm.orchestrator._latest_confirmation",
+            return_value={
+                "confirmed": True,
+                "state": "CONFIRMED",
+                "timestamp": confirm_ts,
+            },
+        ), patch(
+            "services.storm.orchestrator._latest_risk",
+            return_value={"riskScore": 96.0, "timestamp": confirm_ts},
+        ), patch(
+            "services.storm.orchestrator.get_settings",
+            return_value={"reMitigationThreshold": 75},
+        ):
+            result = prepare(
+                "507f1f77bcf86cd799439011",
+                "Gi1/0/10",
+                require_safety=True,
+                persist=False,
+                probe_ssh=False,
+                safety={"safe": True, "reason": "ok", "timestamp": safety_ts},
+                diagnostics=_diag_package(),
+            )
+        self.assertTrue(result["ready"])
+        self.assertEqual(result["status"], STATUS_READY)
 
     def test_prepare_workflow_ready(self):
         now = datetime.now(timezone.utc)

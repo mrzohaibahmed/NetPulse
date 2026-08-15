@@ -16,7 +16,8 @@ Public API
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import os
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from bson import ObjectId
@@ -37,6 +38,16 @@ logger = get_monitor_logger("storm.orchestrator")
 STATUS_READY = "READY_FOR_MITIGATION"
 STATUS_BLOCKED = "BLOCKED"
 STATUS_ALREADY_PREPARED = "ALREADY_PREPARED"
+
+# Overlapping pipeline cycles often write a fresh CONFIRMED row ~0.5–30s after
+# safety persists SAFE. Strict safety_ts >= confirm_ts then falsely blocks prepare.
+def _safety_confirm_skew() -> timedelta:
+    raw = (os.getenv("STORM_SAFETY_CONFIRM_SKEW_SECONDS") or "120").strip()
+    try:
+        seconds = int(float(raw))
+    except (TypeError, ValueError):
+        seconds = 120
+    return timedelta(seconds=max(0, seconds))
 
 
 def _db():
@@ -103,7 +114,9 @@ def _validate_live_storm_gates(
     -----
     1. Latest confirmation must be CONFIRMED
     2. Latest risk must still be at/above remmitigation threshold
-    3. Latest safety must be safe=True AND not older than the confirmation
+    3. Latest safety must be safe=True and fresh enough vs confirmation
+       (allows a short skew so concurrent confirmation heartbeats cannot
+       invalidate a SAFE result written moments earlier in JOB D)
     """
     confirmation = _latest_confirmation(device_id, interface)
     if not _is_currently_confirmed(confirmation):
@@ -129,7 +142,8 @@ def _validate_live_storm_gates(
     confirm_ts = _as_aware((confirmation or {}).get("timestamp"))
     if safety_ts is None or confirm_ts is None:
         return False, "Safety/confirmation timestamps missing — cannot verify freshness"
-    if safety_ts < confirm_ts:
+    skew = _safety_confirm_skew()
+    if safety_ts + skew < confirm_ts:
         return (
             False,
             "Safety result is stale relative to current confirmation — re-evaluate safety",
@@ -349,6 +363,7 @@ def prepare_all_safe(*, probe_ssh: bool = True) -> dict[str, Any]:
     blocked = 0
     errors = 0
     skipped_receivers = 0
+    block_reasons: dict[str, int] = {}
 
     try:
         from services.storm.source_arbitration_config import (  # noqa: PLC0415
@@ -400,6 +415,9 @@ def prepare_all_safe(*, probe_ssh: bool = True) -> dict[str, Any]:
                     or str(latest.get("state") or "").upper() == "CONFIRMED"
                 ):
                     blocked += 1
+                    block_reasons["not_currently_confirmed"] = (
+                        block_reasons.get("not_currently_confirmed", 0) + 1
+                    )
                     logger.info(
                         "[ORCHESTRATOR] prepare skipped | %s | not currently confirmed",
                         name,
@@ -461,6 +479,15 @@ def prepare_all_safe(*, probe_ssh: bool = True) -> dict[str, Any]:
                     ready += 1
                 else:
                     blocked += 1
+                    reason_key = str(result.get("reason") or "blocked").strip()
+                    if len(reason_key) > 120:
+                        reason_key = reason_key[:117] + "..."
+                    block_reasons[reason_key] = block_reasons.get(reason_key, 0) + 1
+                    logger.info(
+                        "[ORCHESTRATOR] prepare blocked | %s | %s",
+                        name,
+                        result.get("reason"),
+                    )
             except Exception as exc:  # noqa: BLE001
                 errors += 1
                 logger.error("[ORCHESTRATOR] prepare failed | %s | %s", name, exc)
@@ -470,12 +497,13 @@ def prepare_all_safe(*, probe_ssh: bool = True) -> dict[str, Any]:
 
     logger.info(
         "[ORCHESTRATOR] Bulk complete | total=%s ready=%s blocked=%s "
-        "skippedReceivers=%s errors=%s",
+        "skippedReceivers=%s errors=%s reasons=%s",
         total,
         ready,
         blocked,
         skipped_receivers,
         errors,
+        block_reasons,
     )
     return {
         "total": total,
@@ -483,6 +511,7 @@ def prepare_all_safe(*, probe_ssh: bool = True) -> dict[str, Any]:
         "blocked": blocked,
         "skippedReceivers": skipped_receivers,
         "errors": errors,
+        "blockReasons": block_reasons,
     }
 
 
