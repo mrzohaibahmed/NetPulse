@@ -127,6 +127,9 @@ def dashboard_ops_metrics():
             "message": "Failed to collect operational metrics",
             "error": str(error),
         }), 500
+
+
+@dashboard_bp.route("/dashboard/recent-history", methods=["GET"])
 @require_auth()
 def recent_history():
     try:
