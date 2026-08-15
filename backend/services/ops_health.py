@@ -23,34 +23,28 @@ def _mongo_ping() -> tuple[bool, str | None]:
 
 
 def liveness_payload() -> dict[str, Any]:
-    ident = startup_identity()
+    """Minimal liveness — no hostname/pid/role disclosure."""
     return {
         "status": "alive",
         "timestamp": format_utc(utc_now()),
-        "hostname": ident["hostname"],
-        "pid": ident["pid"],
     }
 
 
 def readiness_payload() -> tuple[dict[str, Any], int]:
-    ident = startup_identity()
+    """
+    Readiness for load balancers / reverse proxies.
+
+    Omits hostname, pid, ownerId, and other recon-friendly details.
+    """
     mongo_ok, mongo_reason = _mongo_ping()
     scheduler_expected = is_scheduler_process()
     scheduler_running = False
-    scheduler_leader = False
-    owner_id = None
 
     if scheduler_expected:
         try:
             from scheduler import scheduler  # noqa: PLC0415
-            from services.scheduler_ownership import (  # noqa: PLC0415
-                get_owner_id,
-                is_scheduler_leader,
-            )
 
             scheduler_running = bool(scheduler.running)
-            scheduler_leader = is_scheduler_leader()
-            owner_id = get_owner_id()
         except Exception:  # noqa: BLE001
             scheduler_running = False
 
@@ -60,18 +54,12 @@ def readiness_payload() -> tuple[dict[str, Any], int]:
     body: dict[str, Any] = {
         "status": "ready" if ready else "not_ready",
         "timestamp": format_utc(utc_now()),
-        "environment": ident["environment"],
-        "role": ident["role"],
-        "schedulerExpected": scheduler_expected,
-        "schedulerRunning": scheduler_running,
-        "schedulerLeader": scheduler_leader,
-        "ownerId": owner_id,
         "checks": {
-            "mongodb": "ok" if mongo_ok else mongo_reason,
+            "mongodb": "ok" if mongo_ok else (mongo_reason or "unavailable"),
         },
     }
-    if scheduler_expected and not scheduler_running:
-        body["checks"]["scheduler"] = "not_running"
+    if scheduler_expected:
+        body["checks"]["scheduler"] = "ok" if scheduler_running else "not_running"
 
     return body, status_code
 

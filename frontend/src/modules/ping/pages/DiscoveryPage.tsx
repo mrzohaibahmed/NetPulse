@@ -129,7 +129,8 @@ export function DiscoveryPage() {
       setDescription(editingNetwork.description ?? '')
       setSshUsername(editingNetwork.sshUsername ?? '')
       setSshPassword('') // Don't show password
-      setSnmpCommunity(editingNetwork.snmpCommunity ?? 'public')
+      // Community is never returned by API — leave blank; placeholder indicates configured.
+      setSnmpCommunity('')
     } else {
       setName('')
       setType('ETHERNET')
@@ -811,7 +812,11 @@ export function DiscoveryPage() {
                       id="snmpCommunity"
                       value={snmpCommunity}
                       onChange={(e) => setSnmpCommunity(e.target.value)}
-                      placeholder="public"
+                      placeholder={
+                        editingNetwork?.snmpCommunityConfigured
+                          ? 'Leave blank to keep'
+                          : 'public'
+                      }
                       className="col-span-3"
                     />
                   </div>

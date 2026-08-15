@@ -74,7 +74,17 @@ def resolve_snmp_credentials(device: dict) -> SNMPCredentials:
         creds.get("snmpCommunity")
         or os.getenv("SNMP_DEFAULT_COMMUNITY")
         or "public"
-    ).strip()
+    )
+    if isinstance(community, str):
+        community = community.strip()
+    # Decrypt Fernet-at-rest communities when present.
+    try:
+        from utils.secret_crypto import decrypt_secret  # noqa: PLC0415
+
+        community = decrypt_secret(community) if community else community
+    except Exception:  # noqa: BLE001
+        pass
+    community = str(community or "public").strip() or "public"
 
     try:
         port = int(creds.get("snmpPort") or os.getenv("SNMP_DEFAULT_PORT") or 161)
@@ -147,9 +157,9 @@ class SNMPInterfaceCollector:
         """
         creds = self.credentials
         logger.info(
-            "[SNMP] Collecting interface stats | host=%s community=%s",
+            "[SNMP] Collecting interface stats | host=%s communityConfigured=%s",
             creds.host,
-            creds.community,
+            bool(creds.community),
         )
 
         try:

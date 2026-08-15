@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 
 from bson import ObjectId
+from utils.api_errors import internal_error_response
 from flask import Blueprint, jsonify, request
 
 from config.database import db
@@ -120,11 +121,7 @@ def get_ping_history():
     except ValueError as error:
         return jsonify({"success": False, "message": str(error)}), 400
     except Exception as error:
-        return jsonify({
-            "success": False,
-            "message": "Failed to get ping history",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to get ping history")
 
 
 @history_bp.route("/devices/<device_id>/history", methods=["GET"])
@@ -199,8 +196,4 @@ def get_device_history(device_id):
     except ValueError as error:
         return jsonify({"success": False, "message": str(error)}), 400
     except Exception as error:
-        return jsonify({
-            "success": False,
-            "message": "Failed to get device history",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to get device history")

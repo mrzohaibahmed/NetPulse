@@ -1,3 +1,4 @@
+from utils.api_errors import internal_error_response
 from flask import Blueprint, jsonify, request
 
 from scheduler import reschedule_monitor_job
@@ -17,11 +18,7 @@ def get_settings_route():
         settings["updatedAt"] = format_datetime(settings.get("updatedAt"))
         return jsonify({"success": True, "data": settings}), 200
     except Exception as error:
-        return jsonify({
-            "success": False,
-            "message": "Failed to get settings",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to get settings")
 
 
 @settings_bp.route("/settings", methods=["PUT"])
@@ -82,8 +79,4 @@ def update_settings_route():
     except ValueError as error:
         return jsonify({"success": False, "message": str(error)}), 400
     except Exception as error:
-        return jsonify({
-            "success": False,
-            "message": "Failed to update settings",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to update settings")

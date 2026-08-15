@@ -8,40 +8,15 @@ import jwt
 from dotenv import load_dotenv
 from flask import g, jsonify, request
 
+from utils.jwt_secret import resolve_jwt_secret
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
 
-# Resolved after _resolve_jwt_secret() — see bottom of env-load block.
-_INSECURE_JWT_SECRET_DEFAULT = "netpulse-dev-secret-change-me"
 JWT_EXPIRE_HOURS = int(os.getenv("JWT_EXPIRE_HOURS", "8"))
 JWT_ALGORITHM = "HS256"
 
-
-def _flask_debug_enabled() -> bool:
-    """Same FLASK_DEBUG semantics as app.py (default off)."""
-    return os.getenv("FLASK_DEBUG", "false").lower() in ("1", "true", "yes")
-
-
-def _resolve_jwt_secret() -> str:
-    """
-    Require a real JWT_SECRET outside local debug.
-
-    When FLASK_DEBUG is enabled, the insecure default is allowed for local/dev
-    convenience. Otherwise unset or default secrets fail at import/boot.
-    """
-    raw = (os.getenv("JWT_SECRET") or "").strip()
-    if raw and raw != _INSECURE_JWT_SECRET_DEFAULT:
-        return raw
-    if _flask_debug_enabled():
-        return raw or _INSECURE_JWT_SECRET_DEFAULT
-    raise RuntimeError(
-        "JWT_SECRET is unset or set to the insecure default. "
-        "Set a strong unique JWT_SECRET in the environment (see .env.example) "
-        "before starting NetPulse. For local development only, set FLASK_DEBUG=true."
-    )
-
-
-JWT_SECRET = _resolve_jwt_secret()
+JWT_SECRET = resolve_jwt_secret()
 
 # Higher roles inherit lower privileges. super-admin satisfies admin/operator checks;
 # only routes that require ["super-admin"] stay exclusive.

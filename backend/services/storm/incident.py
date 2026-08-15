@@ -401,7 +401,8 @@ def list_incidents(
     if status:
         query["status"] = status.upper()
     if search:
-        regex = {"$regex": search, "$options": "i"}
+        from utils.mongo_safe import regex_filter  # noqa: PLC0415
+        regex = regex_filter(search)
         query["$or"] = [
             {"incidentId": regex},
             {"interface": regex},

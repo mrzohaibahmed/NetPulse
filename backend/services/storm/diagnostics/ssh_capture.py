@@ -47,7 +47,9 @@ def assert_read_only_command(command: str) -> str:
 
 def build_interface_commands(interface: str, vendor: str = "cisco_ios") -> dict[str, str]:
     """Vendor-aware read-only command set for one interface."""
-    name = (interface or "").strip()
+    from utils.ssh_security import assert_safe_interface_name  # noqa: PLC0415
+
+    name = assert_safe_interface_name(interface)
     key = (vendor or "cisco_ios").lower()
     if key in ("juniper", "junos"):
         return {

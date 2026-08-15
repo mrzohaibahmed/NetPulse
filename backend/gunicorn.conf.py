@@ -10,7 +10,7 @@
 import multiprocessing
 import os
 
-bind = os.getenv("GUNICORN_BIND", "0.0.0.0:5000")
+bind = os.getenv("GUNICORN_BIND", "127.0.0.1:5000")
 workers = int(os.getenv("GUNICORN_WORKERS", "1"))
 worker_class = "sync"
 timeout = int(os.getenv("GUNICORN_TIMEOUT", "120"))
@@ -29,6 +29,11 @@ proc_name = "netpulse-api"
 preload_app = False
 
 def on_starting(server):
+    if str(bind).startswith("0.0.0.0") or str(bind).startswith("[::]"):
+        server.log.warning(
+            "Gunicorn bind=%s exposes all interfaces; prefer 127.0.0.1 behind HTTPS reverse proxy",
+            bind,
+        )
     server.log.info(
         "Gunicorn starting | workers=%s bind=%s schedulerRole=%s",
         workers,

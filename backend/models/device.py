@@ -82,7 +82,11 @@ def normalize_device_credentials(raw, existing=None) -> dict | None:
         credentials["sshPort"] = port
 
     if "snmpCommunity" in raw and raw["snmpCommunity"] is not None:
-        credentials["snmpCommunity"] = str(raw["snmpCommunity"]).strip()
+        community = str(raw["snmpCommunity"]).strip()
+        if community:
+            credentials["snmpCommunity"] = encrypt_secret(community)
+        else:
+            credentials["snmpCommunity"] = ""
 
     if "snmpVersion" in raw and raw["snmpVersion"] is not None:
         credentials["snmpVersion"] = str(raw["snmpVersion"]).strip().lower()

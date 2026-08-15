@@ -20,9 +20,10 @@ logger = get_monitor_logger("storm.mitigation.ssh")
 
 def assert_safe_mitigation_command(command: str, interface: str) -> None:
     """Validate that the command matches an approved static command template."""
+    from utils.ssh_security import assert_safe_interface_name  # noqa: PLC0415
+
     # Strict regex check for interface safety to prevent injection
-    if not re.match(r"^[a-zA-Z0-9/.:-]+$", interface):
-        raise ValueError(f"Command rejected: Invalid interface name '{interface}'")
+    interface = assert_safe_interface_name(interface)
 
     cmd = (command or "").strip()
     if not cmd:

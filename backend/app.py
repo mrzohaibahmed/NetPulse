@@ -7,7 +7,7 @@ from flask_cors import CORS
 
 from config.cors_config import build_cors_kwargs
 from config.deployment import should_start_scheduler, startup_identity
-from config.database import db, DATABASE_NAME
+from config.database import db
 from routes.alert_routes import alert_bp
 from routes.auth_routes import auth_bp
 from routes.dashboard_routes import dashboard_bp
@@ -68,7 +68,24 @@ app = Flask(
     static_folder=str(FRONTEND_DIST) if HAS_FRONTEND_DIST else None,
     static_url_path="" if HAS_FRONTEND_DIST else None,
 )
+
+# Bound request bodies (CSV import + JSON APIs). Override via MAX_CONTENT_LENGTH bytes.
+_max_content = int(os.getenv("MAX_CONTENT_LENGTH", str(2 * 1024 * 1024)))
+app.config["MAX_CONTENT_LENGTH"] = max(_max_content, 64 * 1024)
+
 CORS(app, **build_cors_kwargs())
+
+from utils.security_headers import register_security_headers  # noqa: E402
+
+register_security_headers(app)
+
+from utils.api_errors import ensure_request_id  # noqa: E402
+
+
+@app.before_request
+def _assign_request_id():
+    ensure_request_id()
+
 
 app.register_blueprint(auth_bp, url_prefix="/api")
 app.register_blueprint(device_bp, url_prefix="/api")
@@ -92,7 +109,6 @@ def home():
         return send_from_directory(app.static_folder, "index.html")
     return jsonify({
         "message": "Network Monitor API is running",
-        "database": DATABASE_NAME,
         "status": "Connected",
     })
 
@@ -146,6 +162,15 @@ def bootstrap():
     ensure_isp_connections()
     # Phase 5 — scheduler leader-election lock collection.
     ensure_scheduler_lock_indexes()
+    # Login brute-force protection indexes (TTL).
+    try:
+        from services.login_rate_limit import ensure_login_rate_limit_indexes  # noqa: PLC0415
+
+        ensure_login_rate_limit_indexes()
+    except Exception as exc:  # noqa: BLE001
+        _bootstrap_logger.warning(
+            "[LOGIN-RATE-LIMIT] index ensure failed (non-fatal): %s", exc
+        )
     # Idempotent history + active critical-alert uniqueness.
     ensure_monitoring_idempotency_indexes()
     db.users.create_index(
@@ -279,17 +304,25 @@ else:
 
 if __name__ == "__main__":
     DEBUG = os.getenv("FLASK_DEBUG", "false").lower() in ("1", "true", "yes")
-    # Debug mode must never bind all interfaces (Werkzeug debugger exposure).
-    # Non-debug keeps LAN-reachable 0.0.0.0 for normal deployments.
-    run_host = "127.0.0.1" if DEBUG else "0.0.0.0"
+    # Prefer localhost bind; override with FLASK_RUN_HOST when intentionally LAN-exposed
+    # behind a reverse proxy is NOT used (not recommended for production).
+    default_host = "127.0.0.1"
+    run_host = (os.getenv("FLASK_RUN_HOST") or default_host).strip() or default_host
     if DEBUG:
+        run_host = "127.0.0.1"
         print(
             "WARNING: FLASK_DEBUG is enabled — binding to 127.0.0.1 only. "
             "Do not expose the Werkzeug debugger on a network interface.",
             flush=True,
         )
+    elif run_host in ("0.0.0.0", "::"):
+        print(
+            "WARNING: Binding to all interfaces without a reverse proxy exposes "
+            "HTTP plaintext. Prefer FLASK_RUN_HOST=127.0.0.1 behind HTTPS.",
+            flush=True,
+        )
     app.run(
         host=run_host,
-        port=5000,
+        port=int(os.getenv("FLASK_RUN_PORT", "5000")),
         debug=DEBUG,
     )

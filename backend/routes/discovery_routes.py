@@ -1,4 +1,5 @@
 import ipaddress
+from utils.api_errors import internal_error_response
 from flask import Blueprint, jsonify, request
 from bson import ObjectId
 
@@ -65,7 +66,7 @@ def serialize_network(network: dict) -> dict:
         "enabled": bool(network.get("enabled", True)),
         "sshUsername": network.get("sshUsername", ""),
         "sshPasswordSet": bool(network.get("sshPassword")),
-        "snmpCommunity": network.get("snmpCommunity", "public"),
+        "snmpCommunityConfigured": bool(network.get("snmpCommunity")),
         "createdAt": format_datetime(network.get("createdAt")),
         "updatedAt": format_datetime(network.get("updatedAt")),
         "devices": stats["devices"],
@@ -86,11 +87,7 @@ def list_networks():
             "data": [serialize_network(n) for n in networks]
         }), 200
     except Exception as error:
-        return jsonify({
-            "success": False,
-            "message": "Failed to list networks",
-            "error": str(error)
-        }), 500
+        return internal_error_response(error, message="Failed to list networks")
 
 
 @discovery_bp.route("/networks", methods=["POST"])
@@ -146,7 +143,7 @@ def create_network():
             "enabled": enabled,
             "sshUsername": ssh_username,
             "sshPassword": encrypt_secret(ssh_password) if ssh_password else "",
-            "snmpCommunity": snmp_community,
+            "snmpCommunity": encrypt_secret(snmp_community) if snmp_community else "",
             "createdAt": now,
             "updatedAt": now
         }
@@ -161,11 +158,7 @@ def create_network():
         }), 201
 
     except Exception as error:
-        return jsonify({
-            "success": False,
-            "message": "Failed to add network",
-            "error": str(error)
-        }), 500
+        return internal_error_response(error, message="Failed to add network")
 
 
 @discovery_bp.route("/networks/<network_id>", methods=["PUT"])
@@ -233,7 +226,10 @@ def update_network(network_id):
             update["sshPassword"] = encrypt_secret(str(data["sshPassword"]))
 
         if "snmpCommunity" in data:
-            update["snmpCommunity"] = str(data["snmpCommunity"]).strip()
+            community = str(data["snmpCommunity"]).strip()
+            update["snmpCommunity"] = (
+                encrypt_secret(community) if community else ""
+            )
 
         if update:
             update["updatedAt"] = utc_now()
@@ -247,11 +243,7 @@ def update_network(network_id):
         }), 200
 
     except Exception as error:
-        return jsonify({
-            "success": False,
-            "message": "Failed to update network",
-            "error": str(error)
-        }), 500
+        return internal_error_response(error, message="Failed to update network")
 
 
 @discovery_bp.route("/networks/<network_id>", methods=["DELETE"])
@@ -271,11 +263,7 @@ def delete_network(network_id):
         }), 200
 
     except Exception as error:
-        return jsonify({
-            "success": False,
-            "message": "Failed to delete network",
-            "error": str(error)
-        }), 500
+        return internal_error_response(error, message="Failed to delete network")
 
 
 # ── Scan Range & Scan Networks Routing ────────────────────────────────────────
@@ -295,11 +283,7 @@ def network_hint():
             "hint": hint,
         }), 200
     except Exception as error:
-        return jsonify({
-            "success": False,
-            "message": "Failed to detect local network",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to detect local network")
 
 
 @discovery_bp.route("/discovery/scan-range", methods=["POST"])
@@ -340,11 +324,7 @@ def scan_range():
             "message": str(error),
         }), 400
     except Exception as error:
-        return jsonify({
-            "success": False,
-            "message": "Failed to scan IP range",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to scan IP range")
 
 
 @discovery_bp.route("/discovery/scan-networks", methods=["POST"])
@@ -411,8 +391,4 @@ def scan_networks():
         }), 200
 
     except Exception as error:
-        return jsonify({
-            "success": False,
-            "message": "Failed to scan networks",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to scan networks")

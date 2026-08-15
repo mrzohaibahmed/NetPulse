@@ -221,7 +221,10 @@ class HealthEndpointTests(unittest.TestCase):
 
         body = liveness_payload()
         self.assertEqual(body["status"], "alive")
-        self.assertIn("pid", body)
+        self.assertIn("timestamp", body)
+        # Hardened: no hostname/pid disclosure on public liveness.
+        self.assertNotIn("pid", body)
+        self.assertNotIn("hostname", body)
 
     @patch("services.ops_health._mongo_ping", return_value=(True, None))
     @patch("services.ops_health.is_scheduler_process", return_value=False)
@@ -231,6 +234,8 @@ class HealthEndpointTests(unittest.TestCase):
         body, code = readiness_payload()
         self.assertEqual(code, 200)
         self.assertEqual(body["status"], "ready")
+        self.assertNotIn("ownerId", body)
+        self.assertNotIn("role", body)
 
     @patch("services.ops_health._mongo_ping", return_value=(False, "database_unreachable"))
     def test_readiness_mongo_down(self, _mock):

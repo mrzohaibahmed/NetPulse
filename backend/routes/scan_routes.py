@@ -1,3 +1,4 @@
+from utils.api_errors import internal_error_response
 from flask import Blueprint, jsonify
 
 from bson import ObjectId
@@ -36,15 +37,11 @@ def ping_all_devices():
             "errors": summary.get("errors", []),
         }), 200
     except Exception as error:
-        return jsonify({
-            "success": False,
-            "message": "Failed to ping all devices",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to ping all devices")
 
 
 @scan_bp.route("/devices/<device_id>/scan", methods=["POST"])
-@require_auth()
+@require_auth(roles=["operator"])
 def scan_device(device_id):
     """
     Manual ping — shares apply_ping_result with the scheduler (Phase 13).
@@ -82,8 +79,4 @@ def scan_device(device_id):
         }), 200
 
     except Exception as error:
-        return jsonify({
-            "success": False,
-            "message": "Failed to scan device",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to scan device")

@@ -3,6 +3,7 @@ import io
 from datetime import datetime, timezone
 
 from bson import ObjectId
+from utils.api_errors import internal_error_response
 from flask import Blueprint, Response, jsonify, request
 from openpyxl import Workbook
 
@@ -139,11 +140,7 @@ def uptime_report():
     except ValueError as error:
         return jsonify({"success": False, "message": str(error)}), 400
     except Exception as error:
-        return jsonify({
-            "success": False,
-            "message": "Failed to build uptime report",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to build uptime report")
 
 
 @report_bp.route("/reports/export/devices", methods=["GET"])
@@ -175,11 +172,7 @@ def export_devices():
         return _export_response("devices", headers, rows, fmt)
 
     except Exception as error:
-        return jsonify({
-            "success": False,
-            "message": "Failed to export devices",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to export devices")
 
 
 @report_bp.route("/reports/export/history", methods=["GET"])
@@ -222,11 +215,7 @@ def export_history():
     except ValueError as error:
         return jsonify({"success": False, "message": str(error)}), 400
     except Exception as error:
-        return jsonify({
-            "success": False,
-            "message": "Failed to export history",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to export history")
 
 
 def _parse_limit(max_default: int = 5000, max_limit: int = 50000) -> int:
@@ -276,11 +265,7 @@ def export_storm_incidents():
     except ValueError as error:
         return jsonify({"success": False, "message": str(error)}), 400
     except Exception as error:  # noqa: BLE001
-        return jsonify({
-            "success": False,
-            "message": "Failed to export storm incidents",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to export storm incidents")
 
 
 @report_bp.route("/reports/export/storm/mitigations", methods=["GET"])
@@ -313,11 +298,7 @@ def export_storm_mitigations():
     except ValueError as error:
         return jsonify({"success": False, "message": str(error)}), 400
     except Exception as error:  # noqa: BLE001
-        return jsonify({
-            "success": False,
-            "message": "Failed to export storm mitigations",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to export storm mitigations")
 
 
 @report_bp.route("/reports/export/storm/recoveries", methods=["GET"])
@@ -349,11 +330,7 @@ def export_storm_recoveries():
     except ValueError as error:
         return jsonify({"success": False, "message": str(error)}), 400
     except Exception as error:  # noqa: BLE001
-        return jsonify({
-            "success": False,
-            "message": "Failed to export storm recoveries",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to export storm recoveries")
 
 
 def _export_response(basename, headers, rows, fmt):

@@ -7,7 +7,13 @@ from pymongo.errors import DuplicateKeyError
 
 from config.database import db
 from services.audit_service import log_audit
+from services.login_rate_limit import (
+    check_login_allowed,
+    clear_login_failures,
+    record_login_failure,
+)
 from services.user_service import ensure_default_admin
+from utils.api_errors import internal_error_response
 from utils.auth import (
     JWT_EXPIRE_HOURS,
     VALID_ROLES,
@@ -33,6 +39,13 @@ def serialize_user(user):
     }
 
 
+def _client_ip() -> str:
+    forwarded = (request.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
+    if forwarded:
+        return forwarded
+    return (request.remote_addr or "").strip() or "unknown"
+
+
 def _find_current_user():
     user_id = g.user.get("id")
     if user_id and ObjectId.is_valid(user_id):
@@ -56,6 +69,7 @@ def login():
         data = request.get_json() or {}
         username = (data.get("username") or "").strip()
         password = data.get("password") or ""
+        ip = _client_ip()
 
         if not username or not password:
             return jsonify({
@@ -63,12 +77,27 @@ def login():
                 "message": "Username and password are required",
             }), 400
 
-        user = db.users.find_one({"username": username})
-        if not user or not verify_password(password, user.get("passwordHash", "")):
+        allowed, retry_after = check_login_allowed(username, ip)
+        if not allowed:
             return jsonify({
                 "success": False,
+                "message": "Too many failed login attempts. Try again later.",
+                "retryAfterSeconds": retry_after,
+            }), 429
+
+        user = db.users.find_one({"username": username})
+        if not user or not verify_password(password, user.get("passwordHash", "")):
+            result = record_login_failure(username, ip)
+            payload = {
+                "success": False,
                 "message": "Invalid username or password",
-            }), 401
+            }
+            if result.get("locked"):
+                payload["retryAfterSeconds"] = result.get("retryAfterSeconds")
+                return jsonify(payload), 429
+            return jsonify(payload), 401
+
+        clear_login_failures(username, ip)
 
         token = create_access_token(
             user_id=str(user["_id"]),
@@ -89,12 +118,14 @@ def login():
             "user": serialize_user(user),
         }), 200
 
-    except Exception as error:
+    except RuntimeError as error:
+        # Bootstrap / configuration errors — safe message, no secrets.
         return jsonify({
             "success": False,
-            "message": "Login failed",
-            "error": str(error),
-        }), 500
+            "message": str(error),
+        }), 503
+    except Exception as error:
+        return internal_error_response(error, message="Login failed")
 
 
 @auth_bp.route("/auth/me", methods=["GET"])
@@ -217,11 +248,7 @@ def update_own_account():
         }), 200
 
     except Exception as error:
-        return jsonify({
-            "success": False,
-            "message": "Failed to update account",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to update account")
 
 
 @auth_bp.route("/users", methods=["GET"])
@@ -238,11 +265,7 @@ def list_users():
             "data": users,
         }), 200
     except Exception as error:
-        return jsonify({
-            "success": False,
-            "message": "Failed to list users",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to list users")
 
 
 @auth_bp.route("/users/<user_id>", methods=["PUT"])
@@ -368,8 +391,4 @@ def update_user(user_id):
         }), 200
 
     except Exception as error:
-        return jsonify({
-            "success": False,
-            "message": "Failed to update user",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to update user")

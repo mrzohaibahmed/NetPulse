@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from urllib.parse import unquote
 
 from bson import ObjectId
+from utils.api_errors import internal_error_response
 from flask import Blueprint, g, jsonify, request
 
 from config.database import db
@@ -145,11 +146,7 @@ def list_interfaces():
         }), 200
 
     except Exception as error:
-        return jsonify({
-            "success": False,
-            "message": "Failed to list interfaces",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to list interfaces")
 
 
 @interface_bp.route("/interfaces/discover-all", methods=["POST"])
@@ -173,11 +170,7 @@ def discover_all_interfaces():
         }), 200
 
     except Exception as error:
-        return jsonify({
-            "success": False,
-            "message": "Failed to run bulk interface discovery",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to run bulk interface discovery")
 
 
 @interface_bp.route("/interfaces/stats/collect-all", methods=["POST"])
@@ -200,11 +193,7 @@ def collect_all_stats():
             "errors": summary.get("errors", []),
         }), 200
     except Exception as error:
-        return jsonify({
-            "success": False,
-            "message": "Failed to collect interface statistics",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to collect interface statistics")
 
 
 @interface_bp.route("/interfaces/discover/<device_id>", methods=["POST"])
@@ -263,11 +252,7 @@ def discover_interfaces_for_device(device_id: str):
         }), 200
 
     except Exception as error:
-        return jsonify({
-            "success": False,
-            "message": "Failed to discover interfaces",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to discover interfaces")
 
 
 @interface_bp.route("/interfaces/<device_id>/stats", methods=["GET"])
@@ -300,11 +285,7 @@ def get_device_interface_stats(device_id: str):
         }), 200
 
     except Exception as error:
-        return jsonify({
-            "success": False,
-            "message": "Failed to get interface statistics",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to get interface statistics")
 
 
 @interface_bp.route("/interfaces/<device_id>/stats/collect", methods=["POST"])
@@ -356,11 +337,7 @@ def collect_device_stats(device_id: str):
         }), 200
 
     except Exception as error:
-        return jsonify({
-            "success": False,
-            "message": "Failed to collect interface statistics",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to collect interface statistics")
 
 
 @interface_bp.route(
@@ -443,11 +420,7 @@ def set_interface_monitoring(device_id: str, interface_name: str):
             "message": str(error),
         }), 400
     except Exception as error:
-        return jsonify({
-            "success": False,
-            "message": "Failed to update interface monitoring",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to update interface monitoring")
 
 
 @interface_bp.route(
@@ -549,11 +522,7 @@ def manual_shutdown_interface(device_id: str, interface_name: str):
         )), status_code
 
     except Exception as error:
-        return jsonify({
-            "success": False,
-            "message": "Failed to execute manual shutdown",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to execute manual shutdown")
 
 
 @interface_bp.route(
@@ -676,11 +645,7 @@ def manual_recover_interface(device_id: str, interface_name: str):
         )), status_code
 
     except Exception as error:
-        return jsonify({
-            "success": False,
-            "message": "Failed to execute manual recovery",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to execute manual recovery")
 
 
 @interface_bp.route(
@@ -759,11 +724,7 @@ def get_interface_history(device_id: str, interface_name: str):
         }), 200
 
     except Exception as error:
-        return jsonify({
-            "success": False,
-            "message": "Failed to get interface history",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to get interface history")
 
 
 @interface_bp.route("/interfaces/<device_id>", methods=["GET"])
@@ -810,8 +771,4 @@ def list_device_interfaces(device_id: str):
         }), 200
 
     except Exception as error:
-        return jsonify({
-            "success": False,
-            "message": "Failed to get device interfaces",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to get device interfaces")

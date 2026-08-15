@@ -51,8 +51,9 @@ class SafetyConfig:
     allow_manual_override: bool = False
     risk_threshold: float = 25.0
     require_ssh: bool = True
-    # When CPU/memory metrics are unavailable, treat health check as passed.
-    fail_open_missing_health: bool = True
+    # When CPU/memory metrics are unavailable, fail closed by default (secure).
+    # Operators may explicitly enable fail-open via STORM_SAFETY_FAIL_OPEN_MISSING_HEALTH.
+    fail_open_missing_health: bool = False
     ssh_timeout_seconds: int = 15
 
     def to_dict(self) -> dict:
@@ -88,7 +89,7 @@ def get_safety_config() -> SafetyConfig:
         ),
         require_ssh=_env_bool("STORM_SAFETY_REQUIRE_SSH", True),
         fail_open_missing_health=_env_bool(
-            "STORM_SAFETY_FAIL_OPEN_MISSING_HEALTH", True
+            "STORM_SAFETY_FAIL_OPEN_MISSING_HEALTH", False
         ),
         ssh_timeout_seconds=max(5, _env_int("STORM_SAFETY_SSH_TIMEOUT", 15)),
     )

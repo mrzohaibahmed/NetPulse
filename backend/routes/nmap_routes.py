@@ -22,6 +22,7 @@ Design Notes
 """
 
 from bson import ObjectId
+from utils.api_errors import internal_error_response
 from flask import Blueprint, jsonify
 
 from config.database import db
@@ -100,11 +101,7 @@ def scan_device_details(device_id: str):
         }), 200
 
     except Exception as error:
-        return jsonify({
-            "success": False,
-            "message": "Failed to run Nmap scan",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to run Nmap scan")
 
 
 @nmap_bp.route("/devices/scan-all-details", methods=["POST"])
@@ -154,8 +151,4 @@ def scan_all_device_details():
         }), 200
 
     except Exception as error:
-        return jsonify({
-            "success": False,
-            "message": "Failed to run bulk Nmap scan",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to run bulk Nmap scan")

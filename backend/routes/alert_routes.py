@@ -1,4 +1,5 @@
 from bson import ObjectId
+from utils.api_errors import internal_error_response
 from flask import Blueprint, jsonify, request
 
 from config.database import db
@@ -86,11 +87,7 @@ def list_alerts():
         }), 200
 
     except Exception as error:
-        return jsonify({
-            "success": False,
-            "message": "Failed to get alerts",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to get alerts")
 
 
 @alert_bp.route("/alerts/<alert_id>/acknowledge", methods=["POST"])
@@ -121,11 +118,7 @@ def acknowledge_alert(alert_id):
         }), 200
 
     except Exception as error:
-        return jsonify({
-            "success": False,
-            "message": "Failed to acknowledge alert",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to acknowledge alert")
 
 
 @alert_bp.route("/alerts/<alert_id>/dismiss", methods=["POST"])
@@ -156,8 +149,4 @@ def dismiss_alert(alert_id):
         }), 200
 
     except Exception as error:
-        return jsonify({
-            "success": False,
-            "message": "Failed to dismiss alert",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to dismiss alert")

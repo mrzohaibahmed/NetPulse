@@ -368,10 +368,13 @@ def evaluate_recovery_safety(
             if executor.collector is not None:
                 ssh_ok = True
                 try:
+                    from utils.ssh_security import assert_safe_interface_name  # noqa: PLC0415
+
+                    safe_iface = assert_safe_interface_name(interface)
                     output = executor.collector.run_command(
-                        f"show interfaces {interface}"
+                        f"show interfaces {safe_iface}"
                     )
-                    snap = parse_interface_snapshot(output, interface)
+                    snap = parse_interface_snapshot(output, safe_iface)
                     admin_status = snap.get("adminStatus")
                 except Exception as exc:  # noqa: BLE001
                     logger.warning(

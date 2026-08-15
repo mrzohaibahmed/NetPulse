@@ -512,7 +512,8 @@ def get_latest_eligibility_results(
     if eligible is not None:
         post_match["eligible"] = bool(eligible)
     if search:
-        regex = {"$regex": search, "$options": "i"}
+        from utils.mongo_safe import regex_filter  # noqa: PLC0415
+        regex = regex_filter(search)
         post_match["$or"] = [
             {"interface": regex},
             {"hostname": regex},

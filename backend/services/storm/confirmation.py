@@ -837,7 +837,8 @@ def get_latest_confirmation_results(
     if state:
         post["state"] = state.upper()
     if search:
-        regex = {"$regex": search, "$options": "i"}
+        from utils.mongo_safe import regex_filter  # noqa: PLC0415
+        regex = regex_filter(search)
         post["$or"] = [
             {"interface": regex},
             {"hostname": regex},

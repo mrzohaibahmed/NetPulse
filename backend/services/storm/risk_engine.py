@@ -655,7 +655,8 @@ def get_latest_risk_results(
     if severity:
         post["severity"] = severity.upper()
     if search:
-        regex = {"$regex": search, "$options": "i"}
+        from utils.mongo_safe import regex_filter  # noqa: PLC0415
+        regex = regex_filter(search)
         post["$or"] = [
             {"interface": regex},
             {"hostname": regex},

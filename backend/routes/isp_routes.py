@@ -1,3 +1,4 @@
+from utils.api_errors import internal_error_response
 from flask import Blueprint, jsonify, request
 
 from services.audit_service import log_audit
@@ -26,11 +27,7 @@ def list_isps():
             "data": [serialize_isp_connection(isp) for isp in isps],
         }), 200
     except Exception as error:  # noqa: BLE001
-        return jsonify({
-            "success": False,
-            "message": "Failed to list ISP connections",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to list ISP connections")
 
 
 @isp_bp.route("/isps/<isp_id>", methods=["GET"])
@@ -48,11 +45,7 @@ def get_isp(isp_id):
             "data": serialize_isp_connection(isp),
         }), 200
     except Exception as error:  # noqa: BLE001
-        return jsonify({
-            "success": False,
-            "message": "Failed to get ISP connection",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to get ISP connection")
 
 
 @isp_bp.route("/isps", methods=["POST"])
@@ -92,11 +85,7 @@ def create_isp():
             "data": serialize_isp_connection(created),
         }), 201
     except Exception as error:  # noqa: BLE001
-        return jsonify({
-            "success": False,
-            "message": "Failed to create ISP connection",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to create ISP connection")
 
 
 @isp_bp.route("/isps/<isp_id>", methods=["PUT"])
@@ -146,11 +135,7 @@ def update_isp(isp_id):
             "data": serialize_isp_connection(updated),
         }), 200
     except Exception as error:  # noqa: BLE001
-        return jsonify({
-            "success": False,
-            "message": "Failed to update ISP connection",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to update ISP connection")
 
 
 @isp_bp.route("/isps/<isp_id>", methods=["DELETE"])
@@ -177,15 +162,11 @@ def delete_isp(isp_id):
             "message": "ISP connection deleted",
         }), 200
     except Exception as error:  # noqa: BLE001
-        return jsonify({
-            "success": False,
-            "message": "Failed to delete ISP connection",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to delete ISP connection")
 
 
 @isp_bp.route("/isps/<isp_id>/scan", methods=["POST"])
-@require_auth()
+@require_auth(roles=["operator"])
 def manual_scan_isp(isp_id):
     try:
         isp = get_isp_connection(isp_id)
@@ -215,8 +196,4 @@ def manual_scan_isp(isp_id):
             "message": str(error),
         }), 400
     except Exception as error:  # noqa: BLE001
-        return jsonify({
-            "success": False,
-            "message": "Failed to scan ISP connection",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to scan ISP connection")

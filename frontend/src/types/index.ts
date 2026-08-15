@@ -810,7 +810,8 @@ export interface NetworkProfile {
   sshUsername?: string
   sshPasswordSet?: boolean
   sshPassword?: string // used on creation/update
-  snmpCommunity?: string
+  snmpCommunityConfigured?: boolean
+  snmpCommunity?: string // write-only on create/update; never returned by API
   createdAt?: string
   updatedAt?: string
   devices: number

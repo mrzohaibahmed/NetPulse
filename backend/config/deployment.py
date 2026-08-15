@@ -102,11 +102,23 @@ def is_scheduler_process() -> bool:
 
 
 def get_app_environment() -> str:
+    """
+    Resolve application environment.
+
+    - FLASK_DEBUG=true → development
+    - NETPULSE_ENV set → that value (normalized)
+    - Otherwise (production-safe default) → production
+
+    Unset NETPULSE_ENV must not silently behave as development when debug is off,
+    so CORS and other fail-closed controls apply.
+    """
     if _flask_debug_enabled():
         return "development"
     raw = (os.getenv("NETPULSE_ENV") or "").strip().lower()
     if not raw:
-        return "development"
+        return "production"
+    if raw in ("prod", "production"):
+        return "production"
     return raw
 
 

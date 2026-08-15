@@ -23,15 +23,18 @@ def verify_interface_up(executor: SSHMitigationExecutor, interface: str) -> tupl
         Tuple of (is_up, raw_cli_output)
     """
     vendor = (executor.creds.vendor or "cisco_ios").lower()
+    from utils.ssh_security import assert_safe_interface_name  # noqa: PLC0415
+
+    safe_iface = assert_safe_interface_name(interface)
     if "juniper" in vendor or "junos" in vendor:
-        cmd = f"show interfaces {interface}"
+        cmd = f"show interfaces {safe_iface}"
     else:
-        cmd = f"show interfaces {interface}"
+        cmd = f"show interfaces {safe_iface}"
 
     logger.info("Verifying interface up | host=%s | command=%s", executor.creds.host, cmd)
     try:
         output = executor.collector.run_command(cmd)
-        snapshot = parse_interface_snapshot(output, interface)
+        snapshot = parse_interface_snapshot(output, safe_iface)
 
         # Check if interface is administratively UP (not down)
         is_up = bool(snapshot.get("available") and snapshot.get("adminStatus") == "up")

@@ -1,3 +1,4 @@
+from utils.api_errors import internal_error_response
 from flask import Blueprint, jsonify
 
 from config.database import db
@@ -103,11 +104,7 @@ def dashboard_summary():
         }), 200
 
     except Exception as error:
-        return jsonify({
-            "success": False,
-            "message": "Failed to get dashboard summary",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to get dashboard summary")
 
 
 @dashboard_bp.route("/dashboard/ops-metrics", methods=["GET"])
@@ -122,11 +119,7 @@ def dashboard_ops_metrics():
             "metrics": ops_metrics_snapshot(),
         }), 200
     except Exception as error:
-        return jsonify({
-            "success": False,
-            "message": "Failed to collect operational metrics",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to collect operational metrics")
 
 
 @dashboard_bp.route("/dashboard/recent-history", methods=["GET"])
@@ -153,11 +146,7 @@ def recent_history():
         }), 200
 
     except Exception as error:
-        return jsonify({
-            "success": False,
-            "message": "Failed to get recent history",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to get recent history")
 
 
 @dashboard_bp.route("/dashboard/device-status", methods=["GET"])
@@ -186,11 +175,7 @@ def device_status():
         }), 200
 
     except Exception as error:
-        return jsonify({
-            "success": False,
-            "message": "Failed to get device status",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to get device status")
 
 
 @dashboard_bp.route("/dashboard/statistics", methods=["GET"])
@@ -244,11 +229,7 @@ def dashboard_statistics():
         }), 200
 
     except Exception as error:
-        return jsonify({
-            "success": False,
-            "message": "Failed to get dashboard statistics",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to get dashboard statistics")
 
 
 @dashboard_bp.route("/dashboard/charts/device-status", methods=["GET"])
@@ -281,11 +262,7 @@ def device_status_chart():
         }), 200
 
     except Exception as error:
-        return jsonify({
-            "success": False,
-            "message": "Failed to get device status chart",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to get device status chart")
 
 
 @dashboard_bp.route("/dashboard/charts/device-type", methods=["GET"])
@@ -312,11 +289,7 @@ def device_type_chart():
         return jsonify({"success": True, "chart": chart}), 200
 
     except Exception as error:
-        return jsonify({
-            "success": False,
-            "message": "Failed to get device type chart",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to get device type chart")
 
 
 @dashboard_bp.route("/dashboard/charts/response-time", methods=["GET"])
@@ -345,11 +318,7 @@ def response_time_chart():
         return jsonify({"success": True, "chart": chart}), 200
 
     except Exception as error:
-        return jsonify({
-            "success": False,
-            "message": "Failed to get response time chart",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to get response time chart")
 
 
 @dashboard_bp.route("/dashboard/charts/scan-activity", methods=["GET"])
@@ -379,8 +348,4 @@ def scan_activity_chart():
         return jsonify({"success": True, "chart": chart}), 200
 
     except Exception as error:
-        return jsonify({
-            "success": False,
-            "message": "Failed to get scan activity chart",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to get scan activity chart")

@@ -322,7 +322,9 @@ class SSHInterfaceCollector:
         )
 
         client = paramiko.SSHClient()
-        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        from utils.ssh_security import apply_host_key_policy  # noqa: PLC0415
+
+        apply_host_key_policy(client)
 
         try:
             # Older Cisco IOS SSH stacks often only offer SHA1 KEX / ssh-rsa.

@@ -1,9 +1,11 @@
 import csv
 import io
+import os
 import re
 from datetime import datetime, timezone
 
 from bson import ObjectId
+from utils.api_errors import internal_error_response
 from flask import Blueprint, jsonify, request
 from pymongo.errors import DuplicateKeyError
 
@@ -147,11 +149,7 @@ def add_device():
         }), 201
 
     except Exception as error:
-        return jsonify({
-            "success": False,
-            "message": "Failed to create device",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to create device")
 
 
 @device_bp.route("/devices/import", methods=["POST"])
@@ -169,7 +167,23 @@ def import_devices_csv():
         if not upload.filename:
             return jsonify({"success": False, "message": "Empty filename"}), 400
 
-        raw = upload.read()
+        # Explicit CSV size cap (also covered by Flask MAX_CONTENT_LENGTH).
+        max_csv_bytes = int(os.getenv("MAX_CSV_UPLOAD_BYTES", str(1024 * 1024)))
+        max_csv_bytes = max(max_csv_bytes, 1024)
+        # Prefer Content-Length when present to reject before buffering.
+        content_length = request.content_length
+        if content_length is not None and content_length > max_csv_bytes:
+            return jsonify({
+                "success": False,
+                "message": f"CSV upload exceeds maximum size ({max_csv_bytes} bytes)",
+            }), 413
+
+        raw = upload.read(max_csv_bytes + 1)
+        if len(raw) > max_csv_bytes:
+            return jsonify({
+                "success": False,
+                "message": f"CSV upload exceeds maximum size ({max_csv_bytes} bytes)",
+            }), 413
         try:
             text = raw.decode("utf-8-sig")
         except UnicodeDecodeError:
@@ -256,11 +270,7 @@ def import_devices_csv():
         }), 200
 
     except Exception as error:
-        return jsonify({
-            "success": False,
-            "message": "Failed to import devices",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to import devices")
 
 
 @device_bp.route("/devices", methods=["GET"])
@@ -287,11 +297,7 @@ def get_devices():
         }), 200
 
     except Exception as error:
-        return jsonify({
-            "success": False,
-            "message": "Failed to get devices",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to get devices")
 
 
 @device_bp.route("/devices/<device_id>", methods=["GET"])
@@ -311,11 +317,7 @@ def get_device(device_id):
         }), 200
 
     except Exception as error:
-        return jsonify({
-            "success": False,
-            "message": "Failed to get device",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to get device")
 
 
 @device_bp.route("/devices/<device_id>", methods=["PUT"])
@@ -449,11 +451,7 @@ def update_device(device_id):
         }), 200
 
     except Exception as error:
-        return jsonify({
-            "success": False,
-            "message": "Failed to update device",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to update device")
 
 
 @device_bp.route("/devices/<device_id>", methods=["DELETE"])
@@ -502,8 +500,4 @@ def delete_device(device_id):
         }), 200
 
     except Exception as error:
-        return jsonify({
-            "success": False,
-            "message": "Failed to delete device",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to delete device")

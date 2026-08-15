@@ -44,6 +44,7 @@ from typing import Any
 from urllib.parse import unquote
 
 from bson import ObjectId
+from utils.api_errors import internal_error_response
 from flask import Blueprint, current_app, jsonify, request, g
 
 from config.database import db
@@ -227,11 +228,7 @@ def evaluate_single():
             "message": str(error),
         }), 400
     except Exception as error:  # noqa: BLE001
-        return jsonify({
-            "success": False,
-            "message": "Failed to evaluate interface eligibility",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to evaluate interface eligibility")
 
 
 @storm_bp.route("/storm/eligibility/evaluate-all", methods=["POST"])
@@ -259,11 +256,7 @@ def evaluate_all():
             "skipped": summary.get("skipped", False),
         }), 200
     except Exception as error:  # noqa: BLE001
-        return jsonify({
-            "success": False,
-            "message": "Failed to run bulk eligibility evaluation",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to run bulk eligibility evaluation")
 
 
 def _eligibility_filters():
@@ -300,11 +293,7 @@ def list_eligibility():
             **pagination_payload(total, page, limit, total_pages),
         }), 200
     except Exception as error:  # noqa: BLE001
-        return jsonify({
-            "success": False,
-            "message": "Failed to list eligibility results",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to list eligibility results")
 
 
 @storm_bp.route("/storm/eligibility/<device_id>", methods=["GET"])
@@ -333,11 +322,7 @@ def list_device_eligibility(device_id: str):
             **pagination_payload(total, page, limit, total_pages),
         }), 200
     except Exception as error:  # noqa: BLE001
-        return jsonify({
-            "success": False,
-            "message": "Failed to list device eligibility results",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to list device eligibility results")
 
 
 @storm_bp.route(
@@ -394,11 +379,7 @@ def get_interface_eligibility(device_id: str, interface: str):
 
         return jsonify(payload), 200
     except Exception as error:  # noqa: BLE001
-        return jsonify({
-            "success": False,
-            "message": "Failed to fetch interface eligibility",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to fetch interface eligibility")
 
 
 # ---------------------------------------------------------------------------
@@ -467,11 +448,7 @@ def calculate_single_risk():
             "data": result.to_api_dict(),
         }), 200
     except Exception as error:  # noqa: BLE001
-        return jsonify({
-            "success": False,
-            "message": "Failed to calculate interface risk",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to calculate interface risk")
 
 
 @storm_bp.route("/storm/risk/calculate-all", methods=["POST"])
@@ -494,11 +471,7 @@ def calculate_all_risk_route():
             **summary,
         }), 200
     except Exception as error:  # noqa: BLE001
-        return jsonify({
-            "success": False,
-            "message": "Failed to run bulk risk calculation",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to run bulk risk calculation")
 
 
 @storm_bp.route("/storm/risk", methods=["GET"])
@@ -517,11 +490,7 @@ def list_risk():
             **pagination_payload(total, page, limit, total_pages),
         }), 200
     except Exception as error:  # noqa: BLE001
-        return jsonify({
-            "success": False,
-            "message": "Failed to list risk results",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to list risk results")
 
 
 @storm_bp.route("/storm/risk/<device_id>", methods=["GET"])
@@ -548,11 +517,7 @@ def list_device_risk(device_id: str):
             **pagination_payload(total, page, limit, total_pages),
         }), 200
     except Exception as error:  # noqa: BLE001
-        return jsonify({
-            "success": False,
-            "message": "Failed to list device risk results",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to list device risk results")
 
 
 @storm_bp.route("/storm/risk/<device_id>/<path:interface>", methods=["GET"])
@@ -599,11 +564,7 @@ def get_interface_risk(device_id: str, interface: str):
 
         return jsonify(payload), 200
     except Exception as error:  # noqa: BLE001
-        return jsonify({
-            "success": False,
-            "message": "Failed to fetch interface risk",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to fetch interface risk")
 
 
 # ---------------------------------------------------------------------------
@@ -664,11 +625,7 @@ def evaluate_single_confirmation():
             "data": result.to_api_dict(),
         }), 200
     except Exception as error:  # noqa: BLE001
-        return jsonify({
-            "success": False,
-            "message": "Failed to evaluate confirmation",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to evaluate confirmation")
 
 
 @storm_bp.route("/storm/confirmation/evaluate-all", methods=["POST"])
@@ -692,11 +649,7 @@ def evaluate_all_confirmation_route():
             **summary,
         }), 200
     except Exception as error:  # noqa: BLE001
-        return jsonify({
-            "success": False,
-            "message": "Failed to run bulk confirmation evaluation",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to run bulk confirmation evaluation")
 
 
 @storm_bp.route("/storm/confirmation", methods=["GET"])
@@ -717,11 +670,7 @@ def list_confirmation():
             **pagination_payload(total, page, limit, total_pages),
         }), 200
     except Exception as error:  # noqa: BLE001
-        return jsonify({
-            "success": False,
-            "message": "Failed to list confirmation results",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to list confirmation results")
 
 
 @storm_bp.route("/storm/confirmation/<device_id>", methods=["GET"])
@@ -748,11 +697,7 @@ def list_device_confirmation(device_id: str):
             **pagination_payload(total, page, limit, total_pages),
         }), 200
     except Exception as error:  # noqa: BLE001
-        return jsonify({
-            "success": False,
-            "message": "Failed to list device confirmation results",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to list device confirmation results")
 
 
 @storm_bp.route(
@@ -804,11 +749,7 @@ def get_interface_confirmation(device_id: str, interface: str):
 
         return jsonify(payload), 200
     except Exception as error:  # noqa: BLE001
-        return jsonify({
-            "success": False,
-            "message": "Failed to fetch interface confirmation",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to fetch interface confirmation")
 
 
 # ---------------------------------------------------------------------------
@@ -874,11 +815,7 @@ def evaluate_single_safety():
             "data": result.to_api_dict(),
         }), 200
     except Exception as error:  # noqa: BLE001
-        return jsonify({
-            "success": False,
-            "message": "Failed to evaluate safety",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to evaluate safety")
 
 
 @storm_bp.route("/storm/safety/evaluate-all", methods=["POST"])
@@ -906,11 +843,7 @@ def evaluate_all_safety_route():
             **summary,
         }), 200
     except Exception as error:  # noqa: BLE001
-        return jsonify({
-            "success": False,
-            "message": "Failed to run bulk safety evaluation",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to run bulk safety evaluation")
 
 
 @storm_bp.route("/storm/safety", methods=["GET"])
@@ -931,11 +864,7 @@ def list_safety():
             **pagination_payload(total, page, limit, total_pages),
         }), 200
     except Exception as error:  # noqa: BLE001
-        return jsonify({
-            "success": False,
-            "message": "Failed to list safety results",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to list safety results")
 
 
 @storm_bp.route("/storm/safety/<device_id>", methods=["GET"])
@@ -962,11 +891,7 @@ def list_device_safety(device_id: str):
             **pagination_payload(total, page, limit, total_pages),
         }), 200
     except Exception as error:  # noqa: BLE001
-        return jsonify({
-            "success": False,
-            "message": "Failed to list device safety results",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to list device safety results")
 
 
 @storm_bp.route("/storm/safety/<device_id>/<path:interface>", methods=["GET"])
@@ -1013,11 +938,7 @@ def get_interface_safety(device_id: str, interface: str):
 
         return jsonify(payload), 200
     except Exception as error:  # noqa: BLE001
-        return jsonify({
-            "success": False,
-            "message": "Failed to fetch interface safety",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to fetch interface safety")
 
 
 # ---------------------------------------------------------------------------
@@ -1055,11 +976,7 @@ def list_storm_incidents():
         }), 200
     except Exception as error:  # noqa: BLE001
         current_app.logger.exception("Failed to list storm incidents")
-        return jsonify({
-            "success": False,
-            "message": "Failed to list storm incidents",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to list storm incidents")
 
 
 @storm_bp.route("/storm/incidents/device/<device_id>", methods=["GET"])
@@ -1087,11 +1004,7 @@ def list_device_storm_incidents(device_id: str):
             **pagination_payload(total, page, limit, total_pages),
         }), 200
     except Exception as error:  # noqa: BLE001
-        return jsonify({
-            "success": False,
-            "message": "Failed to list device storm incidents",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to list device storm incidents")
 
 
 @storm_bp.route("/storm/incidents/<incident_id>", methods=["GET"])
@@ -1109,11 +1022,7 @@ def get_storm_incident(incident_id: str):
             "data": serialize_incident(doc),
         }), 200
     except Exception as error:  # noqa: BLE001
-        return jsonify({
-            "success": False,
-            "message": "Failed to fetch storm incident",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to fetch storm incident")
 
 
 @storm_bp.route("/storm/orchestrator/prepare", methods=["POST"])
@@ -1163,11 +1072,7 @@ def prepare_orchestrator_route():
             "data": serialize_prepare_result(result),
         }), 200
     except Exception as error:  # noqa: BLE001
-        return jsonify({
-            "success": False,
-            "message": "Failed to prepare mitigation",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to prepare mitigation")
 
 
 @storm_bp.route("/storm/orchestrator/prepare-all", methods=["POST"])
@@ -1191,11 +1096,7 @@ def prepare_all_orchestrator_route():
             **summary,
         }), 200
     except Exception as error:  # noqa: BLE001
-        return jsonify({
-            "success": False,
-            "message": "Failed to run bulk orchestrator prepare",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to run bulk orchestrator prepare")
 
 
 # ---------------------------------------------------------------------------
@@ -1247,11 +1148,7 @@ def execute_mitigation_route():
         status_code = 200 if res.get("success") else 400
         return jsonify(res), status_code
     except Exception as error:  # noqa: BLE001
-        return jsonify({
-            "success": False,
-            "message": "Mitigation execution failed",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Mitigation execution failed")
 
 
 @storm_bp.route("/storm/mitigation/rollback", methods=["POST"])
@@ -1278,11 +1175,7 @@ def rollback_mitigation_route():
         status_code = 200 if res.get("success") else 400
         return jsonify(res), status_code
     except Exception as error:  # noqa: BLE001
-        return jsonify({
-            "success": False,
-            "message": "Rollback execution failed",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Rollback execution failed")
 
 
 @storm_bp.route("/storm/mitigation/history", methods=["GET"])
@@ -1300,11 +1193,7 @@ def list_mitigation_history_route():
             **pagination_payload(total, page, limit, total_pages),
         }), 200
     except Exception as error:  # noqa: BLE001
-        return jsonify({
-            "success": False,
-            "message": "Failed to retrieve mitigation history",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to retrieve mitigation history")
 
 
 @storm_bp.route("/storm/mitigation/history/<incident_id>", methods=["GET"])
@@ -1318,11 +1207,7 @@ def get_mitigation_history_detail_route(incident_id: str):
             "data": [serialize_mitigation_log(row) for row in rows],
         }), 200
     except Exception as error:  # noqa: BLE001
-        return jsonify({
-            "success": False,
-            "message": f"Failed to retrieve mitigation logs for incident {incident_id}",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message=f"Failed to retrieve mitigation logs for incident {incident_id}")
 
 
 # ---------------------------------------------------------------------------
@@ -1356,11 +1241,7 @@ def execute_recovery_route():
         status_code = 200 if res.get("success") else 400
         return jsonify(res), status_code
     except Exception as error:  # noqa: BLE001
-        return jsonify({
-            "success": False,
-            "message": "Recovery execution failed",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Recovery execution failed")
 
 
 @storm_bp.route("/storm/recovery/retry", methods=["POST"])
@@ -1387,11 +1268,7 @@ def retry_recovery_route():
         status_code = 200 if res.get("success") else 400
         return jsonify(res), status_code
     except Exception as error:  # noqa: BLE001
-        return jsonify({
-            "success": False,
-            "message": "Recovery retry failed",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Recovery retry failed")
 
 
 @storm_bp.route("/storm/recovery/history", methods=["GET"])
@@ -1409,11 +1286,7 @@ def list_recovery_history_route():
             **pagination_payload(total, page, limit, total_pages),
         }), 200
     except Exception as error:  # noqa: BLE001
-        return jsonify({
-            "success": False,
-            "message": "Failed to retrieve recovery history",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message="Failed to retrieve recovery history")
 
 
 @storm_bp.route("/storm/recovery/history/<incident_id>", methods=["GET"])
@@ -1427,10 +1300,6 @@ def get_recovery_history_detail_route(incident_id: str):
             "data": [serialize_recovery_log(row) for row in rows],
         }), 200
     except Exception as error:  # noqa: BLE001
-        return jsonify({
-            "success": False,
-            "message": f"Failed to retrieve recovery logs for incident {incident_id}",
-            "error": str(error),
-        }), 500
+        return internal_error_response(error, message=f"Failed to retrieve recovery logs for incident {incident_id}")
 
 
