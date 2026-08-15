@@ -72,6 +72,18 @@ export function KpiCard({
     <motion.article
       whileHover={{ y: -2 }}
       transition={{ type: 'spring', stiffness: 400, damping: 28 }}
+      role={onClick ? 'button' : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onKeyDown={
+        onClick
+          ? (event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault()
+                onClick()
+              }
+            }
+          : undefined
+      }
       className={cn(
         'glass relative flex min-h-[7.5rem] flex-col justify-between overflow-hidden rounded-xl border-l-[3px] bg-gradient-to-br p-4',
         toneStyles[tone],

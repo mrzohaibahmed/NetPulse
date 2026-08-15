@@ -252,29 +252,34 @@ export function DashboardPage() {
               label: 'Total Devices',
               value: String(dash.summary?.totalDevices ?? 0),
               icon: Server,
+              to: '/devices?status=all',
             },
             {
               label: 'Online',
               value: String(dash.summary?.onlineDevices ?? 0),
               icon: Wifi,
               tone: 'success',
+              to: '/devices?status=Online',
             },
             {
               label: 'Offline',
               value: String(offlineCount),
               icon: WifiOff,
               tone: offlineCount > 0 ? 'warning' : 'default',
+              to: '/devices?status=Offline%20(Critical)',
             },
             {
               label: 'Avg Response',
               value: formatMs(dash.statistics?.averageResponseTime),
               icon: Timer,
+              to: '/devices?status=all',
             },
             {
               label: 'Availability',
               value: formatPercent(dash.summary?.onlinePercentage ?? dash.statistics?.onlinePercentage),
               icon: Gauge,
               tone: 'accent',
+              to: '/reports',
             },
           ]}
           ctaLabel="Open Ping Monitoring"
@@ -293,12 +298,14 @@ export function DashboardPage() {
               value: String(stormMetrics.activeIncidents),
               icon: ShieldAlert,
               tone: stormMetrics.activeIncidents > 0 ? 'danger' : 'success',
+              to: '/storm?view=incidents',
             },
             {
               label: 'Storm Alerts',
               value: String(stormMetrics.stormAlerts),
               icon: Bell,
               tone: stormMetrics.stormAlerts > 0 ? 'warning' : 'default',
+              to: '/alerts?filter=storm',
             },
             {
               label: 'Peak Risk Score',
@@ -309,17 +316,20 @@ export function DashboardPage() {
                 stormMetrics.peakRisk != null && stormMetrics.peakRisk >= 70
                   ? 'danger'
                   : 'default',
+              to: '/storm?view=pipeline',
             },
             {
               label: 'Managed Switches',
               value: String(stormMetrics.managedSwitches),
               icon: Network,
+              to: '/storm?view=overview',
             },
             {
               label: 'Monitored Switches',
               value: String(stormMetrics.monitoredSwitches),
               icon: Activity,
               tone: 'accent',
+              to: '/interfaces',
             },
           ]}
           ctaLabel="Open Storm Protection"
@@ -559,6 +569,7 @@ function WorkspaceCard({
     value: string
     icon: typeof Activity
     tone?: 'default' | 'success' | 'warning' | 'danger' | 'accent'
+    to?: string
   }>
   ctaLabel: string
   ctaTo: string
@@ -582,28 +593,39 @@ function WorkspaceCard({
         </CardHeader>
         <CardContent className="relative flex h-[calc(100%-7rem)] flex-col justify-between gap-6">
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-2 xl:grid-cols-3">
-            {metrics.map((metric) => (
-              <div
-                key={metric.label}
-                className="rounded-xl border border-border/60 bg-card/70 px-3 py-3 backdrop-blur-sm"
-              >
-                <div className="flex items-center gap-2 text-muted-foreground">
-                  <metric.icon className="h-3.5 w-3.5" />
-                  <p className="text-[10px] font-semibold uppercase tracking-wider">{metric.label}</p>
+            {metrics.map((metric) => {
+              const content = (
+                <>
+                  <div className="flex items-center gap-2 text-muted-foreground">
+                    <metric.icon className="h-3.5 w-3.5" />
+                    <p className="text-[10px] font-semibold uppercase tracking-wider">{metric.label}</p>
+                  </div>
+                  <p
+                    className={cn(
+                      'mt-1.5 text-lg font-bold tracking-tight',
+                      metric.tone === 'success' && 'text-success',
+                      metric.tone === 'warning' && 'text-warning',
+                      metric.tone === 'danger' && 'text-danger',
+                      metric.tone === 'accent' && 'text-primary',
+                    )}
+                  >
+                    {metric.value}
+                  </p>
+                </>
+              )
+              const className =
+                'rounded-xl border border-border/60 bg-card/70 px-3 py-3 text-left backdrop-blur-sm transition-colors hover:border-primary/40 hover:bg-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
+
+              return metric.to ? (
+                <Link key={metric.label} to={metric.to} className={className}>
+                  {content}
+                </Link>
+              ) : (
+                <div key={metric.label} className={className}>
+                  {content}
                 </div>
-                <p
-                  className={cn(
-                    'mt-1.5 text-lg font-bold tracking-tight',
-                    metric.tone === 'success' && 'text-success',
-                    metric.tone === 'warning' && 'text-warning',
-                    metric.tone === 'danger' && 'text-danger',
-                    metric.tone === 'accent' && 'text-primary',
-                  )}
-                >
-                  {metric.value}
-                </p>
-              </div>
-            ))}
+              )
+            })}
           </div>
           <Button type="button" className="w-full sm:w-auto" asChild>
             <Link to={ctaTo}>

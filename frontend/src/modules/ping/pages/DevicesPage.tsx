@@ -89,7 +89,10 @@ export function DevicesPage() {
 
   const [query, setQuery] = useState(searchParams.get('q') || '')
   const [debouncedQuery, setDebouncedQuery] = useState(query)
-  const [statusFilter, setStatusFilter] = useState('all')
+  const [statusFilter, setStatusFilter] = useState(() => {
+    const status = searchParams.get('status')
+    return status && status.trim() ? status : 'all'
+  })
   const [page, setPage] = useState(1)
   const [limit, setLimit] = useState(DEFAULT_LIMIT)
   const [sorting, setSorting] = useState<SortingState>([])
@@ -121,7 +124,17 @@ export function DevicesPage() {
   useEffect(() => {
     const q = searchParams.get('q')
     if (q != null && q !== query) setQuery(q)
+    const status = searchParams.get('status')
+    if (status != null && status !== statusFilter) setStatusFilter(status || 'all')
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams])
+
+  useEffect(() => {
+    if (!searchParams.get('status')) return
+    const timer = window.setTimeout(() => {
+      document.getElementById('inventory-section')?.scrollIntoView({ behavior: 'smooth' })
+    }, 80)
+    return () => window.clearTimeout(timer)
   }, [searchParams])
 
   const devicesQuery = useDevicesQuery({
@@ -159,6 +172,10 @@ export function DevicesPage() {
 
   const handleCardClick = (status: string) => {
     setStatusFilter(status)
+    const next = new URLSearchParams(searchParams)
+    if (status === 'all') next.delete('status')
+    else next.set('status', status)
+    setSearchParams(next, { replace: true })
     document.getElementById('inventory-section')?.scrollIntoView({ behavior: 'smooth' })
   }
 
@@ -468,12 +485,13 @@ export function DevicesPage() {
             value={formatMs(dash.statistics?.averageResponseTime)}
             icon={Timer}
             tone="accent"
+            onClick={() => handleCardClick('all')}
           />
         </div>
       </section>
 
       {/* 2. Device Inventory */}
-      <section id="inventory-section" className="space-y-4" aria-label="Device inventory">
+      <section id="inventory-section" className="space-y-4 scroll-mt-24" aria-label="Device inventory">
         <SectionHeading
           title="Device Inventory"
           description="Search, filter, and manage monitored hosts."

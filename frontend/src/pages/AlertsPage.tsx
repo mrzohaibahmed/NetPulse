@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Activity,
@@ -170,8 +170,33 @@ const QUICK_FILTERS: Array<{ id: QuickFilter; label: string }> = [
 export function AlertsPage() {
   const { isOperator } = useAuth()
   const navigate = useNavigate()
-  const [status, setStatus] = useState<ApiStatus>('active')
-  const [quickFilter, setQuickFilter] = useState<QuickFilter>('active')
+  const [searchParams, setSearchParams] = useSearchParams()
+  const initialFilter = searchParams.get('filter')
+  const [status, setStatus] = useState<ApiStatus>(() =>
+    initialFilter === 'acknowledged'
+      ? 'acknowledged'
+      : initialFilter === 'dismissed'
+        ? 'dismissed'
+        : initialFilter === 'all'
+          ? 'all'
+          : 'active',
+  )
+  const [quickFilter, setQuickFilter] = useState<QuickFilter>(() => {
+    const allowed: QuickFilter[] = [
+      'all',
+      'critical',
+      'warning',
+      'storm',
+      'devices',
+      'acknowledged',
+      'active',
+    ]
+    return initialFilter && allowed.includes(initialFilter as QuickFilter)
+      ? (initialFilter as QuickFilter)
+      : initialFilter === 'dismissed'
+        ? 'all'
+        : 'active'
+  })
   const [query, setQuery] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
 
@@ -239,6 +264,14 @@ export function AlertsPage() {
     }
   }, [filtered, pagination.pageItems, selectedId])
 
+  useEffect(() => {
+    if (!searchParams.get('filter')) return
+    const timer = window.setTimeout(() => {
+      document.getElementById('alert-stream-section')?.scrollIntoView({ behavior: 'smooth' })
+    }, 80)
+    return () => window.clearTimeout(timer)
+  }, [searchParams])
+
   const selected = useMemo(
     () => filtered.find((a) => a._id === selectedId) ?? null,
     [filtered, selectedId],
@@ -265,6 +298,26 @@ export function AlertsPage() {
     else if (status === 'acknowledged' || status === 'dismissed') setStatus('all')
   }
 
+  const scrollToAlertStream = () => {
+    document.getElementById('alert-stream-section')?.scrollIntoView({ behavior: 'smooth' })
+  }
+
+  const handleKpiClick = (id: QuickFilter | 'dismissed') => {
+    if (id === 'dismissed') {
+      setQuickFilter('all')
+      setStatus('dismissed')
+      const next = new URLSearchParams(searchParams)
+      next.set('filter', 'dismissed')
+      setSearchParams(next, { replace: true })
+    } else {
+      onQuickFilter(id)
+      const next = new URLSearchParams(searchParams)
+      next.set('filter', id)
+      setSearchParams(next, { replace: true })
+    }
+    scrollToAlertStream()
+  }
+
   const openStorm = (alert: AlertItem) => {
     if (!isStormAlert(alert)) return
     if (alert.incidentId) {
@@ -289,13 +342,55 @@ export function AlertsPage() {
 
       {/* KPI row */}
       <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7" aria-label="Alert KPIs">
-        <KpiCard label="Total Alerts" value={kpis.total} icon={Bell} tone="accent" />
-        <KpiCard label="Critical" value={kpis.critical} icon={AlertTriangle} tone={kpis.critical ? 'danger' : 'default'} />
-        <KpiCard label="Warning" value={kpis.warning} icon={AlertTriangle} tone={kpis.warning ? 'warning' : 'default'} />
-        <KpiCard label="Acknowledged" value={kpis.acknowledged} icon={CheckCircle2} tone="success" />
-        <KpiCard label="Dismissed" value={kpis.dismissed} icon={X} tone="default" />
-        <KpiCard label="Storm Events" value={kpis.storm} icon={CloudLightning} tone={kpis.storm ? 'warning' : 'default'} />
-        <KpiCard label="Device Events" value={kpis.device} icon={Server} tone="accent" />
+        <KpiCard
+          label="Total Alerts"
+          value={kpis.total}
+          icon={Bell}
+          tone="accent"
+          onClick={() => handleKpiClick('all')}
+        />
+        <KpiCard
+          label="Critical"
+          value={kpis.critical}
+          icon={AlertTriangle}
+          tone={kpis.critical ? 'danger' : 'default'}
+          onClick={() => handleKpiClick('critical')}
+        />
+        <KpiCard
+          label="Warning"
+          value={kpis.warning}
+          icon={AlertTriangle}
+          tone={kpis.warning ? 'warning' : 'default'}
+          onClick={() => handleKpiClick('warning')}
+        />
+        <KpiCard
+          label="Acknowledged"
+          value={kpis.acknowledged}
+          icon={CheckCircle2}
+          tone="success"
+          onClick={() => handleKpiClick('acknowledged')}
+        />
+        <KpiCard
+          label="Dismissed"
+          value={kpis.dismissed}
+          icon={X}
+          tone="default"
+          onClick={() => handleKpiClick('dismissed')}
+        />
+        <KpiCard
+          label="Storm Events"
+          value={kpis.storm}
+          icon={CloudLightning}
+          tone={kpis.storm ? 'warning' : 'default'}
+          onClick={() => handleKpiClick('storm')}
+        />
+        <KpiCard
+          label="Device Events"
+          value={kpis.device}
+          icon={Server}
+          tone="accent"
+          onClick={() => handleKpiClick('devices')}
+        />
       </section>
 
       {/* System status */}
@@ -345,7 +440,10 @@ export function AlertsPage() {
               type="button"
               size="sm"
               variant={quickFilter === filter.id ? 'default' : 'secondary'}
-              onClick={() => onQuickFilter(filter.id)}
+              onClick={() => {
+                onQuickFilter(filter.id)
+                scrollToAlertStream()
+              }}
             >
               {filter.label}
             </Button>
@@ -374,7 +472,11 @@ export function AlertsPage() {
       ) : (
         <div className="grid gap-6 xl:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.9fr)]">
           {/* Live alert stream */}
-          <section className="space-y-4" aria-label="Live alert stream">
+          <section
+            id="alert-stream-section"
+            className="space-y-4 scroll-mt-24"
+            aria-label="Live alert stream"
+          >
             <div>
               <h2 className="text-lg font-semibold tracking-tight">Live Alert Stream</h2>
               <p className="text-sm text-muted-foreground">
