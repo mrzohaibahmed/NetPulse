@@ -1,9 +1,9 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { Navigate } from 'react-router-dom'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { Mail, Save, Timer, Activity } from 'lucide-react'
+import { Mail, Save, Timer, Activity, Send, CheckCircle2, AlertCircle } from 'lucide-react'
 import { useAuth } from '@/shared/auth/AuthContext'
 import { useSettingsMutation, useSettingsQuery } from '@/hooks/queries'
 import { IspSettingsSection } from '@/modules/ping/components/IspSettingsSection'
@@ -15,17 +15,40 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/sha
 import { Checkbox } from '@/shared/ui/checkbox'
 import { Input } from '@/shared/ui/input'
 import { Label } from '@/shared/ui/label'
+import { apiRequest } from '@/shared/api/client'
+
+// ---------------------------------------------------------------------------
+// Provider presets — fill SMTP host/port/TLS when the user picks a provider
+// ---------------------------------------------------------------------------
+const PROVIDER_PRESETS = {
+  gmail: {
+    label: 'Gmail',
+    host: 'smtp.gmail.com',
+    port: 587,
+    useTls: true,
+  },
+  outlook: {
+    label: 'Outlook / Microsoft 365',
+    host: 'smtp.office365.com',
+    port: 587,
+    useTls: true,
+  },
+} as const
+
+type Provider = keyof typeof PROVIDER_PRESETS
 
 const schema = z.object({
   pingInterval: z.number().min(5),
   pingTimeoutMs: z.number().min(100),
   pingRetries: z.number().min(1),
   smtpEnabled: z.boolean(),
+  smtpProvider: z.enum(['gmail', 'outlook']),
   smtpHost: z.string(),
   smtpPort: z.number(),
   smtpUser: z.string(),
   smtpPassword: z.string(),
   smtpFrom: z.string(),
+  smtpFromName: z.string(),
   smtpTo: z.string(),
   useTls: z.boolean(),
   cooldownMinutes: z.number().min(1),
@@ -48,6 +71,9 @@ export function SettingsPage() {
   const settingsQuery = useSettingsQuery(isAdmin)
   const save = useSettingsMutation()
 
+  const [testEmailState, setTestEmailState] = useState<'idle' | 'sending' | 'success' | 'error'>('idle')
+  const [testEmailMessage, setTestEmailMessage] = useState('')
+
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
     defaultValues: {
@@ -55,11 +81,13 @@ export function SettingsPage() {
       pingTimeoutMs: 1000,
       pingRetries: 3,
       smtpEnabled: true,
+      smtpProvider: 'gmail',
       smtpHost: '',
       smtpPort: 587,
       smtpUser: '',
       smtpPassword: '',
       smtpFrom: '',
+      smtpFromName: 'NetPulse',
       smtpTo: '',
       useTls: true,
       cooldownMinutes: 5,
@@ -84,11 +112,13 @@ export function SettingsPage() {
       pingTimeoutMs: data.pingTimeoutMs,
       pingRetries: data.pingRetries,
       smtpEnabled: data.smtp.enabled,
+      smtpProvider: (data.smtp.provider === 'outlook' ? 'outlook' : 'gmail') as Provider,
       smtpHost: data.smtp.host,
       smtpPort: data.smtp.port,
       smtpUser: data.smtp.user,
       smtpPassword: '',
       smtpFrom: data.smtp.fromAddress,
+      smtpFromName: data.smtp.fromName ?? 'NetPulse',
       smtpTo: data.smtp.toAddress,
       useTls: data.smtp.useTls,
       cooldownMinutes: data.cooldownMinutes ?? 5,
@@ -120,13 +150,44 @@ export function SettingsPage() {
     )
   }
 
+  const applyProviderPreset = (provider: Provider) => {
+    const preset = PROVIDER_PRESETS[provider]
+    form.setValue('smtpProvider', provider)
+    form.setValue('smtpHost', preset.host)
+    form.setValue('smtpPort', preset.port)
+    form.setValue('useTls', preset.useTls)
+  }
+
+  const handleTestEmail = async () => {
+    setTestEmailState('sending')
+    setTestEmailMessage('')
+    try {
+      const res = await apiRequest<{ success: boolean; message: string }>(
+        '/api/settings/test-email',
+        { method: 'POST' },
+      )
+      if (res.success) {
+        setTestEmailState('success')
+        setTestEmailMessage('Test email sent successfully.')
+      } else {
+        setTestEmailState('error')
+        setTestEmailMessage(res.message || 'Failed to send test email.')
+      }
+    } catch (err) {
+      setTestEmailState('error')
+      setTestEmailMessage(err instanceof Error ? err.message : 'Failed to send test email.')
+    }
+  }
+
   const onSubmit = form.handleSubmit(async (values) => {
     const smtp: Record<string, unknown> = {
       enabled: values.smtpEnabled,
+      provider: values.smtpProvider,
       host: values.smtpHost,
       port: values.smtpPort,
       user: values.smtpUser,
       fromAddress: values.smtpFrom,
+      fromName: values.smtpFromName,
       toAddress: values.smtpTo,
       useTls: values.useTls,
     }
@@ -152,7 +213,11 @@ export function SettingsPage() {
       },
     })
     form.setValue('smtpPassword', '')
+    setTestEmailState('idle')
+    setTestEmailMessage('')
   })
+
+  const currentProvider = form.watch('smtpProvider')
 
   return (
     <div className="np-page">
@@ -213,7 +278,9 @@ export function SettingsPage() {
               SMTP alerts
             </CardTitle>
             <CardDescription>
-              Email notifications for critical offline devices. Leave password blank to keep the current value.
+              Email notifications for critical offline devices. The recipient is independent of the
+              provider — any valid email address can receive alerts. Leave password blank to keep
+              the current value.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -224,6 +291,30 @@ export function SettingsPage() {
               />
               Enable email alerts for critical offline devices
             </label>
+
+            {/* Provider selector */}
+            <div className="space-y-2">
+              <Label>Email provider</Label>
+              <div className="flex flex-wrap gap-3">
+                {(Object.keys(PROVIDER_PRESETS) as Provider[]).map((p) => (
+                  <label key={p} className="flex items-center gap-2 text-sm cursor-pointer">
+                    <input
+                      type="radio"
+                      name="smtpProvider"
+                      value={p}
+                      checked={currentProvider === p}
+                      onChange={() => applyProviderPreset(p)}
+                      className="accent-primary"
+                    />
+                    {PROVIDER_PRESETS[p].label}
+                  </label>
+                ))}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Selecting a provider fills the SMTP host, port, and security settings automatically.
+                You can still override them below.
+              </p>
+            </div>
 
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
@@ -240,22 +331,32 @@ export function SettingsPage() {
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="smtpPassword">
-                  Password {settingsQuery.data?.smtp.passwordSet ? '(set — leave blank to keep)' : ''}
+                  Password {settingsQuery.data?.smtp.passwordSet ? '(configured — leave blank to keep)' : ''}
                 </Label>
                 <Input
                   id="smtpPassword"
                   type="password"
+                  autoComplete="new-password"
                   placeholder={settingsQuery.data?.smtp.passwordSet ? '••••••••' : ''}
                   {...form.register('smtpPassword')}
                 />
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="smtpFrom">From address</Label>
-                <Input id="smtpFrom" {...form.register('smtpFrom')} />
+                <Label htmlFor="smtpFrom">From address (sender)</Label>
+                <Input id="smtpFrom" type="email" {...form.register('smtpFrom')} />
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="smtpTo">Alert recipient</Label>
-                <Input id="smtpTo" {...form.register('smtpTo')} />
+                <Label htmlFor="smtpFromName">From name</Label>
+                <Input id="smtpFromName" placeholder="NetPulse" {...form.register('smtpFromName')} />
+              </div>
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label htmlFor="smtpTo">
+                  Alert recipient
+                  <span className="ml-1.5 text-xs text-muted-foreground font-normal">
+                    (any valid email — Gmail, Outlook, or other)
+                  </span>
+                </Label>
+                <Input id="smtpTo" type="email" {...form.register('smtpTo')} />
               </div>
             </div>
 
@@ -264,8 +365,34 @@ export function SettingsPage() {
                 checked={form.watch('useTls')}
                 onCheckedChange={(checked) => form.setValue('useTls', Boolean(checked))}
               />
-              Use TLS
+              Use STARTTLS
             </label>
+
+            {/* Test email */}
+            <div className="flex items-center gap-3 pt-1">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={testEmailState === 'sending'}
+                onClick={() => void handleTestEmail()}
+              >
+                <Send className="h-3.5 w-3.5" />
+                {testEmailState === 'sending' ? 'Sending…' : 'Send test email'}
+              </Button>
+              {testEmailState === 'success' && (
+                <span className="flex items-center gap-1.5 text-sm text-green-600">
+                  <CheckCircle2 className="h-4 w-4" />
+                  {testEmailMessage}
+                </span>
+              )}
+              {testEmailState === 'error' && (
+                <span className="flex items-center gap-1.5 text-sm text-destructive">
+                  <AlertCircle className="h-4 w-4" />
+                  {testEmailMessage}
+                </span>
+              )}
+            </div>
           </CardContent>
         </Card>
 

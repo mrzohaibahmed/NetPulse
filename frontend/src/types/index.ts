@@ -238,11 +238,13 @@ export interface AppSettings {
   pingRetries: number
   smtp: {
     enabled: boolean
+    provider: 'gmail' | 'outlook'
     host: string
     port: number
     user: string
     passwordSet: boolean
     fromAddress: string
+    fromName: string
     toAddress: string
     useTls: boolean
   }

@@ -8,6 +8,47 @@ from utils.secret_crypto import encrypt_secret
 
 SETTINGS_ID = "global"
 
+# ---------------------------------------------------------------------------
+# Provider resolution helpers
+# ---------------------------------------------------------------------------
+
+_PROVIDER_ALIASES: dict[str, str] = {
+    "gmail": "gmail",
+    "google": "gmail",
+    "outlook": "outlook",
+    "microsoft365": "outlook",
+    "microsoft 365": "outlook",
+    "office365": "outlook",
+    "hotmail": "outlook",
+}
+
+
+def normalize_provider(raw: str) -> str:
+    """Return canonical provider name ('gmail' or 'outlook').
+
+    Accepts common aliases.  Falls back to 'gmail' for unknown values to
+    preserve backward-compatibility with existing Gmail-only deployments.
+    """
+    key = str(raw or "").strip().lower().replace("-", "").replace("_", "").replace(" ", "")
+    return _PROVIDER_ALIASES.get(key, "gmail")
+
+
+def _resolve_default_provider() -> str:
+    """Infer provider from EMAIL_PROVIDER env var.
+
+    Backward compatibility: if EMAIL_PROVIDER is absent but SMTP_HOST already
+    points at smtp.office365.com the provider is inferred as 'outlook'.
+    Otherwise defaults to 'gmail'.
+    """
+    raw_provider = os.getenv("EMAIL_PROVIDER", "").strip()
+    if raw_provider:
+        return normalize_provider(raw_provider)
+    smtp_host = (os.getenv("SMTP_HOST") or "").strip().lower()
+    if "office365" in smtp_host or "outlook" in smtp_host:
+        return "outlook"
+    return "gmail"
+
+
 DEFAULT_SETTINGS: dict[str, Any] = {
     "_id": SETTINGS_ID,
     # Per-device monitoring cadence (seconds). Target: 60s for 500+ fleets.
@@ -24,6 +65,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "pingConcurrency": int(os.getenv("MONITOR_PING_CONCURRENCY", "40")),
     "smtp": {
         "enabled": os.getenv("ALERT_EMAIL_ENABLED", "true").lower() in ("1", "true", "yes"),
+        "provider": _resolve_default_provider(),
         "host": (os.getenv("SMTP_HOST") or "smtp.gmail.com").strip(),
         "port": int(os.getenv("SMTP_PORT", "587")),
         "user": (os.getenv("SMTP_USER") or "").strip(),
@@ -31,6 +73,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "fromAddress": (os.getenv("SMTP_FROM") or os.getenv("SMTP_USER") or "").strip(),
         "toAddress": (os.getenv("ALERT_EMAIL_TO") or "").strip(),
         "useTls": os.getenv("SMTP_USE_TLS", "true").lower() in ("1", "true", "yes"),
+        "fromName": (os.getenv("SMTP_FROM_NAME") or "NetPulse").strip(),
     },
     "mitigationMode": os.getenv("STORM_MITIGATION_MODE", "manual"),
     "autoRecovery": os.getenv("STORM_AUTO_RECOVERY", "true").lower() in ("1", "true", "yes"),
@@ -90,11 +133,13 @@ def get_public_settings():
         ),
         "smtp": {
             "enabled": smtp.get("enabled", True),
+            "provider": normalize_provider(smtp.get("provider", "gmail")),
             "host": smtp.get("host", ""),
             "port": smtp.get("port", 587),
             "user": smtp.get("user", ""),
             "passwordSet": bool(smtp.get("password")),
             "fromAddress": smtp.get("fromAddress", ""),
+            "fromName": smtp.get("fromName", "NetPulse"),
             "toAddress": smtp.get("toAddress", ""),
             "useTls": smtp.get("useTls", True),
         },
@@ -164,9 +209,11 @@ def update_settings(payload: dict):
     if "smtp" in payload and isinstance(payload["smtp"], dict):
         smtp = dict(current.get("smtp") or {})
         incoming = payload["smtp"]
-        for key in ("enabled", "host", "port", "user", "fromAddress", "toAddress", "useTls"):
+        for key in ("enabled", "host", "port", "user", "fromAddress", "fromName", "toAddress", "useTls"):
             if key in incoming:
                 smtp[key] = incoming[key]
+        if "provider" in incoming and incoming["provider"]:
+            smtp["provider"] = normalize_provider(str(incoming["provider"]))
         if "password" in incoming and incoming["password"]:
             smtp["password"] = encrypt_secret(str(incoming["password"]))
         if "port" in smtp:

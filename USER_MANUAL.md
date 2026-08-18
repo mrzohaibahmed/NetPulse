@@ -497,14 +497,16 @@ Examples use placeholders, not real secrets.
 | `SCHEDULER_LOCK_TTL_SECONDS` | No | Leader-election lease | `90` | `90` | Min 15 |
 | `MONITOR_CONNECTIVITY_PROBE_HOST` | No | Partition probe host | empty (disabled) | gateway IP | Failed probe suppresses mass offline writes |
 | `MONITOR_CONNECTIVITY_PROBE_TIMEOUT_MS` | No | Probe timeout | `800` | `800` | |
+| `EMAIL_PROVIDER` | Seed | SMTP provider (`gmail` or `outlook`) | `gmail` | `outlook` | Also accepts `microsoft365`, `office365` as aliases for `outlook` |
 | `ALERT_EMAIL_ENABLED` | Seed | SMTP enabled flag | `true` | `true` | |
-| `ALERT_EMAIL_TO` | Optional | Alert recipient | empty | `ops@example.com` | |
-| `SMTP_HOST` | Seed | SMTP host | `smtp.gmail.com` | `smtp.example.com` | |
+| `ALERT_EMAIL_TO` | Optional | Alert recipient (any valid email) | empty | `ops@example.com` | Independent of provider — Gmail/Outlook/other all work |
+| `SMTP_HOST` | Seed | SMTP host | `smtp.gmail.com` | `smtp.office365.com` | |
 | `SMTP_PORT` | Seed | SMTP port | `587` | `587` | |
 | `SMTP_USER` | Optional | SMTP username | empty | | |
 | `SMTP_PASSWORD` | Optional | SMTP password | empty | `<YOUR_SECRET>` | Encrypted at rest when stored |
 | `SMTP_FROM` | Optional | From address | `SMTP_USER` | | |
-| `SMTP_USE_TLS` | Seed | TLS | `true` | `true` | |
+| `SMTP_FROM_NAME` | Optional | Display name on outgoing mail | `NetPulse` | `NetPulse` | |
+| `SMTP_USE_TLS` | Seed | STARTTLS | `true` | `true` | |
 | `NMAP_SCAN_INTERVAL` | No | Scheduled Nmap period seconds | `3600` | `3600` | |
 | `NMAP_ARGUMENTS` | No | Deep Nmap flags | `-A -T4` | `-sV -T4` | Validated at startup |
 | `NMAP_QUICK_ARGUMENTS` | No | Quick profile | `-O -sV -T4 --top-ports 100` | | Validated at startup |
@@ -1647,7 +1649,7 @@ Sections:
 
 1. **ISP connectivity** (`IspSettingsSection`) — configure up to 3 slots
 2. **Ping monitoring** — Interval (seconds) min 5, Timeout (ms) min 100, Retry count min 1
-3. **SMTP alerts** — enable, host, port, username, password, from, alert recipient, Use TLS
+3. **SMTP alerts** — provider selector (Gmail / Outlook), host, port, username, password, from address, from name, alert recipient, STARTTLS, Send test email
 4. **Storm email notifications** — enable, shutdown/recovery/failure emails, recipient
 5. **Recovery protection** — cooldown, stabilization, max attempts, prepare/re-mitigation risk threshold, data retention, incident retention
 6. **Save settings**
@@ -1657,6 +1659,80 @@ Sections:
 `GET /api/settings` is allowed for any authenticated user; `PUT` is admin.
 
 > Screenshot: Settings — add current production screenshot here.
+
+---
+
+# Email Provider Configuration
+
+NetPulse supports **Gmail** and **Outlook / Microsoft 365** as SMTP email providers. The administrator selects the provider; the **recipient can be any valid email address** regardless of the sender's provider.
+
+All four sender/recipient combinations are supported:
+
+| Sender provider | Recipient | Works? |
+| --------------- | --------- | ------ |
+| Gmail | Gmail | Yes |
+| Gmail | Outlook (or any other) | Yes |
+| Outlook | Gmail (or any other) | Yes |
+| Outlook | Outlook | Yes |
+
+## Gmail setup
+
+1. In **Settings → SMTP alerts**, select **Gmail** as the provider (fills host/port/TLS automatically).
+2. Enter your Gmail address as **Username** and **From address**.
+3. Generate a Gmail **App Password** at <https://myaccount.google.com/apppasswords> (requires 2-Step Verification) and enter it as the SMTP password. **Do not use your normal Gmail account password.**
+4. Enter the alert recipient email address (any domain).
+5. Click **Save settings**, then **Send test email** to verify.
+
+Equivalent `.env` seed:
+
+```
+EMAIL_PROVIDER=gmail
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USE_TLS=true
+SMTP_USER=your-sender@gmail.com
+SMTP_PASSWORD=<gmail-app-password>
+SMTP_FROM=your-sender@gmail.com
+SMTP_FROM_NAME=NetPulse
+ALERT_EMAIL_TO=recipient@example.com
+ALERT_EMAIL_ENABLED=true
+```
+
+## Outlook / Microsoft 365 setup
+
+1. In **Settings → SMTP alerts**, select **Outlook / Microsoft 365** as the provider.
+2. Enter your Outlook/Microsoft 365 address as **Username** and **From address**.
+3. Enter your password or App Password.
+4. Enter the alert recipient email address (any domain).
+5. Click **Save settings**, then **Send test email** to verify.
+
+**Important — SMTP AUTH must be enabled:**
+
+- For personal `@outlook.com` / `@hotmail.com` accounts, SMTP AUTH is enabled by default.
+- For Microsoft 365 / Exchange Online tenants, a tenant administrator may need to enable **Authenticated SMTP** for the mailbox. This can be done via the Exchange Admin Center → Settings → Mail flow, or via PowerShell: `Set-CASMailbox -Identity user@domain.com -SmtpClientAuthenticationDisabled $false`.
+
+Equivalent `.env` seed:
+
+```
+EMAIL_PROVIDER=outlook
+SMTP_HOST=smtp.office365.com
+SMTP_PORT=587
+SMTP_USE_TLS=true
+SMTP_USER=your-sender@outlook.com
+SMTP_PASSWORD=<your-password-or-app-password>
+SMTP_FROM=your-sender@outlook.com
+SMTP_FROM_NAME=NetPulse
+ALERT_EMAIL_TO=recipient@example.com
+ALERT_EMAIL_ENABLED=true
+```
+
+## Sending a test email
+
+After saving SMTP settings, click the **Send test email** button on the Settings page. The backend sends a test message using the currently saved provider configuration. Success or failure (with a friendly error message) is displayed inline.
+
+## Backward compatibility
+
+Existing Gmail-only deployments that do not set `EMAIL_PROVIDER` continue to work. If the env var is absent, the provider is inferred as `gmail` (or `outlook` if `SMTP_HOST` already points at an Office 365 server).
 
 ---
 

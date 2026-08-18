@@ -60,7 +60,7 @@ export function LoginPage() {
           </div>
           <div>
             <p className="text-lg font-bold tracking-tight text-foreground">NetPulse</p>
-            <p className="text-xs text-muted-foreground">Network Monitor</p>
+            <p className="text-xs text-muted-foreground">Ping Monitoring & Storm Protection</p>
           </div>
         </motion.div>
 
@@ -82,12 +82,12 @@ export function LoginPage() {
             </span>
           </motion.h1>
           <motion.p variants={FADE_UP} transition={{ duration: 0.5 }} className="text-sm leading-relaxed text-muted-foreground">
-            Real-time monitoring, intelligent alerts, and deep visibility across your entire network infrastructure.
+            Ping monitoring for device reachability and storm protection for switch interfaces — with alerts, reporting, and topology visibility.
           </motion.p>
           <motion.div variants={FADE_UP} transition={{ duration: 0.5 }} className="flex flex-col gap-3 pt-2">
-            <FeatureRow icon={<Wifi className="h-3.5 w-3.5" />} text="Live device health & latency tracking" />
-            <FeatureRow icon={<Shield className="h-3.5 w-3.5" />} text="Nmap-powered port & service discovery" />
-            <FeatureRow icon={<Activity className="h-3.5 w-3.5" />} text="Automated alerts & uptime reporting" />
+            <FeatureRow icon={<Wifi className="h-3.5 w-3.5" />} text="Ping Monitoring — device health, latency, and uptime" />
+            <FeatureRow icon={<Shield className="h-3.5 w-3.5" />} text="Storm Protection — interface risk, mitigation, and recovery" />
+            <FeatureRow icon={<Activity className="h-3.5 w-3.5" />} text="Alerts, reports, and network topology" />
           </motion.div>
         </motion.div>
 
@@ -98,7 +98,7 @@ export function LoginPage() {
           transition={{ delay: 0.6, duration: 0.5 }}
           className="text-xs text-muted-foreground/60"
         >
-          &copy; {new Date().getFullYear()} NetPulse &middot; Enterprise Network Monitoring
+          &copy; {new Date().getFullYear()} NetPulse &middot; Ping Monitoring & Storm Protection
         </motion.p>
       </div>
 
@@ -118,7 +118,7 @@ export function LoginPage() {
             </div>
             <div>
               <p className="text-lg font-bold tracking-tight text-foreground">NetPulse</p>
-              <p className="text-xs text-muted-foreground">Network Monitor</p>
+              <p className="text-xs text-muted-foreground">Ping Monitoring & Storm Protection</p>
             </div>
           </div>
 
@@ -126,7 +126,7 @@ export function LoginPage() {
           <div className="mb-8">
             <h2 className="text-2xl font-bold tracking-tight text-foreground">Welcome back</h2>
             <p className="mt-1.5 text-sm text-muted-foreground">
-              Sign in to access the operations center
+              Sign in to access ping monitoring and storm protection
             </p>
           </div>
 

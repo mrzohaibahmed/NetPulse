@@ -2,23 +2,43 @@
 Email delivery for NetPulse alerts and storm protection notifications.
 
 Reuses a single SMTP path — do not add parallel SMTP clients elsewhere.
+Supports Gmail and Outlook / Microsoft 365 as configurable SMTP providers.
+The recipient address is always independent of the sender provider.
 """
 
 from __future__ import annotations
 
 import html
+import smtplib
+import socket
+import ssl
 from datetime import datetime, timezone
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import Any, Optional
 
-import smtplib
-
-from services.settings_service import get_settings
+from services.settings_service import get_settings, normalize_provider
 from utils.monitor_logger import get_monitor_logger
 from utils.secret_crypto import decrypt_secret
 
 logger = get_monitor_logger("email")
+
+# ---------------------------------------------------------------------------
+# Provider SMTP presets (administrator may override any field)
+# ---------------------------------------------------------------------------
+
+PROVIDER_PRESETS: dict[str, dict] = {
+    "gmail": {
+        "host": "smtp.gmail.com",
+        "port": 587,
+        "useTls": True,
+    },
+    "outlook": {
+        "host": "smtp.office365.com",
+        "port": 587,
+        "useTls": True,
+    },
+}
 
 # Subjects (exact product copy)
 SUBJECT_SHUTDOWN = "🚨 CRITICAL: Storm Detected - Port Automatically Shut Down"
@@ -41,6 +61,61 @@ def _smtp_ready(smtp: dict) -> bool:
     )
 
 
+def _classify_smtp_error(error: Exception, provider: str) -> str:
+    """Return a user-friendly, credential-safe error description."""
+    msg = str(error).lower()
+
+    if isinstance(error, smtplib.SMTPAuthenticationError):
+        if provider == "outlook":
+            return (
+                "Email authentication failed. For Outlook / Microsoft 365, verify that "
+                "SMTP AUTH is enabled for this account or tenant, and that the username "
+                "and password (or App Password) are correct."
+            )
+        return (
+            "Email authentication failed. Verify the SMTP username and password. "
+            "For Gmail, use an App Password — normal account passwords are not accepted."
+        )
+
+    if isinstance(error, smtplib.SMTPConnectError):
+        return "Unable to connect to the configured SMTP server. Check the host and port."
+
+    if isinstance(error, smtplib.SMTPRecipientsRefused):
+        return "The recipient email address was rejected by the SMTP server. Verify the address."
+
+    if isinstance(error, smtplib.SMTPSenderRefused):
+        return (
+            "The configured sender email address was rejected by the SMTP server. "
+            "Verify the From address matches the authenticated account."
+        )
+
+    if isinstance(error, ssl.SSLError):
+        return "TLS/SSL negotiation with the SMTP server failed. Check the port and security settings."
+
+    if isinstance(error, (socket.timeout, TimeoutError)):
+        return "Connection to the SMTP server timed out. Check the host and network connectivity."
+
+    if isinstance(error, socket.gaierror):
+        return "Unable to resolve the SMTP server hostname. Check the host setting."
+
+    if "smtp auth" in msg or "authentication" in msg or "535" in msg or "534" in msg:
+        if provider == "outlook":
+            return (
+                "Outlook / Microsoft 365 SMTP authentication is unavailable for this "
+                "account or tenant. Verify that SMTP AUTH is enabled or use the "
+                "supported authentication method."
+            )
+        return "Email authentication failed. Verify the SMTP username and password."
+
+    if "recipient" in msg or "550" in msg or "551" in msg or "553" in msg:
+        return "The recipient email address is invalid or rejected by the server."
+
+    if "sender" in msg or "501" in msg or "503" in msg:
+        return "The configured sender email address is invalid."
+
+    return "Failed to send email via the configured SMTP server."
+
+
 def send_email(
     subject: str,
     body_text: str,
@@ -51,8 +126,81 @@ def send_email(
     """
     Send an email using the global SMTP settings.
 
+    The provider (gmail / outlook) controls which SMTP server is used.
+    The recipient is always independent of the provider — any valid
+    email address may receive alerts regardless of provider choice.
+
     ``to_address`` optionally overrides ``smtp.toAddress`` (storm recipient).
     Never raises — returns False on skip/failure.
+    """
+    try:
+        settings = get_settings()
+        smtp = dict(settings.get("smtp") or {})
+        if smtp.get("password"):
+            smtp["password"] = decrypt_secret(smtp["password"])
+
+        recipient = (to_address or "").strip() or (smtp.get("toAddress") or "").strip()
+        if recipient:
+            smtp["toAddress"] = recipient
+
+        if not _smtp_ready(smtp):
+            logger.warning("Email skipped: SMTP settings are not configured")
+            return False
+
+        provider = normalize_provider(smtp.get("provider", "gmail"))
+        host = str(smtp["host"])
+        port = int(smtp.get("port", 587))
+        use_tls = bool(smtp.get("useTls", True))
+        user = str(smtp["user"])
+        password = str(smtp["password"])
+        from_address = str(smtp["fromAddress"])
+        from_name = str(smtp.get("fromName") or "NetPulse")
+        to = str(smtp["toAddress"])
+
+        formatted_from = f"{from_name} <{from_address}>" if from_name else from_address
+
+        message = MIMEMultipart("alternative")
+        message["Subject"] = subject
+        message["From"] = formatted_from
+        message["To"] = to
+        message.attach(MIMEText(body_text, "plain", "utf-8"))
+
+        if body_html:
+            message.attach(MIMEText(body_html, "html", "utf-8"))
+
+        with smtplib.SMTP(host, port, timeout=30) as server:
+            if use_tls:
+                server.starttls()
+            server.login(user, password)
+            server.sendmail(from_address, [to], message.as_string())
+
+        logger.info(
+            "Email sent | provider=%s to=%s subject=%s",
+            provider,
+            to,
+            subject,
+        )
+        return True
+
+    except Exception as error:  # noqa: BLE001
+        logger.error("Email send failed: %s", type(error).__name__)
+        logger.debug("Email error detail: %s", error)
+        return False
+
+
+def send_email_with_result(
+    subject: str,
+    body_text: str,
+    body_html: Optional[str] = None,
+    *,
+    to_address: Optional[str] = None,
+) -> tuple[bool, str]:
+    """
+    Like ``send_email`` but also returns a user-friendly error message.
+
+    Used by the test-email API endpoint so the frontend can display
+    a meaningful error without exposing credentials or stack traces.
+    Returns ``(True, "")`` on success or ``(False, "<friendly-message>")`` on failure.
     """
     settings = get_settings()
     smtp = dict(settings.get("smtp") or {})
@@ -63,39 +211,70 @@ def send_email(
     if recipient:
         smtp["toAddress"] = recipient
 
-    if not _smtp_ready(smtp):
-        logger.warning("Email skipped: SMTP settings are not configured")
-        return False
+    if not smtp.get("enabled"):
+        return False, "Email alerts are disabled. Enable them in settings first."
 
+    if not smtp.get("host"):
+        return False, "SMTP host is not configured."
+
+    if not smtp.get("user"):
+        return False, "SMTP username is not configured."
+
+    if not smtp.get("password"):
+        return False, "SMTP password is not configured."
+
+    if not smtp.get("fromAddress"):
+        return False, "Sender (From) email address is not configured."
+
+    if not smtp.get("toAddress"):
+        return False, "Recipient (To) email address is not configured."
+
+    provider = normalize_provider(smtp.get("provider", "gmail"))
     host = str(smtp["host"])
     port = int(smtp.get("port", 587))
+    use_tls = bool(smtp.get("useTls", True))
     user = str(smtp["user"])
     password = str(smtp["password"])
     from_address = str(smtp["fromAddress"])
+    from_name = str(smtp.get("fromName") or "NetPulse")
     to = str(smtp["toAddress"])
+
+    formatted_from = f"{from_name} <{from_address}>" if from_name else from_address
 
     message = MIMEMultipart("alternative")
     message["Subject"] = subject
-    message["From"] = from_address
+    message["From"] = formatted_from
     message["To"] = to
     message.attach(MIMEText(body_text, "plain", "utf-8"))
-
     if body_html:
         message.attach(MIMEText(body_html, "html", "utf-8"))
 
     try:
         with smtplib.SMTP(host, port, timeout=30) as server:
-            if smtp.get("useTls", True):
+            if use_tls:
                 server.starttls()
             server.login(user, password)
             server.sendmail(from_address, [to], message.as_string())
 
-        logger.info("Email sent to %s | subject=%s", to, subject)
-        return True
+        logger.info(
+            "Test email sent | provider=%s to=%s",
+            provider,
+            to,
+        )
+        return True, ""
 
     except Exception as error:  # noqa: BLE001
-        logger.exception("Failed to send email: %s", error)
-        return False
+        friendly = _classify_smtp_error(error, provider)
+        logger.error(
+            "Test email failed | provider=%s host=%s port=%d to=%s | %s",
+            provider,
+            host,
+            port,
+            to,
+            type(error).__name__,
+        )
+        logger.debug("SMTP error detail: %s", error)
+        return False, friendly
 
 
 def send_critical_offline_alert(device, scan_type="Automatic"):

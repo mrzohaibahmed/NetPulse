@@ -80,3 +80,58 @@ def update_settings_route():
         return jsonify({"success": False, "message": str(error)}), 400
     except Exception as error:
         return internal_error_response(error, message="Failed to update settings")
+
+
+@settings_bp.route("/settings/test-email", methods=["POST"])
+@require_auth(roles=["admin"])
+def test_email_route():
+    """Send a test email using the currently saved SMTP configuration.
+
+    Accepts an optional JSON body ``{"to": "override@example.com"}`` to
+    send to a specific recipient instead of the configured one.
+    Never returns SMTP credentials in the response.
+    """
+    try:
+        from services.email_service import send_email_with_result  # noqa: PLC0415
+
+        body = request.get_json(silent=True) or {}
+        override_to = str(body.get("to") or "").strip() or None
+
+        subject = "NetPulse — Test Email"
+        body_text = (
+            "This is a test email from NetPulse Network Monitor.\n\n"
+            "If you received this message, your SMTP configuration is working correctly."
+        )
+        body_html = """
+<html>
+<body style="font-family: Arial, sans-serif; color: #132033; padding: 24px;">
+  <h2 style="color: #0b4f9e;">NetPulse — Test Email</h2>
+  <p>This is a test email from <strong>NetPulse Network Monitor</strong>.</p>
+  <p>If you received this message, your SMTP configuration is working correctly.</p>
+  <hr style="border:none;border-top:1px solid #e5eaf0;margin:24px 0;" />
+  <p style="font-size:12px;color:#64748b;">
+    This message was sent automatically. Please do not reply.
+  </p>
+</body>
+</html>"""
+
+        delivered, error_message = send_email_with_result(
+            subject,
+            body_text,
+            body_html,
+            to_address=override_to,
+        )
+
+        if delivered:
+            log_audit(
+                action="test_email_sent",
+                entity_type="settings",
+                entity_id="global",
+                details={"overrideTo": bool(override_to)},
+            )
+            return jsonify({"success": True, "message": "Test email sent successfully."}), 200
+
+        return jsonify({"success": False, "message": error_message or "Failed to send test email."}), 400
+
+    except Exception as error:
+        return internal_error_response(error, message="Failed to send test email")

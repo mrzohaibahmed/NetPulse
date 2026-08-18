@@ -155,6 +155,11 @@ export function AccountPage() {
                 <UserIcon className="h-4 w-4" />
                 Role: <span className="capitalize text-foreground">{user?.role}</span>
               </p>
+              <p className="text-muted-foreground">
+                {isAdmin
+                  ? 'Admins have full access to all NetPulse features and settings.'
+                  : 'Users can view operations data and run day-to-day monitoring actions.'}
+              </p>
             </div>
           </CardContent>
         </Card>
@@ -240,10 +245,15 @@ export function AccountPage() {
               Manage users
             </CardTitle>
             <CardDescription>
-              Admins can reset usernames, passwords, and roles.
+              Admin is the highest role. You can update existing accounts and assign only `user`
+              or `admin`.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
+            <div className="rounded-lg border border-border/60 bg-secondary/20 px-3 py-2 text-sm text-muted-foreground">
+              NetPulse does not provide account creation from this page. New accounts are only
+              seeded during first-time bootstrap on an empty users collection.
+            </div>
             {adminError ? (
               <div className="rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
                 {adminError}
