@@ -32,7 +32,7 @@ def serialize_user(user):
     return {
         "_id": str(user["_id"]),
         "username": user.get("username"),
-        "role": user.get("role", "viewer"),
+        "role": normalize_role(user.get("role", "user")),
         "mustChangePassword": bool(user.get("mustChangePassword")),
         "createdAt": format_datetime(user.get("createdAt")),
         "updatedAt": format_datetime(user.get("updatedAt")),
@@ -102,7 +102,7 @@ def login():
         token = create_access_token(
             user_id=str(user["_id"]),
             username=user["username"],
-            role=user.get("role", "viewer"),
+            role=normalize_role(user.get("role", "user")),
             must_change_password=bool(user.get("mustChangePassword")),
         )
 
@@ -226,7 +226,7 @@ def update_own_account():
         token = create_access_token(
             user_id=str(updated["_id"]),
             username=updated["username"],
-            role=updated.get("role", "viewer"),
+            role=normalize_role(updated.get("role", "user")),
             must_change_password=bool(updated.get("mustChangePassword")),
         )
 
@@ -271,7 +271,7 @@ def list_users():
 @auth_bp.route("/users/<user_id>", methods=["PUT"])
 @require_auth(roles=["admin"])
 def update_user(user_id):
-    """Admin/super-admin can change another user's username, password, and/or role."""
+    """Admin can change another user's username, password, and/or role."""
     try:
         if not ObjectId.is_valid(user_id):
             return jsonify({"success": False, "message": "Invalid user ID"}), 400
@@ -292,7 +292,6 @@ def update_user(user_id):
                 "message": "Provide a username, password, and/or role to update",
             }), 400
 
-        actor_role = normalize_role(g.user.get("role"))
         target_role = normalize_role(target.get("role"))
 
         if new_role is not None:
@@ -301,30 +300,6 @@ def update_user(user_id):
                     "success": False,
                     "message": f"Invalid role. Allowed: {', '.join(VALID_ROLES)}",
                 }), 400
-
-            # Only super-admin may assign or modify super-admin accounts.
-            if new_role == "super-admin" and actor_role != "super-admin":
-                return jsonify({
-                    "success": False,
-                    "message": "Only a super-admin can assign the super-admin role",
-                }), 403
-            if target_role == "super-admin" and actor_role != "super-admin":
-                return jsonify({
-                    "success": False,
-                    "message": "Only a super-admin can modify a super-admin account",
-                }), 403
-
-            # Prevent demoting the last remaining super-admin.
-            if target_role == "super-admin" and new_role != "super-admin":
-                remaining = db.users.count_documents({
-                    "role": "super-admin",
-                    "_id": {"$ne": target["_id"]},
-                })
-                if remaining < 1:
-                    return jsonify({
-                        "success": False,
-                        "message": "Cannot demote the last super-admin account",
-                    }), 409
 
         update: dict[str, Any] = {}
         update["updatedAt"] = datetime.now(timezone.utc)

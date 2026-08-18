@@ -53,7 +53,7 @@ interface DeviceDrawerProps {
 type TabId = 'overview' | 'network'
 
 export function DeviceDrawer({ deviceId, open, onOpenChange }: DeviceDrawerProps) {
-  const { isOperator } = useAuth()
+  const { isUser } = useAuth()
   const [activeTab, setActiveTab] = useState<TabId>('overview')
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
@@ -140,7 +140,7 @@ export function DeviceDrawer({ deviceId, open, onOpenChange }: DeviceDrawerProps
                         )}
                         Ping now
                       </Button>
-                      {isOperator ? (
+                      {isUser ? (
                         <Button
                           type="button"
                           size="sm"

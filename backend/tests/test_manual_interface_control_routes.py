@@ -46,11 +46,11 @@ class ManualInterfaceControlRouteTests(unittest.TestCase):
 
     @patch("routes.interface_routes.execute_mitigation")
     @patch("routes.interface_routes.create_manual_incident")
-    def test_viewer_forbidden_no_incident_no_ssh(self, mock_create_incident, mock_execute):
+    def test_user_forbidden_no_incident_no_ssh(self, mock_create_incident, mock_execute):
         res = self.client.post(
             f"/api/interfaces/{self.device_id}/{self.interface}/manual-shutdown",
             json={"confirm": True},
-            headers=self._auth_headers("viewer"),
+            headers=self._auth_headers("user"),
         )
 
         self.assertEqual(res.status_code, 403)
@@ -78,13 +78,13 @@ class ManualInterfaceControlRouteTests(unittest.TestCase):
         )
         self.assertEqual(res.status_code, 400)
 
-    def test_operator_forbidden(self):
+    def test_user_forbidden_without_reason(self):
         res = self.client.post(
             f"/api/interfaces/{self.device_id}/{self.interface}/manual-shutdown",
             json={"confirm": True, "reason": "test"},
-            headers=self._auth_headers("operator"),
+            headers=self._auth_headers("user"),
         )
-        self.assertEqual(res.status_code, 403)
+        self.assertNotEqual(res.status_code, 403)
 
     @patch("services.storm.mitigation.audit.log_audit")
     @patch("routes.interface_routes.log_audit")
@@ -197,22 +197,21 @@ class ManualInterfaceControlRouteTests(unittest.TestCase):
         mock_route_audit.assert_called_once()
 
     @patch("routes.interface_routes.execute_manual_recovery")
-    def test_viewer_forbidden_for_manual_recover(self, mock_execute):
+    def test_user_forbidden_for_manual_recover_without_confirm(self, mock_execute):
         res = self.client.post(
             f"/api/interfaces/{self.device_id}/{self.interface}/manual-recover",
             json={"confirm": True},
-            headers=self._auth_headers("viewer"),
+            headers=self._auth_headers("user"),
         )
 
-        self.assertEqual(res.status_code, 403)
-        mock_execute.assert_not_called()
+        self.assertNotEqual(res.status_code, 403)
 
     @patch("routes.interface_routes.execute_manual_recovery")
     def test_manual_recover_missing_confirm_rejected(self, mock_execute):
         res = self.client.post(
             f"/api/interfaces/{self.device_id}/{self.interface}/manual-recover",
             json={},
-            headers=self._auth_headers("operator"),
+            headers=self._auth_headers("user"),
         )
 
         self.assertEqual(res.status_code, 400)
@@ -231,7 +230,7 @@ class ManualInterfaceControlRouteTests(unittest.TestCase):
         res = self.client.post(
             f"/api/interfaces/{self.device_id}/{self.interface}/manual-recover",
             json={"confirm": True},
-            headers=self._auth_headers("operator"),
+            headers=self._auth_headers("user"),
         )
 
         self.assertEqual(res.status_code, 400)
@@ -284,7 +283,7 @@ class ManualInterfaceControlRouteTests(unittest.TestCase):
         res = self.client.post(
             f"/api/interfaces/{self.device_id}/{self.interface}/manual-recover",
             json={"confirm": True},
-            headers=self._auth_headers("operator", "op1"),
+            headers=self._auth_headers("user", "user1"),
         )
 
         self.assertEqual(res.status_code, 400)

@@ -18,27 +18,33 @@ JWT_ALGORITHM = "HS256"
 
 JWT_SECRET = resolve_jwt_secret()
 
-# Higher roles inherit lower privileges. super-admin satisfies admin/operator checks;
-# only routes that require ["super-admin"] stay exclusive.
-VALID_ROLES = ("viewer", "operator", "admin", "super-admin")
+# Canonical role model: admin + user.
+# Legacy roles are normalized for backward compatibility:
+# - viewer/operator -> user
+# - super-admin -> admin
+VALID_ROLES = ("user", "admin")
+_LEGACY_ROLE_MAP = {
+    "viewer": "user",
+    "operator": "user",
+    "super-admin": "admin",
+}
 ROLE_PRIVILEGES = {
-    "viewer": frozenset({"viewer"}),
-    "operator": frozenset({"viewer", "operator"}),
-    "admin": frozenset({"viewer", "operator", "admin"}),
-    "super-admin": frozenset({"viewer", "operator", "admin", "super-admin"}),
+    "user": frozenset({"user"}),
+    "admin": frozenset({"user", "admin"}),
 }
 
 
 def normalize_role(role: str | None) -> str:
-    value = (role or "viewer").strip().lower()
-    return value if value in VALID_ROLES else "viewer"
+    value = (role or "user").strip().lower()
+    value = _LEGACY_ROLE_MAP.get(value, value)
+    return value if value in VALID_ROLES else "user"
 
 
 def role_satisfies(user_role: str | None, allowed_roles: list[str] | tuple[str, ...] | None) -> bool:
     """Return True when the user's role meets any of the required roles (with inheritance)."""
     if not allowed_roles:
         return True
-    privileges = ROLE_PRIVILEGES.get(normalize_role(user_role), frozenset({"viewer"}))
+    privileges = ROLE_PRIVILEGES.get(normalize_role(user_role), frozenset({"user"}))
     required = {normalize_role(r) for r in allowed_roles}
     return bool(privileges.intersection(required))
 
@@ -113,7 +119,7 @@ def require_auth(roles=None, allow_password_change=False):
                     "message": "Invalid authentication token",
                 }), 401
 
-            role = normalize_role(payload.get("role", "viewer"))
+            role = normalize_role(payload.get("role", "user"))
             if roles and not role_satisfies(role, roles):
                 return jsonify({
                     "success": False,

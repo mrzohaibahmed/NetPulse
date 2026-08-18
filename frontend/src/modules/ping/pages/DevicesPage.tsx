@@ -81,7 +81,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 const DEFAULT_LIMIT = 25
 
 export function DevicesPage() {
-  const { isAdmin, isOperator } = useAuth()
+  const { isAdmin, isUser } = useAuth()
   const navigate = useNavigate()
   const { deviceId: routeDeviceId } = useParams()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -384,7 +384,7 @@ export function DevicesPage() {
         description="Enterprise inventory of monitored hosts — reachability, latency, and critical flags at a glance."
         actions={
           <>
-            {isOperator ? (
+            {isUser ? (
               <>
                 <Button
                   type="button"

@@ -6,7 +6,7 @@ export type DeviceStatus =
   | 'Unknown'
 
 export type ScanType = 'Manual' | 'Automatic'
-export type UserRole = 'admin' | 'viewer' | 'operator' | 'super-admin'
+export type UserRole = 'admin' | 'user'
 
 export interface User {
   _id: string

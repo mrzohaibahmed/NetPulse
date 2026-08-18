@@ -9,14 +9,10 @@ import { Label } from '@/shared/ui/label'
 
 const FADE_UP = { hidden: { opacity: 0, y: 12 }, show: { opacity: 1, y: 0 } }
 
-/** Demo credential fill buttons — Vite DEV or explicit VITE_DEMO_MODE=true only. */
-const SHOW_DEMO_CREDENTIALS =
-  import.meta.env.DEV || import.meta.env.VITE_DEMO_MODE === 'true'
-
 export function LoginPage() {
   const { user, loading, login } = useAuth()
 
-  const [username, setUsername] = useState(SHOW_DEMO_CREDENTIALS ? 'admin' : '')
+  const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -197,54 +193,6 @@ export function LoginPage() {
               </Button>
             </form>
           </div>
-
-          {/* Demo credential fills — excluded from production builds unless VITE_DEMO_MODE=true */}
-          {SHOW_DEMO_CREDENTIALS ? (
-          <div className="mt-5 rounded-lg border border-border/60 bg-secondary/30 px-4 py-3">
-            <p className="mb-2 text-xs font-medium text-muted-foreground">Demo credentials</p>
-            <div className="flex flex-col gap-2 sm:flex-row sm:gap-4">
-              <button
-                type="button"
-                className="group flex flex-1 items-center gap-2 rounded-md bg-secondary/50 px-3 py-2 text-left transition-colors hover:bg-secondary"
-                onClick={() => { setUsername('superadmin'); setPassword('superadmin123') }}
-              >
-                <div className="flex h-7 w-7 items-center justify-center rounded-md bg-danger/15 text-danger">
-                  <Shield className="h-3.5 w-3.5" />
-                </div>
-                <div>
-                  <p className="text-xs font-semibold text-foreground">Super Admin</p>
-                  <p className="text-[10px] text-muted-foreground">Highest privilege</p>
-                </div>
-              </button>
-              <button
-                type="button"
-                className="group flex flex-1 items-center gap-2 rounded-md bg-secondary/50 px-3 py-2 text-left transition-colors hover:bg-secondary"
-                onClick={() => { setUsername('admin'); setPassword('admin123') }}
-              >
-                <div className="flex h-7 w-7 items-center justify-center rounded-md bg-primary/15 text-primary">
-                  <Shield className="h-3.5 w-3.5" />
-                </div>
-                <div>
-                  <p className="text-xs font-semibold text-foreground">Admin</p>
-                  <p className="text-[10px] text-muted-foreground">Full access</p>
-                </div>
-              </button>
-              <button
-                type="button"
-                className="group flex flex-1 items-center gap-2 rounded-md bg-secondary/50 px-3 py-2 text-left transition-colors hover:bg-secondary"
-                onClick={() => { setUsername('viewer'); setPassword('viewer123') }}
-              >
-                <div className="flex h-7 w-7 items-center justify-center rounded-md bg-success/15 text-success">
-                  <Eye className="h-3.5 w-3.5" />
-                </div>
-                <div>
-                  <p className="text-xs font-semibold text-foreground">Viewer</p>
-                  <p className="text-[10px] text-muted-foreground">Read only</p>
-                </div>
-              </button>
-            </div>
-          </div>
-          ) : null}
         </motion.div>
       </div>
     </div>

@@ -68,24 +68,25 @@ class BootstrapPasswordTests(unittest.TestCase):
     def test_strong_password_allowed(self):
         self.assertFalse(is_forbidden_bootstrap_password("CorrectHorseBattery9!"))
 
-    def test_production_refuses_weak_superadmin_create(self):
+    def test_production_refuses_weak_bootstrap_passwords(self):
         from services import user_service
 
         fake_db = MagicMock()
-        fake_db.users.find_one.side_effect = [None, None]  # no super-admin, no user
-        fake_db.users.count_documents.return_value = 1
+        fake_db.users.count_documents.return_value = 0
 
         with patch.object(user_service, "db", fake_db), patch.dict(
             os.environ,
             {
                 "FLASK_DEBUG": "false",
                 "NETPULSE_ENV": "production",
-                "DEFAULT_SUPER_ADMIN_PASSWORD": "superadmin123",
+                "DEFAULT_ADMIN_PASSWORD": "admin123",
+                "DEFAULT_USER_PASSWORD": "user123",
             },
             clear=False,
         ):
-            user_service.ensure_super_admin()
-        fake_db.users.insert_one.assert_not_called()
+            with self.assertRaises(RuntimeError):
+                user_service.ensure_default_admin()
+        fake_db.users.insert_many.assert_not_called()
 
 
 class MongoRegexEscapeTests(unittest.TestCase):
@@ -310,12 +311,12 @@ class ApiErrorTests(unittest.TestCase):
 
 
 class ViewerAuthDecoratorTests(unittest.TestCase):
-    def test_scan_routes_require_operator(self):
+    def test_scan_routes_require_user(self):
         import inspect
 
         from routes import isp_routes, scan_routes
 
-        # ensure require_auth(roles=["operator"]) is applied (closure stores roles)
+        # ensure require_auth(roles=["user"]) is applied (closure stores roles)
         for fn in (scan_routes.scan_device, isp_routes.manual_scan_isp):
             self.assertTrue(callable(fn))
             # Walk wrappers until we find the require_auth wrapper cell with roles
@@ -328,13 +329,13 @@ class ViewerAuthDecoratorTests(unittest.TestCase):
                         val = cell.cell_contents
                     except ValueError:
                         continue
-                    if val == ["operator"]:
+                    if val == ["user"]:
                         found_roles = val
                 current = getattr(current, "__wrapped__", None)
             self.assertEqual(
                 found_roles,
-                ["operator"],
-                msg=f"{fn.__name__} must require operator role",
+                ["user"],
+                msg=f"{fn.__name__} must require user role",
             )
 
 

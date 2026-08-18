@@ -2,6 +2,7 @@ import os
 from datetime import datetime, timezone
 
 from config.database import db
+from utils.auth import normalize_role
 from utils.auth import hash_password
 from utils.monitor_logger import get_monitor_logger
 
@@ -13,12 +14,13 @@ _FORBIDDEN_BOOTSTRAP_PASSWORDS = frozenset(
         "admin123",
         "viewer123",
         "superadmin123",
+        "user123",
         "password",
         "password123",
         "changeme",
         "change-me",
         "admin",
-        "viewer",
+        "user",
         "superadmin",
         "netpulse",
         "123456",
@@ -74,30 +76,29 @@ def _require_secure_password(env_name: str, password: str, *, role: str) -> str:
     if not value:
         if role == "admin":
             value = "admin123"
-        elif role == "viewer":
-            value = "viewer123"
-        elif role == "super-admin":
-            value = "superadmin123"
+        elif role == "user":
+            value = "user123"
     return value
 
 
 def ensure_default_admin():
     """Create initial users only when the users collection is empty.
 
-    Production requires strong DEFAULT_ADMIN_PASSWORD / DEFAULT_VIEWER_PASSWORD.
+    Production requires strong DEFAULT_ADMIN_PASSWORD / DEFAULT_USER_PASSWORD.
     Never logs password values. Does not modify existing users.
     """
     if db.users.count_documents({}) == 0:
         username = (os.getenv("DEFAULT_ADMIN_USER") or "admin").strip() or "admin"
+        user_username = (os.getenv("DEFAULT_USER_NAME") or "user").strip() or "user"
         password = _require_secure_password(
             "DEFAULT_ADMIN_PASSWORD",
             os.getenv("DEFAULT_ADMIN_PASSWORD") or "",
             role="admin",
         )
-        viewer_password = _require_secure_password(
-            "DEFAULT_VIEWER_PASSWORD",
-            os.getenv("DEFAULT_VIEWER_PASSWORD") or "",
-            role="viewer",
+        user_password = _require_secure_password(
+            "DEFAULT_USER_PASSWORD",
+            (os.getenv("DEFAULT_USER_PASSWORD") or os.getenv("DEFAULT_VIEWER_PASSWORD") or ""),
+            role="user",
         )
         now = datetime.now(timezone.utc)
 
@@ -111,89 +112,36 @@ def ensure_default_admin():
                 "updatedAt": now,
             },
             {
-                "username": "viewer",
-                "passwordHash": hash_password(viewer_password),
-                "role": "viewer",
+                "username": user_username,
+                "passwordHash": hash_password(user_password),
+                "role": "user",
                 "mustChangePassword": True,
                 "createdAt": now,
                 "updatedAt": now,
             },
         ])
         logger.info(
-            "Default users created | admin=%s | viewer=viewer | "
+            "Default users created | admin=%s | user=%s | "
             "mustChangePassword=true",
             username,
+            user_username,
         )
 
-    ensure_super_admin()
+    migrate_legacy_roles()
 
 
-def ensure_super_admin():
-    """
-    Ensure at least one super-admin exists.
-
-    When a super-admin already exists, this is a no-op (never resets passwords).
-
-    When none exists:
-    - Prefer promoting an existing username (DEFAULT_SUPER_ADMIN_USER) without
-      changing their password.
-    - Creating a *new* super-admin requires a strong DEFAULT_SUPER_ADMIN_PASSWORD
-      in production and never falls back to well-known defaults.
-    """
-    if db.users.find_one({"role": "super-admin"}):
-        return
-
-    username = (os.getenv("DEFAULT_SUPER_ADMIN_USER") or "superadmin").strip() or "superadmin"
+def migrate_legacy_roles():
+    """Normalize any legacy stored role names to the canonical admin/user model."""
     now = datetime.now(timezone.utc)
-
-    existing = db.users.find_one({"username": username})
-    if existing:
-        db.users.update_one(
-            {"_id": existing["_id"]},
-            {"$set": {"role": "super-admin", "updatedAt": now}},
-        )
-        logger.info(
-            "Promoted existing user to super-admin | username=%s | password unchanged",
-            username,
-        )
-        return
-
-    # No matching user — create only with an explicitly strong password.
-    raw_password = os.getenv("DEFAULT_SUPER_ADMIN_PASSWORD") or ""
-    if _is_production_like() and (
-        not raw_password.strip() or is_forbidden_bootstrap_password(raw_password)
-    ):
-        logger.error(
-            "No super-admin exists and DEFAULT_SUPER_ADMIN_PASSWORD is missing "
-            "or weak. Not creating a privileged account with a known password. "
-            "Promote an existing admin via the users API or set a strong "
-            "DEFAULT_SUPER_ADMIN_PASSWORD and restart."
-        )
-        return
-
-    if not raw_password.strip():
-        # Debug / empty DB edge: still refuse silent known defaults.
-        logger.error(
-            "No super-admin exists and DEFAULT_SUPER_ADMIN_PASSWORD is unset. "
-            "Skipping auto-create."
-        )
-        return
-
-    password = _require_secure_password(
-        "DEFAULT_SUPER_ADMIN_PASSWORD",
-        raw_password,
-        role="super-admin",
-    )
-
-    db.users.insert_one({
-        "username": username,
-        "passwordHash": hash_password(password),
-        "role": "super-admin",
-        "mustChangePassword": True,
-        "createdAt": now,
-        "updatedAt": now,
-    })
-    logger.info(
-        "Super-admin created | username=%s | mustChangePassword=true",
-        username,
-    )
+    changed = 0
+    for user in db.users.find({}, {"_id": 1, "role": 1}):
+        current = user.get("role")
+        normalized = normalize_role(current)
+        if current != normalized:
+            db.users.update_one(
+                {"_id": user["_id"]},
+                {"$set": {"role": normalized, "updatedAt": now}},
+            )
+            changed += 1
+    if changed:
+        logger.info("Migrated legacy user roles | changed=%s", changed)

@@ -168,7 +168,7 @@ const QUICK_FILTERS: Array<{ id: QuickFilter; label: string }> = [
 ]
 
 export function AlertsPage() {
-  const { isOperator } = useAuth()
+  const { isUser } = useAuth()
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const initialFilter = searchParams.get('filter')
@@ -497,7 +497,7 @@ export function AlertsPage() {
                       alert={alert}
                       index={index}
                       selected={selectedId === alert._id}
-                      canAct={isOperator}
+                      canAct={isUser}
                       busy={acknowledge.isPending || dismiss.isPending}
                       onSelect={() => setSelectedId(alert._id)}
                       onAck={() => acknowledge.mutate(alert._id)}
@@ -594,7 +594,7 @@ export function AlertsPage() {
                 >
                   <AlertDetailPanel
                     alert={selected}
-                    canAct={isOperator}
+                    canAct={isUser}
                     busy={acknowledge.isPending || dismiss.isPending}
                     onAck={() => acknowledge.mutate(selected._id)}
                     onDismiss={() => dismiss.mutate(selected._id)}

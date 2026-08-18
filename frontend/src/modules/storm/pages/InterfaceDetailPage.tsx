@@ -218,7 +218,7 @@ export function InterfaceDetailPage() {
   const navigate = useNavigate()
   const { deviceId = '', interfaceName: rawName = '' } = useParams()
   const interfaceName = decodeURIComponent(rawName)
-  const { isAdmin, isOperator } = useAuth()
+  const { isAdmin, isUser } = useAuth()
   const mutations = useInterfaceMutations()
   const [historyLimit, setHistoryLimit] = useState('100')
   const [confirmAction, setConfirmAction] = useState<'shutdown' | 'recover' | null>(null)
@@ -390,7 +390,7 @@ export function InterfaceDetailPage() {
                   {mutations.collectDevice.isPending ? 'Collecting…' : 'Collect stats'}
                 </Button>
               ) : null}
-              {isOperator ? (
+              {isUser ? (
                 <Button
                   type="button"
                   variant="destructive"
@@ -400,7 +400,7 @@ export function InterfaceDetailPage() {
                   {mutations.manualShutdown.isPending ? 'Shutting down…' : 'Manual shutdown'}
                 </Button>
               ) : null}
-              {isOperator && canManualRecover ? (
+              {isUser && canManualRecover ? (
                 <Button
                   type="button"
                   variant="secondary"
@@ -422,7 +422,7 @@ export function InterfaceDetailPage() {
                 Refresh
               </Button>
             </div>
-            {isOperator ? (
+            {isUser ? (
               <div className="text-right text-xs text-muted-foreground">
                 {latestIncident ? (
                   <>
@@ -618,7 +618,7 @@ export function InterfaceDetailPage() {
               label="Monitoring"
               value={monitoringDetailValue(iface)}
             />
-            {(isAdmin || isOperator) && iface ? (
+            {(isAdmin || isUser) && iface ? (
               <div className="flex items-center justify-between gap-2 pt-1">
                 <span className="text-muted-foreground">Admin preference</span>
                 <Button
@@ -1168,7 +1168,7 @@ export function InterfaceDetailPage() {
               id="manual-shutdown-reason"
               value={shutdownReason}
               onChange={(event) => setShutdownReason(event.target.value)}
-              placeholder="e.g. Port flooding lab traffic — operator shutdown"
+              placeholder="e.g. Port flooding lab traffic — manual shutdown"
               autoFocus
             />
           </div>
@@ -1203,7 +1203,7 @@ export function InterfaceDetailPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Recover interface {interfaceName}?</AlertDialogTitle>
             <AlertDialogDescription>
-              This is an operator override. Recovery Safety rules (R1–R8) are
+              This is a manual override. Recovery Safety rules (R1–R8) are
               bypassed and a live &quot;no shutdown&quot; is sent immediately to restore
               the port, reusing the current mitigated incident.
             </AlertDialogDescription>

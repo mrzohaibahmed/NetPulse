@@ -166,7 +166,7 @@ def delete_isp(isp_id):
 
 
 @isp_bp.route("/isps/<isp_id>/scan", methods=["POST"])
-@require_auth(roles=["operator"])
+@require_auth(roles=["user"])
 def manual_scan_isp(isp_id):
     try:
         isp = get_isp_connection(isp_id)

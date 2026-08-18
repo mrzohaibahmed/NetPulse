@@ -344,7 +344,7 @@ def collect_device_stats(device_id: str):
     "/interfaces/<device_id>/<path:interface_name>/monitoring",
     methods=["POST"],
 )
-@require_auth(roles=["operator"])
+@require_auth(roles=["user"])
 def set_interface_monitoring(device_id: str, interface_name: str):
     """
     Set administrator monitoring intent for one interface.
@@ -467,7 +467,7 @@ def manual_shutdown_interface(device_id: str, interface_name: str):
             }), 400
 
         username = (getattr(g, "user", {}) or {}).get("username") or "SYSTEM"
-        role = (getattr(g, "user", {}) or {}).get("role") or "viewer"
+        role = (getattr(g, "user", {}) or {}).get("role") or "user"
 
         incident = create_manual_incident(
             device_id=oid,
@@ -529,7 +529,7 @@ def manual_shutdown_interface(device_id: str, interface_name: str):
     "/interfaces/<device_id>/<path:interface_name>/manual-recover",
     methods=["POST"],
 )
-@require_auth(roles=["operator"])
+@require_auth(roles=["user"])
 def manual_recover_interface(device_id: str, interface_name: str):
     """Execute recovery for a currently mitigated incident on one interface."""
     try:
@@ -600,7 +600,7 @@ def manual_recover_interface(device_id: str, interface_name: str):
             )), 400
 
         username = (getattr(g, "user", {}) or {}).get("username") or "SYSTEM"
-        role = (getattr(g, "user", {}) or {}).get("role") or "viewer"
+        role = (getattr(g, "user", {}) or {}).get("role") or "user"
 
         # Operator override: bypass Recovery Safety (R1–R8); execution checks only.
         res = execute_manual_recovery(

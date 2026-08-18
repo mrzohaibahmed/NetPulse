@@ -20,10 +20,10 @@ import {
 } from '@/shared/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table'
 
-const ASSIGNABLE_ROLES: UserRole[] = ['viewer', 'operator', 'admin', 'super-admin']
+const ASSIGNABLE_ROLES: UserRole[] = ['user', 'admin']
 
 export function AccountPage() {
-  const { user, isAdmin, isSuperAdmin, applySession } = useAuth()
+  const { user, isAdmin, applySession } = useAuth()
   const accountMutation = useAccountMutation()
   const userMutation = useUserMutation()
   const usersQuery = useUsersQuery(isAdmin)
@@ -37,7 +37,7 @@ export function AccountPage() {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editUsername, setEditUsername] = useState('')
   const [editPassword, setEditPassword] = useState('')
-  const [editRole, setEditRole] = useState<UserRole>('viewer')
+  const [editRole, setEditRole] = useState<UserRole>('user')
   const [adminError, setAdminError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -240,7 +240,7 @@ export function AccountPage() {
               Manage users
             </CardTitle>
             <CardDescription>
-              Admins can reset usernames and passwords. Super-admins can also assign roles.
+              Admins can reset usernames, passwords, and roles.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -304,26 +304,18 @@ export function AccountPage() {
                     <Select
                       value={editRole}
                       onValueChange={(value) => setEditRole(value as UserRole)}
-                      disabled={!isSuperAdmin && editRole === 'super-admin'}
                     >
                       <SelectTrigger>
                         <SelectValue placeholder="Select role" />
                       </SelectTrigger>
                       <SelectContent>
-                        {ASSIGNABLE_ROLES.filter(
-                          (role) => isSuperAdmin || role !== 'super-admin',
-                        ).map((role) => (
+                        {ASSIGNABLE_ROLES.map((role) => (
                           <SelectItem key={role} value={role}>
                             {role}
                           </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
-                    {!isSuperAdmin ? (
-                      <p className="text-xs text-muted-foreground">
-                        Only a super-admin can assign or edit the super-admin role.
-                      </p>
-                    ) : null}
                   </div>
                 </div>
                 <div className="flex justify-end gap-2">

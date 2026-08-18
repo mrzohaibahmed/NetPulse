@@ -4,7 +4,7 @@ Flask REST API for LAN monitoring, switch interface collection, and storm protec
 
 ## Features
 
-- **Authentication** — JWT login, roles (`super-admin` / `admin` / `operator` / `viewer`), account management
+- **Authentication** — JWT login, roles (`admin` / `user`), account management
 - **Device CRUD** — create, list, update, delete, CSV import, cascade delete
 - **ICMP monitoring** — scheduled + manual ping (per-device and bulk ping-all) with per-device overrides
 - **Nmap profiling** — scheduled + on-demand deep scans for Online devices (incl. scan-all)
@@ -14,7 +14,7 @@ Flask REST API for LAN monitoring, switch interface collection, and storm protec
 - **ISP monitoring** — up to three upstream ping targets on dashboard
 - **Interface stats** — SNMP preferred, SSH fallback; feeds the storm pipeline
 - **Storm protection** — eligibility → risk → confirmation → safety → prepare → mitigation → recovery
-- **Manual shutdown / recover** — operator actions on individual interfaces
+- **Manual shutdown / recover** — user/admin actions on individual interfaces
 - **Alerts + email** — critical offline transitions (hysteresis + alert threshold)
 - **Settings** — ping, SMTP, mitigation mode, auto-recovery, retention
 - **Audit logging** — administrative and storm execution trail
@@ -81,7 +81,7 @@ All `/api/*` routes except login require a Bearer token.
 POST /api/auth/login
 Content-Type: application/json
 
-{ "username": "admin", "password": "admin123" }
+{ "username": "<YOUR_USERNAME>", "password": "<YOUR_PASSWORD>" }
 ```
 
 ```http
@@ -90,12 +90,10 @@ Authorization: Bearer <token>
 
 | Role | Access |
 |------|--------|
-| `super-admin` | Full access + manage other super-admins |
-| `admin` | Full write (devices, discovery, settings, storm mitigation/recovery) |
-| `operator` | Read + Nmap, alert ack/dismiss, selected storm actions |
-| `viewer` | Read-only |
+| `admin` | Full write (devices, discovery, settings, storm mitigation/recovery, user management) |
+| `user` | Read dashboards/devices/interfaces + on-demand ping/Nmap, alert ack/dismiss, selected storm actions |
 
-Default users are created on first run if `users` is empty.
+Default users are created on first run if `users` is empty. Production requires strong `DEFAULT_ADMIN_PASSWORD` / `DEFAULT_USER_PASSWORD`. The login UI never displays credentials. See the root README **First-time accounts** section.
 
 ## Scheduler jobs
 

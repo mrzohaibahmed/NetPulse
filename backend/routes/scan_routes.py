@@ -13,7 +13,7 @@ scan_bp = Blueprint("scan", __name__)
 
 
 @scan_bp.route("/devices/ping-all", methods=["POST"])
-@require_auth(roles=["operator"])
+@require_auth(roles=["user"])
 def ping_all_devices():
     """
     Manually ping every device in inventory (bounded concurrency).
@@ -41,7 +41,7 @@ def ping_all_devices():
 
 
 @scan_bp.route("/devices/<device_id>/scan", methods=["POST"])
-@require_auth(roles=["operator"])
+@require_auth(roles=["user"])
 def scan_device(device_id):
     """
     Manual ping — shares apply_ping_result with the scheduler (Phase 13).

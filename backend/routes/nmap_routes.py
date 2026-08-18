@@ -38,7 +38,7 @@ nmap_bp = Blueprint("nmap", __name__)
 
 
 @nmap_bp.route("/devices/<device_id>/scan-details", methods=["POST"])
-@require_auth(roles=["operator"])
+@require_auth(roles=["user"])
 def scan_device_details(device_id: str):
     """
     Trigger an Nmap detail scan for a single device.
@@ -105,7 +105,7 @@ def scan_device_details(device_id: str):
 
 
 @nmap_bp.route("/devices/scan-all-details", methods=["POST"])
-@require_auth(roles=["operator"])
+@require_auth(roles=["user"])
 def scan_all_device_details():
     """
     Trigger Nmap detail scans for all currently-online devices.

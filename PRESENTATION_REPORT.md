@@ -47,12 +47,10 @@ Full-stack network monitoring and broadcast-storm protection for enterprise LANs
 
 | Role | What they can do |
 |------|------------------|
-| **Super-admin** | Full control + manage other super-admins |
 | **Admin** | Devices, discovery, settings, users, storm mitigate/recover |
-| **Operator** | View + on-demand Nmap, alert ack, selected storm actions |
-| **Viewer** | Read-only dashboards, devices, interfaces, history, reports |
+| **User** | Dashboards, devices, interfaces, history, reports, plus on-demand ping/Nmap, alert ack/dismiss, and selected storm actions |
 
-Default seeded accounts (empty DB): `admin` / `admin123`, `viewer` / `viewer123`.
+First accounts are seeded by the backend when `users` is empty. Production requires strong `DEFAULT_*_PASSWORD` env values. The login UI does not display credentials.
 
 ---
 

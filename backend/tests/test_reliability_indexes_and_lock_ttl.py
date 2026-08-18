@@ -78,7 +78,7 @@ class ReliabilityIndexesAndLockTtlTests(unittest.TestCase):
             {
                 "username": self.username,
                 "passwordHash": "x",
-                "role": "viewer",
+                "role": "user",
                 "createdAt": self.now,
                 "updatedAt": self.now,
             }
@@ -88,7 +88,7 @@ class ReliabilityIndexesAndLockTtlTests(unittest.TestCase):
                 {
                     "username": self.username,
                     "passwordHash": "y",
-                    "role": "viewer",
+                    "role": "user",
                     "createdAt": self.now,
                     "updatedAt": self.now,
                 }

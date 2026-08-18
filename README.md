@@ -53,10 +53,8 @@ Roles:
 
 | Role | Access |
 |------|--------|
-| **super-admin** | Full admin rights plus exclusive management of other super-admins |
 | **admin** | Full write access (devices, discovery, settings, users, storm mitigation/recovery) |
-| **operator** | Viewer access plus on-demand ping/Nmap (incl. bulk), alert ack/dismiss, selected storm actions |
-| **viewer** | Read-only dashboard, devices, interfaces, history, reports, alerts, topology |
+| **user** | Dashboard, devices, interfaces, history, reports, alerts, topology, plus on-demand ping/Nmap (incl. bulk), alert ack/dismiss, and selected storm actions |
 
 ---
 
@@ -98,7 +96,7 @@ Roles:
    - **Failure + critical** → after `pingFailureConfirmationScans` (default **2**) failed scans → `Offline (Critical)`
    - **Failure + non-critical** → after the same threshold → `Not Reachable`
 4. Every check is stored in `pingHistory` with `scanType` of `Automatic` or `Manual`.
-5. **Manual ping:** per-device `POST /api/devices/<id>/scan` or bulk `POST /api/devices/ping-all` (operator+) from the Devices page — same `apply_ping_result` path as the scheduler, without partition suppression.
+5. **Manual ping:** per-device `POST /api/devices/<id>/scan` or bulk `POST /api/devices/ping-all` (`user` or `admin`) from the Devices page — same `apply_ping_result` path as the scheduler, without partition suppression.
 6. Changing `pingInterval` in Settings updates the per-device cadence (legacy mode also retargets the APScheduler period; dispatch mode keeps the fast dispatcher tick).
 
 ### 2. Nmap deep scanning
@@ -109,7 +107,7 @@ Roles:
 2. Only **Online** devices are scanned.
 3. A thread pool (`MAX_SCAN_THREADS`) runs Nmap with `NMAP_ARGUMENTS` (default `-A -T4`).
 4. Results land on the device’s `networkInfo` and appear in the device drawer.
-5. Operator+ roles can trigger single-device or “scan all online” Nmap from the UI/API.
+5. `user` and `admin` roles can trigger single-device or “scan all online” Nmap from the UI/API.
 
 Requires the **Nmap binary** on `PATH` (or `NMAP_PATH`). Aggressive flags often need Administrator privileges on Windows.
 
@@ -145,7 +143,7 @@ Applies only to devices with **`critical: true`**. Non-critical failures become 
 3. If SMTP is enabled and fully configured (host, user, password, from, to), email is sent in the same step; the alert stores `emailSent: true/false`.
 4. At most **one active** critical-offline alert per device (unique index + idempotent insert).
 5. When the device returns **Online**, active alerts are auto-resolved (no recovery email).
-6. Operators (and admins) acknowledge or dismiss alerts; viewers can view only.
+6. `user` and `admin` roles acknowledge or dismiss alerts.
 
 Configure SMTP under **Settings → SMTP alerts** or via `.env` (`ALERT_EMAIL_*`, `SMTP_*`).
 
@@ -165,8 +163,9 @@ Configure SMTP under **Settings → SMTP alerts** or via `.env` (`ALERT_EMAIL_*`
 - Login returns a JWT (`JWT_SECRET`, `JWT_EXPIRE_HOURS`).
 - Passwords are stored with bcrypt.
 - SSH / SMTP secrets at rest are encrypted with Fernet (`SECRETS_ENCRYPTION_KEY`).
-- Roles inherit privileges: `super-admin` ⊃ `admin` ⊃ `operator` ⊃ `viewer`.
-- First boot with an empty `users` collection seeds default admin and viewer accounts.
+- Roles inherit privileges: `admin` ⊃ `user`.
+- First boot with an empty `users` collection seeds default admin and user accounts.
+- Legacy stored roles (`viewer`, `operator`, `super-admin`) are normalized to `user` or `admin` on startup.
 
 ### 8. Frontend data loading
 
@@ -422,7 +421,7 @@ JWT_SECRET=change-me-in-production
 JWT_EXPIRE_HOURS=8
 SECRETS_ENCRYPTION_KEY=replace-with-fernet-generate-key-output
 DEFAULT_ADMIN_USER=admin
-DEFAULT_ADMIN_PASSWORD=admin123
+DEFAULT_ADMIN_PASSWORD=
 
 # Ping defaults (also adjustable in Settings UI; runtime SoT is Mongo `settings`)
 SCAN_INTERVAL=60
@@ -503,10 +502,10 @@ All JSON APIs are under `/api` except `/health`. Most routes require `Authorizat
 | PUT | `/api/auth/account` | Update own account |
 | GET/PUT | `/api/users` … | User management (admin+) |
 | CRUD | `/api/devices` … | Device inventory + CSV import |
-| POST | `/api/devices/<id>/scan` | Manual ICMP ping (any authenticated role) |
-| POST | `/api/devices/ping-all` | Bulk manual ping — all inventory devices (operator+) |
-| POST | `/api/devices/<id>/scan-details` | Manual Nmap scan (operator+) |
-| POST | `/api/devices/scan-all-details` | Bulk Nmap on all Online devices (operator+) |
+| POST | `/api/devices/<id>/scan` | Manual ICMP ping (`user` or `admin`) |
+| POST | `/api/devices/ping-all` | Bulk manual ping — all inventory devices (`user` or `admin`) |
+| POST | `/api/devices/<id>/scan-details` | Manual Nmap scan (`user` or `admin`) |
+| POST | `/api/devices/scan-all-details` | Bulk Nmap on all Online devices (`user` or `admin`) |
 | GET | `/api/history` | Ping history |
 | GET/PUT | `/api/isps` … | ISP upstream targets (admin configure; all roles read) |
 | POST | `/api/isps/<id>/scan` | Manual ISP ping |
@@ -616,16 +615,18 @@ Coverage includes confirmation, safety, diagnostics/orchestrator, recovery engin
 
 ---
 
-## Default login credentials
+## First-time accounts
 
-Created on first run when the `users` collection is empty:
+The login page does **not** display, auto-fill, or hint any passwords.
 
-| Username | Password | Role |
-|----------|----------|------|
-| `admin` (or `DEFAULT_ADMIN_USER`) | `admin123` (or `DEFAULT_ADMIN_PASSWORD`) | admin |
-| `viewer` | `viewer123` | viewer |
+When the `users` collection is empty, the **backend** seeds accounts at startup (`ensure_default_admin`). Seeded users have `mustChangePassword=true` and must change their password before using the rest of the app. There is no `POST /api/users` create-user API.
 
-Change these immediately for any shared or production environment. Generate strong `JWT_SECRET` and `SECRETS_ENCRYPTION_KEY` before production use (see `.env.example`).
+| Environment | How the first accounts are created |
+|-------------|-------------------------------------|
+| **Production** (`FLASK_DEBUG` off) | Set `DEFAULT_ADMIN_PASSWORD` and `DEFAULT_USER_PASSWORD` in `backend/.env` to strong unique values (min 12 characters). Well-known lab passwords are refused. |
+| **Local debug only** (`FLASK_DEBUG=true`) | If those env passwords are unset, the backend may seed lab accounts for an empty database. Those values live in backend bootstrap code only and must never be used on a shared or production host. |
+
+Change bootstrap passwords immediately. Generate strong `JWT_SECRET` and `SECRETS_ENCRYPTION_KEY` before production use (see `.env.example`).
 
 ---
 
