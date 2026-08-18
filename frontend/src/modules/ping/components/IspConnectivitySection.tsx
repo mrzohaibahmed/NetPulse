@@ -81,67 +81,51 @@ function IspStatusCard({ isp, isLoading }: { isp: IspConnection; isLoading?: boo
           !online && !offline && 'bg-muted-foreground/30',
         )}
       />
-      <CardContent className="flex flex-col gap-2 p-2.5">
-        <div className="flex items-start justify-between gap-1.5">
-          <div className="min-w-0">
-            <p className="truncate text-xs font-semibold tracking-tight leading-none mb-0.5">{isp.name}</p>
-            {isp.target ? (
-              <p className="truncate text-[10px] text-muted-foreground leading-none">{isp.target}</p>
-            ) : (
-              <p className="text-[10px] text-muted-foreground leading-none">No target configured</p>
-            )}
-          </div>
+      <CardContent className="flex items-center justify-between gap-3 p-3.5">
+        {/* Left Column: Icon + ISP Name & IP address */}
+        <div className="flex items-center gap-3 min-w-0">
           <div
             className={cn(
-              'flex h-6 w-6 shrink-0 items-center justify-center rounded-md',
+              'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
               online && 'bg-success/15 text-success',
               offline && 'bg-danger/15 text-danger',
               !online && !offline && 'bg-secondary text-muted-foreground',
             )}
           >
-            {online ? <Wifi className="h-3 w-3" /> : offline ? <WifiOff className="h-3 w-3" /> : <Globe className="h-3 w-3" />}
+            {online ? <Wifi className="h-4 w-4" /> : offline ? <WifiOff className="h-4 w-4" /> : <Globe className="h-4 w-4" />}
+          </div>
+          <div className="min-w-0">
+            <p className="truncate text-base font-bold tracking-tight text-foreground">
+              {isp.name}
+            </p>
+            {isp.target ? (
+              <p className="truncate text-xs font-mono text-muted-foreground">
+                {isp.target}
+              </p>
+            ) : (
+              <p className="text-xs text-muted-foreground">No target configured</p>
+            )}
           </div>
         </div>
 
-        <div>
-          <div className="flex items-center gap-1.5 mb-1">
-            <span
-              className={cn(
-                'h-1.5 w-1.5 rounded-full',
-                online && 'bg-success shadow-[0_0_6px_rgba(34,197,94,0.65)]',
-                offline && 'bg-danger shadow-[0_0_6px_rgba(239,68,68,0.55)]',
-                !online && !offline && 'bg-muted-foreground/50',
-              )}
-              aria-hidden="true"
-            />
-            <span
-              className={cn(
-                'text-[9px] font-bold uppercase tracking-wider leading-none',
-                online && 'text-success',
-                offline && 'text-danger',
-                !online && !offline && 'text-muted-foreground',
-              )}
-            >
-              {isLoading && !isp.lastCheckedAt ? 'Checking…' : isp.status}
-            </span>
-          </div>
+        {/* Right Column: Latency & Last seen text (Right-aligned) */}
+        <div className="flex flex-col items-end justify-center text-right shrink-0">
           <p
             className={cn(
-              'text-base font-bold tracking-tight leading-none',
+              'text-lg font-bold tracking-tight leading-tight',
               online && 'text-foreground',
               offline && 'text-muted-foreground',
             )}
           >
-            {ispLatencyLabel(isp)}
+            {isLoading && !isp.lastCheckedAt ? 'Checking…' : ispLatencyLabel(isp)}
+          </p>
+          <p className="text-[10px] text-muted-foreground mt-0.5">
+            Last seen:{' '}
+            <span className="font-medium text-foreground">
+              {isp.lastSeen ? formatRelative(isp.lastSeen) : '—'}
+            </span>
           </p>
         </div>
-
-        <p className="text-[9px] text-muted-foreground mt-0.5 leading-none">
-          Last seen:{' '}
-          <span className="font-medium text-foreground">
-            {isp.lastSeen ? formatRelative(isp.lastSeen) : '—'}
-          </span>
-        </p>
       </CardContent>
     </Card>
   )
