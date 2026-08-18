@@ -40,5 +40,12 @@ export const queryKeys = {
   users: ['users'] as const,
   networkHint: ['network-hint'] as const,
   uptimeReport: (params: object) => ['uptime-report', params] as const,
+  reportFilters: (deviceId?: string) => ['report-filters', deviceId ?? 'all'] as const,
+  executiveReport: (params: object) => ['reports', 'executive', params] as const,
+  availabilityReport: (params: object) => ['reports', 'availability', params] as const,
+  performanceReport: (params: object) => ['reports', 'performance', params] as const,
+  alertsIncidentsReport: (params: object) => ['reports', 'alerts-incidents', params] as const,
+  stormManagementReport: (params: object) => ['reports', 'storm', params] as const,
+  stormIncidentReportDetail: (id: string) => ['reports', 'storm-incident', id] as const,
   isps: ['isps'] as const,
 }
