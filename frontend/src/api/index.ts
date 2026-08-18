@@ -31,6 +31,13 @@ import type {
   MitigationLog,
   RecoveryLog,
   UptimeRow,
+  AlertsIncidentsReport,
+  AvailabilityReport,
+  ExecutiveReport,
+  PerformanceReport,
+  ReportFilterOptions,
+  StormIncidentDetail,
+  StormManagementReport,
   User,
   UserRole,
 } from '../types'
@@ -47,6 +54,16 @@ function toQuery(params: PaginationParams = {}): string {
   if (params.deviceId) search.set('deviceId', params.deviceId)
   if (params.startDate) search.set('startDate', params.startDate)
   if (params.endDate) search.set('endDate', params.endDate)
+  if (params.period) search.set('period', params.period)
+  if (params.interface && params.interface !== 'all') search.set('interface', params.interface)
+  if (params.alertType && params.alertType !== 'all') search.set('alertType', params.alertType)
+  if (params.alertStatus && params.alertStatus !== 'all') {
+    search.set('alertStatus', params.alertStatus)
+  }
+  if (params.incidentStatus && params.incidentStatus !== 'all') {
+    search.set('incidentStatus', params.incidentStatus)
+  }
+  if (params.format) search.set('format', params.format)
   if (params.adminStatus && params.adminStatus !== 'all') {
     search.set('adminStatus', params.adminStatus)
   }
@@ -277,6 +294,54 @@ export const getUptimeReport = (params: PaginationParams = {}) =>
   apiRequest<{ success: boolean; count: number; data: UptimeRow[] }>(
     `/api/reports/uptime${toQuery(params)}`,
   )
+
+const REPORT_TIMEOUT_MS = 60_000
+
+export const getReportFilters = (deviceId?: string) =>
+  apiRequest<ReportFilterOptions>(
+    `/api/reports/filters${deviceId ? `?deviceId=${encodeURIComponent(deviceId)}` : ''}`,
+  )
+
+export const getExecutiveReport = (params: PaginationParams = {}) =>
+  apiRequest<ExecutiveReport>(`/api/reports/executive${toQuery(params)}`, {
+    timeoutMs: REPORT_TIMEOUT_MS,
+  })
+
+export const getAvailabilityReport = (params: PaginationParams = {}) =>
+  apiRequest<AvailabilityReport>(`/api/reports/availability${toQuery(params)}`, {
+    timeoutMs: REPORT_TIMEOUT_MS,
+  })
+
+export const getPerformanceReport = (params: PaginationParams = {}) =>
+  apiRequest<PerformanceReport>(`/api/reports/performance${toQuery(params)}`, {
+    timeoutMs: REPORT_TIMEOUT_MS,
+  })
+
+export const getAlertsIncidentsReport = (params: PaginationParams = {}) =>
+  apiRequest<AlertsIncidentsReport>(`/api/reports/alerts-incidents${toQuery(params)}`, {
+    timeoutMs: REPORT_TIMEOUT_MS,
+  })
+
+export const getStormManagementReport = (params: PaginationParams = {}) =>
+  apiRequest<StormManagementReport>(`/api/reports/storm${toQuery(params)}`, {
+    timeoutMs: REPORT_TIMEOUT_MS,
+  })
+
+export const getStormIncidentReportDetail = (incidentId: string) =>
+  apiRequest<StormIncidentDetail>(
+    `/api/reports/storm/incidents/${encodeURIComponent(incidentId)}`,
+  )
+
+export const exportManagementReport = (
+  reportType: string,
+  params: PaginationParams & { format?: string } = {},
+) => {
+  const kind = reportType === 'alerts' ? 'alerts' : reportType
+  return downloadFile(
+    `/api/reports/export/${kind}${toQuery(params)}`,
+    `report_${kind}.csv`,
+  )
+}
 
 export const exportDevicesReport = (params: PaginationParams & { format?: string } = {}) => {
   const search = new URLSearchParams()

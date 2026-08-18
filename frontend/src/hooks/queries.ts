@@ -49,6 +49,14 @@ import {
   executeStormRecovery,
   retryStormRecovery,
   getUptimeReport,
+  getReportFilters,
+  getExecutiveReport,
+  getAvailabilityReport,
+  getPerformanceReport,
+  getAlertsIncidentsReport,
+  getStormManagementReport,
+  getStormIncidentReportDetail,
+  exportManagementReport,
   getUsers,
   importDevicesCsv,
   manualRecoverInterface,
@@ -811,6 +819,62 @@ export function useUptimeReportQuery(params: PaginationParams, enabled = false) 
   })
 }
 
+export function useReportFiltersQuery(deviceId?: string) {
+  return useQuery({
+    queryKey: queryKeys.reportFilters(deviceId),
+    queryFn: () => getReportFilters(deviceId),
+    staleTime: 30_000,
+  })
+}
+
+export function useExecutiveReportQuery(params: PaginationParams, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.executiveReport(params),
+    queryFn: () => getExecutiveReport(params),
+    enabled,
+  })
+}
+
+export function useAvailabilityReportQuery(params: PaginationParams, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.availabilityReport(params),
+    queryFn: () => getAvailabilityReport(params),
+    enabled,
+  })
+}
+
+export function usePerformanceReportQuery(params: PaginationParams, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.performanceReport(params),
+    queryFn: () => getPerformanceReport(params),
+    enabled,
+  })
+}
+
+export function useAlertsIncidentsReportQuery(params: PaginationParams, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.alertsIncidentsReport(params),
+    queryFn: () => getAlertsIncidentsReport(params),
+    enabled,
+  })
+}
+
+export function useStormManagementReportQuery(params: PaginationParams, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.stormManagementReport(params),
+    queryFn: () => getStormManagementReport(params),
+    enabled,
+  })
+}
+
+export function useStormIncidentReportDetailQuery(incidentId: string | null) {
+  return useQuery({
+    queryKey: queryKeys.stormIncidentReportDetail(incidentId ?? ''),
+    queryFn: () => getStormIncidentReportDetail(incidentId as string),
+    enabled: Boolean(incidentId),
+  })
+}
+
 export function useAlertMutations() {
   const qc = useQueryClient()
   const invalidate = () =>
@@ -1066,6 +1130,17 @@ export function useExportReports() {
       try {
         await exportStormRecoveriesReport(params)
         toast.success('Storm recoveries export started')
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Export failed')
+      }
+    },
+    exportManagement: async (
+      reportType: string,
+      params: PaginationParams & { format?: string },
+    ) => {
+      try {
+        await exportManagementReport(reportType, params)
+        toast.success('Report export started')
       } catch (err) {
         toast.error(err instanceof Error ? err.message : 'Export failed')
       }

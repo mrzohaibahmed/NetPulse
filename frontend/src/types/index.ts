@@ -277,6 +277,257 @@ export interface UptimeRow {
   downtimePercentage: number | null
 }
 
+export type ReportType = 'executive' | 'availability' | 'performance' | 'alerts' | 'storm'
+
+export interface ReportPeriod {
+  period: string
+  label: string
+  start: string
+  end: string
+}
+
+export interface ReportPagination {
+  page: number
+  limit: number
+  total: number
+  totalPages: number
+}
+
+export interface ExecutiveReport {
+  success: boolean
+  report: string
+  period: ReportPeriod
+  snapshot: {
+    totalDevices: number
+    monitoredDevices: number
+    onlineDevices: number
+    unreachableDevices: number
+    unknownDevices: number
+    monitoringCoveragePercent: number | null
+    openCriticalAlerts: number
+    openStormIncidents: number
+    highCriticalRiskInterfaces: number
+  }
+  periodMetrics: {
+    criticalAlertsCreated: number
+    stormIncidentsCreated: number
+    probeSuccessRatio: number | null
+    totalChecks: number
+    onlineChecks: number
+    failedChecks: number
+    successfulIcmpScanRtt: {
+      averageRttMs: number | null
+      p50RttMs: number | null
+      p95RttMs: number | null
+      p99RttMs: number | null
+      successfulScans: number
+      failedScans: number
+    }
+  }
+  dataQuality: {
+    monitoredDevices: number
+    totalDevices: number
+    staleMonitoringDevices: number
+    staleThresholdSeconds: number
+    missingHostnameDevices: number
+    interfacesMissingSpeed: number
+    totalInterfaces: number
+  }
+  highRisk: Array<{
+    deviceId: string | null
+    hostname: string
+    interface: string | null
+    riskScore: number | null
+    severity: string
+  }>
+  definitions: Record<string, string>
+  limitations: string[]
+}
+
+export interface AvailabilityDeviceRow {
+  deviceId: string
+  hostname: string
+  ipAddress: string
+  deviceType: string
+  status: DeviceStatus
+  monitor: boolean
+  firstFailedProbeAt: string | null
+  lastCheckInPeriod: string | null
+  probeSuccessRatio: number | null
+  totalChecks: number
+  onlineChecks: number
+  failedChecks: number
+  confirmedOutageEvents: number
+  currentlyUnreachable: boolean
+  timeSinceLastSuccessfulPingSeconds: number | null
+  timeSinceLastSuccessfulPingLabel: string | null
+}
+
+export interface AvailabilityReport {
+  success: boolean
+  period: ReportPeriod
+  currentStatus: {
+    totalDevices: number
+    onlineDevices: number
+    unreachableDevices: number
+    unknownDevices: number
+  }
+  probeSuccess: {
+    totalChecks: number
+    onlineChecks: number
+    failedChecks: number
+    probeSuccessRatio: number | null
+  }
+  confirmedOutageEventCount: number
+  devices: AvailabilityDeviceRow[]
+  pagination: ReportPagination
+  limitations: string[]
+}
+
+export interface PerformanceReport {
+  success: boolean
+  period: ReportPeriod
+  ping: {
+    successfulScans: number
+    failedScans: number
+    averageRttMs: number | null
+    minRttMs: number | null
+    maxRttMs: number | null
+    p50RttMs: number | null
+    p95RttMs: number | null
+    p99RttMs: number | null
+    trend: Array<{
+      bucket: string
+      successfulScans: number
+      failedScans: number
+      averageRttMs: number | null
+    }>
+    topDevices: Array<{
+      deviceId: string | null
+      hostname: string
+      ipAddress: string | null
+      averageRttMs: number | null
+      maxRttMs: number | null
+      successfulScans: number
+    }>
+  }
+  interfaces: {
+    validSamples: number
+    topUtilization: Array<{
+      deviceId: string | null
+      hostname: string
+      interface: string | null
+      averageUtilizationPercent: number | null
+      peakUtilizationPercent: number | null
+      validSamples: number
+      speedBps: number | null
+    }>
+  }
+  limitations: string[]
+  unavailable: Record<string, string>
+}
+
+export interface AlertsIncidentsReport {
+  success: boolean
+  period: ReportPeriod
+  alerts: {
+    total: number
+    critical: number
+    warning: number
+    info: number
+    open: number
+    resolved: number
+    acknowledged: number
+    bySeverity: Array<{ severity: string; count: number }>
+    byType: Array<{ alertType: string; count: number }>
+    trend: Array<{ bucket: string; count: number; critical: number }>
+    topDevices: Array<{
+      deviceId: string | null
+      hostname: string
+      ipAddress: string | null
+      count: number
+    }>
+    rows: Array<{
+      id: string
+      createdAt: string | null
+      resolvedAt: string | null
+      hostname: string
+      ipAddress: string | null
+      alertType: string
+      severity: string
+      status: string
+      family: 'device' | 'storm' | string
+      title?: string | null
+    }>
+    pagination: ReportPagination
+  }
+  stormIncidents: {
+    total: number
+    open: number
+    resolved: number
+  }
+  limitations: string[]
+  unavailable: Record<string, string>
+}
+
+export interface StormManagementReport {
+  success: boolean
+  period: ReportPeriod
+  summary: {
+    totalIncidents: number
+    openIncidents: number
+    resolvedIncidents: number
+    escalatedIncidents: number
+    criticalIncidents: number
+    averageRiskScore: number | null
+    maximumRiskScore: number | null
+    riskSamples: number
+  }
+  trend: Array<{ bucket: string; count: number; critical: number }>
+  incidents: Array<{
+    incidentId: string
+    hostname: string
+    interface: string | null
+    riskScore: number | null
+    severity: string
+    startTime: string | null
+    endTime: string | null
+    status: string | null
+    mitigationStatus: string | null
+    recoveryStatus: string | null
+  }>
+  pagination: ReportPagination
+  limitations: string[]
+}
+
+export interface ReportFilterOptions {
+  success: boolean
+  devices: Array<{
+    deviceId: string
+    hostname: string
+    ipAddress: string | null
+    deviceType: string | null
+    status: string
+  }>
+  interfaces: string[]
+}
+
+export interface StormIncidentDetail {
+  success: boolean
+  incident: StormIncident
+  timeline: StormIncidentTimelineEvent[]
+  riskEvidence: Record<string, unknown> | null
+  contributors: unknown
+  rawMetrics: Record<string, unknown> | null
+  confirmation: Record<string, unknown> | null
+  safety: Record<string, unknown> | null
+  mitigations: MitigationLog[]
+  recoveries: RecoveryLog[]
+  relatedRiskHistory: Array<Record<string, unknown>>
+  relatedConfirmation: Array<Record<string, unknown>>
+  relatedSafety: Array<Record<string, unknown>>
+}
+
 export interface DeviceHistoryResponse {
   success: boolean
   device: Device
@@ -349,6 +600,12 @@ export interface PaginationParams {
   deviceId?: string
   startDate?: string
   endDate?: string
+  period?: string
+  interface?: string
+  alertType?: string
+  alertStatus?: string
+  incidentStatus?: string
+  format?: string
   adminStatus?: string
   operStatus?: string
   mode?: string

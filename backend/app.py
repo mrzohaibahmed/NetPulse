@@ -209,6 +209,12 @@ def bootstrap():
     ensure_mitigation_indexes()
     ensure_recovery_indexes()
     ensure_retention_ttl_indexes()
+    try:
+        from services.report_indexes import ensure_report_indexes  # noqa: PLC0415
+
+        ensure_report_indexes()
+    except Exception as exc:  # noqa: BLE001
+        _bootstrap_logger.warning("[REPORTS] index ensure failed (non-fatal): %s", exc)
     # Repair sticky monitoringEnabled=false latch (idempotent).
     migrate_interface_monitoring_state(apply=True)
     # Remove retired pipelineGeneration field + indexes (idempotent).
