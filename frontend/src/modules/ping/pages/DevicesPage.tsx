@@ -34,7 +34,7 @@ import {
   usePingAllDevicesMutation,
 } from '@/hooks/queries'
 import { deviceTypeIcon } from '@/lib/device-icons'
-import { displayDeviceType } from '@/modules/ping/constants/devices'
+import { displayDeviceType, DEVICE_TYPES } from '@/modules/ping/constants/devices'
 import { formatMs, formatRelative } from '@/utils/format'
 import type { Device } from '@/types'
 import { DeviceDrawer } from '@/modules/ping/components/DeviceDrawer'
@@ -93,6 +93,10 @@ export function DevicesPage() {
     const status = searchParams.get('status')
     return status && status.trim() ? status : 'all'
   })
+  const [typeFilter, setTypeFilter] = useState(() => {
+    const type = searchParams.get('type')
+    return type && type.trim() ? type : 'all'
+  })
   const [page, setPage] = useState(1)
   const [limit, setLimit] = useState(DEFAULT_LIMIT)
   const [sorting, setSorting] = useState<SortingState>([])
@@ -119,13 +123,15 @@ export function DevicesPage() {
 
   useEffect(() => {
     setPage(1)
-  }, [debouncedQuery, statusFilter, limit])
+  }, [debouncedQuery, statusFilter, typeFilter, limit])
 
   useEffect(() => {
     const q = searchParams.get('q')
     if (q != null && q !== query) setQuery(q)
     const status = searchParams.get('status')
     if (status != null && status !== statusFilter) setStatusFilter(status || 'all')
+    const type = searchParams.get('type')
+    if (type != null && type !== typeFilter) setTypeFilter(type || 'all')
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams])
 
@@ -141,7 +147,8 @@ export function DevicesPage() {
     page,
     limit,
     q: debouncedQuery,
-    status: statusFilter,
+    status: statusFilter !== 'all' ? statusFilter : undefined,
+    deviceType: typeFilter !== 'all' ? typeFilter : undefined,
   })
 
   const devices = devicesQuery.data?.data ?? []
@@ -527,8 +534,17 @@ export function DevicesPage() {
               </div>
               <div className="space-y-1.5">
                 <label className="text-xs font-medium text-muted-foreground">Status</label>
-                <Select value={statusFilter} onValueChange={setStatusFilter}>
-                  <SelectTrigger className="w-[200px]">
+                <Select
+                  value={statusFilter}
+                  onValueChange={(val) => {
+                    setStatusFilter(val)
+                    const next = new URLSearchParams(searchParams)
+                    if (val === 'all') next.delete('status')
+                    else next.set('status', val)
+                    setSearchParams(next, { replace: true })
+                  }}
+                >
+                  <SelectTrigger className="w-[180px]">
                     <SelectValue placeholder="Status" />
                   </SelectTrigger>
                   <SelectContent>
@@ -537,6 +553,31 @@ export function DevicesPage() {
                     <SelectItem value="Not Reachable">Not Reachable</SelectItem>
                     <SelectItem value="Offline (Critical)">Offline (Critical)</SelectItem>
                     <SelectItem value="Unknown">Unknown</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">Type</label>
+                <Select
+                  value={typeFilter}
+                  onValueChange={(val) => {
+                    setTypeFilter(val)
+                    const next = new URLSearchParams(searchParams)
+                    if (val === 'all') next.delete('type')
+                    else next.set('type', val)
+                    setSearchParams(next, { replace: true })
+                  }}
+                >
+                  <SelectTrigger className="w-[180px]">
+                    <SelectValue placeholder="Type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All types</SelectItem>
+                    {DEVICE_TYPES.map((type) => (
+                      <SelectItem key={type} value={type}>
+                        {type}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
