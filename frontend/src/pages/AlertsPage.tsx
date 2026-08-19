@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   CloudLightning,
   Database,
+  Network,
   Radar,
   RefreshCw,
   Search,
@@ -46,6 +47,21 @@ function isStormAlert(alert: AlertItem): boolean {
     category.includes('mitigation') ||
     category.includes('recovery')
   )
+}
+
+/**
+ * Returns true when the alert carries a valid device + interface reference
+ * that can be used to navigate to the Interface Detail page.
+ */
+function hasInterfaceReference(alert: AlertItem): boolean {
+  if (!alert.deviceId) return false
+  const iface = (alert.interface ?? '').trim()
+  return iface.length > 0 && iface !== 'unknown' && iface !== '—'
+}
+
+/** Build the existing `/interfaces/:deviceId/:interfaceName` route path. */
+function interfaceDetailPath(alert: AlertItem): string {
+  return `/interfaces/${alert.deviceId}/${encodeURIComponent(alert.interface!)}`
 }
 
 function alertSeverityTone(alert: AlertItem): 'danger' | 'warning' | 'info' | 'default' {
@@ -327,6 +343,11 @@ export function AlertsPage() {
     }
   }
 
+  const openInterface = (alert: AlertItem) => {
+    if (!hasInterfaceReference(alert)) return
+    navigate(interfaceDetailPath(alert))
+  }
+
   return (
     <div className="np-page">
       <PageHeader
@@ -503,6 +524,9 @@ export function AlertsPage() {
                       onAck={() => acknowledge.mutate(alert._id)}
                       onDismiss={() => dismiss.mutate(alert._id)}
                       onOpenStorm={isStormAlert(alert) ? () => openStorm(alert) : undefined}
+                      onOpenInterface={
+                        hasInterfaceReference(alert) ? () => openInterface(alert) : undefined
+                      }
                     />
                   ))}
                 </div>
@@ -599,6 +623,12 @@ export function AlertsPage() {
                     onAck={() => acknowledge.mutate(selected._id)}
                     onDismiss={() => dismiss.mutate(selected._id)}
                     onOpenStorm={isStormAlert(selected) ? () => openStorm(selected) : undefined}
+                    onOpenInterface={
+                      hasInterfaceReference(selected) ? () => openInterface(selected) : undefined
+                    }
+                    interfacePath={
+                      hasInterfaceReference(selected) ? interfaceDetailPath(selected) : undefined
+                    }
                   />
                 </motion.div>
               ) : (
@@ -663,6 +693,7 @@ function AlertStreamRow({
   onAck,
   onDismiss,
   onOpenStorm,
+  onOpenInterface,
 }: {
   alert: AlertItem
   index: number
@@ -673,6 +704,7 @@ function AlertStreamRow({
   onAck: () => void
   onDismiss: () => void
   onOpenStorm?: () => void
+  onOpenInterface?: () => void
 }) {
   const storm = isStormAlert(alert)
   const severity = alertSeverityTone(alert)
@@ -746,21 +778,31 @@ function AlertStreamRow({
                   Storm
                 </Button>
               ) : null}
+              {onOpenInterface ? (
+                <Button type="button" size="sm" variant="outline" onClick={onOpenInterface}>
+                  <Network className="h-3.5 w-3.5" />
+                  Open Interface
+                </Button>
+              ) : null}
             </div>
-          ) : onOpenStorm ? (
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="shrink-0"
-              onClick={(e) => {
-                e.stopPropagation()
-                onOpenStorm()
-              }}
+          ) : onOpenStorm || onOpenInterface ? (
+            <div
+              className="flex shrink-0 flex-wrap gap-2"
+              onClick={(e) => e.stopPropagation()}
             >
-              <Shield className="h-3.5 w-3.5" />
-              Storm
-            </Button>
+              {onOpenStorm ? (
+                <Button type="button" size="sm" variant="outline" onClick={onOpenStorm}>
+                  <Shield className="h-3.5 w-3.5" />
+                  Storm
+                </Button>
+              ) : null}
+              {onOpenInterface ? (
+                <Button type="button" size="sm" variant="outline" onClick={onOpenInterface}>
+                  <Network className="h-3.5 w-3.5" />
+                  Open Interface
+                </Button>
+              ) : null}
+            </div>
           ) : null}
         </CardContent>
       </Card>
@@ -775,6 +817,8 @@ function AlertDetailPanel({
   onAck,
   onDismiss,
   onOpenStorm,
+  onOpenInterface,
+  interfacePath,
 }: {
   alert: AlertItem
   canAct: boolean
@@ -782,6 +826,8 @@ function AlertDetailPanel({
   onAck: () => void
   onDismiss: () => void
   onOpenStorm?: () => void
+  onOpenInterface?: () => void
+  interfacePath?: string
 }) {
   const storm = isStormAlert(alert)
   const displayName = alert.deviceName || alert.hostname
@@ -829,6 +875,20 @@ function AlertDetailPanel({
           ) : (
             <p className="text-sm text-muted-foreground">No linked device id.</p>
           )}
+          {interfacePath ? (
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              className="mt-1 w-full justify-start"
+              asChild
+            >
+              <Link to={interfacePath}>
+                <Network className="mr-2 h-4 w-4" />
+                Open Interface
+              </Link>
+            </Button>
+          ) : null}
         </DetailGroup>
 
         <DetailGroup title="Incident">
@@ -861,6 +921,12 @@ function AlertDetailPanel({
               <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={onDismiss}>
                 <X className="h-3.5 w-3.5" />
                 Dismiss
+              </Button>
+            ) : null}
+            {onOpenInterface ? (
+              <Button type="button" size="sm" variant="outline" onClick={onOpenInterface}>
+                <Network className="h-3.5 w-3.5" />
+                Open Interface
               </Button>
             ) : null}
             {alert.emailSent ? <Badge variant="outline">Email sent</Badge> : null}
