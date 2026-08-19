@@ -64,11 +64,11 @@ class _Cursor:
     def __init__(self, docs):
         self._docs = docs
 
-    def sort(self, field, direction):
+    def sort(self, field: str, direction: int = 1) -> list[dict]:
         reverse = direction == -1
         return sorted(
-            self._docs,
-            key=lambda doc: doc.get(field) if isinstance(doc, dict) else "",
+            list(self._docs),
+            key=lambda doc: str(doc.get(field, "")),
             reverse=reverse,
         )
 
