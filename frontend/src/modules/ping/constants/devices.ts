@@ -1,11 +1,13 @@
 /** Canonical device types used in forms, filters, and reports. */
 export const DEVICE_TYPES = [
   'Router',
+  'WiFi Router',
   'Switch',
   'Managed Switch',
   'Firewall',
   'Server',
   'Linux Server',
+  'ESXi Server',
   'Windows PC',
   'Workstation',
   'Access Point',
@@ -13,6 +15,9 @@ export const DEVICE_TYPES = [
   'Hypervisor',
   'NAS',
   'IP Camera',
+  'WiFi Camera',
+  'IP Phone',
+  'NVR',
   'Unknown Device',
   'Other',
 ] as const
