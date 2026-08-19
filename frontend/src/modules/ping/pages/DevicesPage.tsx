@@ -148,8 +148,7 @@ export function DevicesPage() {
   const total = devicesQuery.data?.total ?? devicesQuery.data?.count ?? 0
   const totalPages = devicesQuery.data?.totalPages ?? 1
 
-  const offlineCount =
-    (dash.summary?.notReachableDevices ?? 0) + (dash.summary?.criticalOfflineDevices ?? 0)
+  const criticalOfflineCount = dash.summary?.criticalOfflineDevices ?? 0
   const warningCount = dash.summary?.notReachableDevices ?? 0
 
   useEffect(() => {
@@ -466,10 +465,11 @@ export function DevicesPage() {
             onClick={() => handleCardClick('Online')}
           />
           <KpiCard
-            label="Offline"
-            value={dash.summary ? offlineCount : '—'}
+            label="Critical Offline"
+            value={dash.summary ? criticalOfflineCount : '—'}
             icon={WifiOff}
-            tone={offlineCount > 0 ? 'danger' : 'default'}
+            tone={criticalOfflineCount > 0 ? 'danger' : 'default'}
+            hint="Critical devices"
             onClick={() => handleCardClick('Offline (Critical)')}
           />
           <KpiCard
