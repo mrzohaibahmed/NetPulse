@@ -37,6 +37,8 @@ import { deviceTypeIcon } from '@/lib/device-icons'
 import { displayDeviceType, DEVICE_TYPES } from '@/modules/ping/constants/devices'
 import { formatMs, formatRelative } from '@/utils/format'
 import type { Device } from '@/types'
+import { getDevices } from '@/api'
+import { toast } from 'sonner'
 import { DeviceDrawer } from '@/modules/ping/components/DeviceDrawer'
 import { DeviceFormDialog } from '@/modules/ping/components/DeviceFormDialog'
 import { EmptyState } from '@/shared/components/EmptyState'
@@ -106,11 +108,52 @@ export function DevicesPage() {
   const [deleteTarget, setDeleteTarget] = useState<Device | null>(null)
   const [nmapAllConfirmOpen, setNmapAllConfirmOpen] = useState(false)
   const [pingAllConfirmOpen, setPingAllConfirmOpen] = useState(false)
+  const [isBulkUpdating, setIsBulkUpdating] = useState(false)
 
   const { update, remove, scan, importCsv } = useDeviceMutations()
   const nmapScanAll = useNmapScanAllMutation()
   const pingAll = usePingAllDevicesMutation()
   const dash = useDashboardQuery()
+
+  const handleEnableCriticalMonitoring = async () => {
+    setIsBulkUpdating(true)
+    try {
+      const res = await getDevices({ limit: 10000 })
+      const criticalToEnable = res.data.filter((d: Device) => d.critical && !d.monitor)
+      if (criticalToEnable.length === 0) {
+        toast.info('All critical devices are already monitored.')
+        return
+      }
+      for (const d of criticalToEnable) {
+        await update.mutateAsync({ id: d._id, payload: { monitor: true } })
+      }
+      toast.success(`Enabled monitoring for ${criticalToEnable.length} critical device(s).`)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Bulk update failed')
+    } finally {
+      setIsBulkUpdating(false)
+    }
+  }
+
+  const handleDisableNonCriticalMonitoring = async () => {
+    setIsBulkUpdating(true)
+    try {
+      const res = await getDevices({ limit: 10000 })
+      const nonCriticalToDisable = res.data.filter((d: Device) => !d.critical && d.monitor)
+      if (nonCriticalToDisable.length === 0) {
+        toast.info('All non-critical devices are already unmonitored.')
+        return
+      }
+      for (const d of nonCriticalToDisable) {
+        await update.mutateAsync({ id: d._id, payload: { monitor: false } })
+      }
+      toast.success(`Disabled monitoring for ${nonCriticalToDisable.length} non-critical device(s).`)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Bulk update failed')
+    } finally {
+      setIsBulkUpdating(false)
+    }
+  }
 
   useEffect(() => {
     setDrawerId(routeDeviceId ?? null)
@@ -585,6 +628,24 @@ export function DevicesPage() {
                 <RefreshCw className="h-4 w-4" />
                 Refresh
               </Button>
+              {isAdmin ? (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button type="button" variant="outline" disabled={isBulkUpdating}>
+                      {isBulkUpdating ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Filter className="h-4 w-4" />}
+                      Bulk Actions
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onClick={() => { void handleEnableCriticalMonitoring() }} disabled={isBulkUpdating}>
+                      Enable Monitoring (Critical Only)
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => { void handleDisableNonCriticalMonitoring() }} disabled={isBulkUpdating}>
+                      Disable Monitoring (Non-Critical)
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              ) : null}
             </div>
           </CardContent>
         </Card>
