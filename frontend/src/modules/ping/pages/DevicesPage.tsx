@@ -115,39 +115,24 @@ export function DevicesPage() {
   const pingAll = usePingAllDevicesMutation()
   const dash = useDashboardQuery()
 
-  const handleEnableCriticalMonitoring = async () => {
+  const handleBulkMonitoringUpdate = async (isCritical: boolean | null, enableMonitoring: boolean) => {
     setIsBulkUpdating(true)
     try {
       const res = await getDevices({ limit: 10000 })
-      const criticalToEnable = res.data.filter((d: Device) => d.critical && !d.monitor)
-      if (criticalToEnable.length === 0) {
-        toast.info('All critical devices are already monitored.')
+      const toUpdate = res.data.filter((d: Device) => 
+        (isCritical === null || d.critical === isCritical) && d.monitor !== enableMonitoring
+      )
+      
+      if (toUpdate.length === 0) {
+        const targetStr = isCritical === null ? 'all' : (isCritical ? 'critical' : 'non-critical')
+        toast.info(`All ${targetStr} devices are already ${enableMonitoring ? 'monitored' : 'unmonitored'}.`)
         return
       }
-      for (const d of criticalToEnable) {
-        await update.mutateAsync({ id: d._id, payload: { monitor: true } })
+      for (const d of toUpdate) {
+        await update.mutateAsync({ id: d._id, payload: { monitor: enableMonitoring } })
       }
-      toast.success(`Enabled monitoring for ${criticalToEnable.length} critical device(s).`)
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Bulk update failed')
-    } finally {
-      setIsBulkUpdating(false)
-    }
-  }
-
-  const handleDisableNonCriticalMonitoring = async () => {
-    setIsBulkUpdating(true)
-    try {
-      const res = await getDevices({ limit: 10000 })
-      const nonCriticalToDisable = res.data.filter((d: Device) => !d.critical && d.monitor)
-      if (nonCriticalToDisable.length === 0) {
-        toast.info('All non-critical devices are already unmonitored.')
-        return
-      }
-      for (const d of nonCriticalToDisable) {
-        await update.mutateAsync({ id: d._id, payload: { monitor: false } })
-      }
-      toast.success(`Disabled monitoring for ${nonCriticalToDisable.length} non-critical device(s).`)
+      const targetStr = isCritical === null ? 'all' : (isCritical ? 'critical' : 'non-critical')
+      toast.success(`${enableMonitoring ? 'Enabled' : 'Disabled'} monitoring for ${toUpdate.length} ${targetStr} device(s).`)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Bulk update failed')
     } finally {
@@ -633,14 +618,24 @@ export function DevicesPage() {
                   <DropdownMenuTrigger asChild>
                     <Button type="button" variant="outline" disabled={isBulkUpdating}>
                       {isBulkUpdating ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Filter className="h-4 w-4" />}
-                      Bulk Actions
+                      Manage Monitoring
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
-                    <DropdownMenuItem onClick={() => { void handleEnableCriticalMonitoring() }} disabled={isBulkUpdating}>
-                      Enable Monitoring (Critical Only)
+                    <DropdownMenuItem onClick={() => { void handleBulkMonitoringUpdate(null, true) }} disabled={isBulkUpdating}>
+                      Enable Monitoring (All)
                     </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => { void handleDisableNonCriticalMonitoring() }} disabled={isBulkUpdating}>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={() => { void handleBulkMonitoringUpdate(true, true) }} disabled={isBulkUpdating}>
+                      Enable Monitoring (Critical)
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => { void handleBulkMonitoringUpdate(true, false) }} disabled={isBulkUpdating}>
+                      Disable Monitoring (Critical)
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => { void handleBulkMonitoringUpdate(false, true) }} disabled={isBulkUpdating}>
+                      Enable Monitoring (Non-Critical)
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => { void handleBulkMonitoringUpdate(false, false) }} disabled={isBulkUpdating}>
                       Disable Monitoring (Non-Critical)
                     </DropdownMenuItem>
                   </DropdownMenuContent>
