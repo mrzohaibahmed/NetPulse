@@ -53,7 +53,7 @@ timeout /t 2 /nobreak >nul
 echo [2/2] Starting frontend (http://127.0.0.1:5173^)
 start "NetPulse Frontend" cmd /k "cd /d "%~dp0frontend" && npm run dev"
 
-timeout /t 3 /nobreak >nul
+timeout /t 8 /nobreak >nul
 start "" "http://127.0.0.1:5173"
 
 echo.
