@@ -137,7 +137,7 @@ export function StormProtectionPage() {
   )
 
   const requiredConfirmations =
-    stormConfig.data?.confirmation?.requiredConfirmations ?? 2
+    stormConfig.data?.confirmation?.requiredConfirmations ?? 4
 
   const eligibilityRows = eligibilityQuery.data?.data ?? []
   const riskRows = riskListQuery.data?.data ?? []

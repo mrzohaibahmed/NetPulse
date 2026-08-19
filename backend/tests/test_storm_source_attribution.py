@@ -167,7 +167,7 @@ class SourceSelectorTests(unittest.TestCase):
             result = select_storm_source(
                 "dev1",
                 broadcast_domain="vlan:10",
-                risk_threshold=25,
+                risk_threshold=60,
                 config=self.cfg,
                 risk_rows=risk_rows,
             )
@@ -231,7 +231,7 @@ class SourceSelectorTests(unittest.TestCase):
             result = select_storm_source(
                 "dev1",
                 broadcast_domain="vlan:10",
-                risk_threshold=25,
+                risk_threshold=60,
                 config=self.cfg,
                 risk_rows=risk_rows,
             )
@@ -268,7 +268,7 @@ class SourceSelectorTests(unittest.TestCase):
         ):
             result = select_storm_source(
                 "dev1",
-                risk_threshold=25,
+                risk_threshold=60,
                 config=self.cfg,
                 risk_rows=risk_rows,
             )
@@ -304,7 +304,7 @@ class SourceSelectorTests(unittest.TestCase):
         ):
             result = select_storm_source(
                 "dev1",
-                risk_threshold=25,
+                risk_threshold=60,
                 config=self.cfg,
                 risk_rows=risk_rows,
             )
@@ -360,7 +360,7 @@ class SourceSelectorTests(unittest.TestCase):
         ):
             result = select_storm_source(
                 "dev1",
-                risk_threshold=25,
+                risk_threshold=60,
                 config=self.cfg,
                 risk_rows=risk_rows,
             )
@@ -370,7 +370,7 @@ class SourceSelectorTests(unittest.TestCase):
     def test_no_candidate(self):
         result = select_storm_source(
             "dev1",
-            risk_threshold=25,
+            risk_threshold=60,
             config=self.cfg,
             risk_rows=[],
         )
@@ -469,8 +469,8 @@ class ConfirmationGateIntegrationTests(unittest.TestCase):
         engine = ConfirmationEngine(
             config=ConfirmationConfig(
                 confirmation_enabled=True,
-                required_confirmations=2,
-                risk_threshold=25,
+                required_confirmations=4,
+                risk_threshold=60,
             )
         )
         result = engine.evaluate("dev1", "Gi1/0/48", persist=False)

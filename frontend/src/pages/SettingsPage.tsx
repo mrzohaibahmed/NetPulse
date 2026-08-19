@@ -3,7 +3,7 @@ import { Navigate } from 'react-router-dom'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { Mail, Save, Timer, Activity, Send, CheckCircle2, AlertCircle } from 'lucide-react'
+import { Mail, Save, Timer, Activity, Send, CheckCircle2, AlertCircle, Shield } from 'lucide-react'
 import { useAuth } from '@/shared/auth/AuthContext'
 import { useSettingsMutation, useSettingsQuery } from '@/hooks/queries'
 import { IspSettingsSection } from '@/modules/ping/components/IspSettingsSection'
@@ -55,6 +55,7 @@ const schema = z.object({
   stabilizationSeconds: z.number().min(5),
   maximumRecoveryAttempts: z.number().min(1),
   reMitigationThreshold: z.number().min(1).max(100),
+  requiredConfirmations: z.number().min(1).max(20),
   dataRetentionDays: z.number().min(7).max(3650),
   incidentRetentionDays: z.number().min(30).max(3650),
   stormNotificationsEnabled: z.boolean(),
@@ -93,7 +94,8 @@ export function SettingsPage() {
       cooldownMinutes: 5,
       stabilizationSeconds: 60,
       maximumRecoveryAttempts: 3,
-      reMitigationThreshold: 25,
+      reMitigationThreshold: 60,
+      requiredConfirmations: 4,
       dataRetentionDays: 90,
       incidentRetentionDays: 365,
       stormNotificationsEnabled: true,
@@ -124,7 +126,8 @@ export function SettingsPage() {
       cooldownMinutes: data.cooldownMinutes ?? 5,
       stabilizationSeconds: data.stabilizationSeconds ?? 60,
       maximumRecoveryAttempts: data.maximumRecoveryAttempts ?? 3,
-      reMitigationThreshold: data.reMitigationThreshold ?? 25,
+      reMitigationThreshold: data.reMitigationThreshold ?? 60,
+      requiredConfirmations: data.requiredConfirmations ?? 4,
       dataRetentionDays: data.dataRetentionDays ?? 90,
       incidentRetentionDays: data.incidentRetentionDays ?? 365,
       stormNotificationsEnabled: data.stormNotifications?.enabled ?? true,
@@ -202,6 +205,7 @@ export function SettingsPage() {
       stabilizationSeconds: values.stabilizationSeconds,
       maximumRecoveryAttempts: values.maximumRecoveryAttempts,
       reMitigationThreshold: values.reMitigationThreshold,
+      requiredConfirmations: values.requiredConfirmations,
       dataRetentionDays: values.dataRetentionDays,
       incidentRetentionDays: values.incidentRetentionDays,
       stormNotifications: {
@@ -458,6 +462,49 @@ export function SettingsPage() {
         <Card className="glass">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
+              <Shield className="h-5 w-5 text-primary" />
+              Storm confirmation
+            </CardTitle>
+            <CardDescription>
+              Controls when elevated interface risk is treated as a confirmed storm.
+              These values apply to confirmation, safety checks, and re-mitigation.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="reMitigationThreshold">Storm risk threshold (%)</Label>
+              <Input
+                id="reMitigationThreshold"
+                type="number"
+                min={1}
+                max={100}
+                {...form.register('reMitigationThreshold', { valueAsNumber: true })}
+              />
+              <p className="text-xs text-muted-foreground">
+                Risk at or above this score counts as high across confirmation,
+                safety validation, and prepare / re-mitigation.
+              </p>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="requiredConfirmations">Required confirmation polls</Label>
+              <Input
+                id="requiredConfirmations"
+                type="number"
+                min={1}
+                max={20}
+                {...form.register('requiredConfirmations', { valueAsNumber: true })}
+              />
+              <p className="text-xs text-muted-foreground">
+                Consecutive high-risk polling cycles required before a storm is
+                confirmed for mitigation.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="glass">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
               <Activity className="h-5 w-5 text-primary" />
               Recovery protection
             </CardTitle>
@@ -492,22 +539,6 @@ export function SettingsPage() {
                 min={1}
                 {...form.register('maximumRecoveryAttempts', { valueAsNumber: true })}
               />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="reMitigationThreshold">
-                Prepare / re-mitigation risk threshold (%)
-              </Label>
-              <Input
-                id="reMitigationThreshold"
-                type="number"
-                min={1}
-                max={100}
-                {...form.register('reMitigationThreshold', { valueAsNumber: true })}
-              />
-              <p className="text-xs text-muted-foreground">
-                Must be at or below the confirmation risk threshold so confirmed
-                storms can be prepared for shutdown.
-              </p>
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="dataRetentionDays">Data retention (days)</Label>

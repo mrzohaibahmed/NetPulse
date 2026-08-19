@@ -19,7 +19,7 @@ from typing import Any, Optional
 from bson import ObjectId
 
 from services.ping_service import STATUS_ONLINE
-from services.settings_service import get_settings
+from services.settings_service import get_settings, get_storm_risk_threshold
 from services.storm.incident import get_incident
 from services.storm.lock_service import LockService
 from services.storm.mitigation.ssh_executor import SSHMitigationExecutor
@@ -150,7 +150,7 @@ def evaluate_recovery_safety(
     """
     settings = get_settings()
     cooldown_minutes = int(settings.get("cooldownMinutes", 5))
-    risk_threshold = float(settings.get("reMitigationThreshold", 25.0))
+    risk_threshold = get_storm_risk_threshold()
 
     checks: dict[str, Optional[bool]] = {
         "stormCleared": None,          # R1

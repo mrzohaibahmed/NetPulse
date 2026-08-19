@@ -80,7 +80,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "cooldownMinutes": int(os.getenv("STORM_RECOVERY_COOLDOWN_MINUTES", "5")),
     "stabilizationSeconds": int(os.getenv("STORM_RECOVERY_STABILIZATION_SECONDS", "60")),
     "maximumRecoveryAttempts": int(os.getenv("STORM_RECOVERY_MAX_ATTEMPTS", "3")),
-    "reMitigationThreshold": int(os.getenv("STORM_RE_MITIGATION_THRESHOLD", "25")),
+    "reMitigationThreshold": int(os.getenv("STORM_RE_MITIGATION_THRESHOLD", "60")),
+    "requiredConfirmations": int(os.getenv("STORM_REQUIRED_CONFIRMATIONS", "4")),
     "dataRetentionDays": int(os.getenv("DATA_RETENTION_DAYS", "90")),
     "incidentRetentionDays": int(os.getenv("INCIDENT_RETENTION_DAYS", "365")),
     "stormNotifications": {
@@ -148,7 +149,13 @@ def get_public_settings():
         "cooldownMinutes": int(settings.get("cooldownMinutes", 5)),
         "stabilizationSeconds": int(settings.get("stabilizationSeconds", 60)),
         "maximumRecoveryAttempts": int(settings.get("maximumRecoveryAttempts", 3)),
-        "reMitigationThreshold": int(settings.get("reMitigationThreshold", 25)),
+        "reMitigationThreshold": int(settings.get("reMitigationThreshold", 60)),
+        "requiredConfirmations": int(
+            settings.get(
+                "requiredConfirmations",
+                DEFAULT_SETTINGS["requiredConfirmations"],
+            )
+        ),
         "dataRetentionDays": int(settings.get("dataRetentionDays", 90)),
         "incidentRetentionDays": int(settings.get("incidentRetentionDays", 365)),
         "stormNotifications": _public_storm_notifications(settings),
@@ -253,6 +260,12 @@ def update_settings(payload: dict):
             raise ValueError("reMitigationThreshold must be between 1 and 100")
         update["reMitigationThreshold"] = val
 
+    if "requiredConfirmations" in payload and payload["requiredConfirmations"] is not None:
+        val = int(payload["requiredConfirmations"])
+        if val < 1 or val > 20:
+            raise ValueError("requiredConfirmations must be between 1 and 20")
+        update["requiredConfirmations"] = val
+
     if "dataRetentionDays" in payload and payload["dataRetentionDays"] is not None:
         from services.retention_service import clamp_retention_days  # noqa: PLC0415
 
@@ -285,6 +298,16 @@ def update_settings(payload: dict):
     db.settings.update_one({"_id": SETTINGS_ID}, {"$set": update})
     updated_doc = get_settings()
 
+    if "reMitigationThreshold" in update or "requiredConfirmations" in update:
+        try:
+            from services.storm.confirmation_rules import reload_confirmation_config  # noqa: PLC0415
+            from services.storm.safety_rules import reload_safety_config  # noqa: PLC0415
+
+            reload_confirmation_config()
+            reload_safety_config()
+        except Exception:
+            pass
+
     if "dataRetentionDays" in update or "incidentRetentionDays" in update:
         try:
             from services.retention_service import ensure_retention_ttl_indexes  # noqa: PLC0415
@@ -300,6 +323,32 @@ def update_settings(payload: dict):
             pass
 
     return updated_doc
+
+
+def get_storm_risk_threshold() -> float:
+    """Unified storm risk floor used by confirmation, safety, and re-mitigation."""
+    settings = get_settings()
+    raw = settings.get(
+        "reMitigationThreshold",
+        DEFAULT_SETTINGS["reMitigationThreshold"],
+    )
+    try:
+        return max(1.0, min(100.0, float(raw)))
+    except (TypeError, ValueError):
+        return float(DEFAULT_SETTINGS["reMitigationThreshold"])
+
+
+def get_storm_required_confirmations() -> int:
+    """Consecutive high-risk polling cycles required before storm confirmation."""
+    settings = get_settings()
+    raw = settings.get(
+        "requiredConfirmations",
+        DEFAULT_SETTINGS["requiredConfirmations"],
+    )
+    try:
+        return max(1, min(int(raw), 20))
+    except (TypeError, ValueError):
+        return int(DEFAULT_SETTINGS["requiredConfirmations"])
 
 
 def get_failure_confirmation_scans() -> int:

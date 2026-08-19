@@ -254,6 +254,7 @@ export interface AppSettings {
   stabilizationSeconds?: number
   maximumRecoveryAttempts?: number
   reMitigationThreshold?: number
+  requiredConfirmations?: number
   dataRetentionDays?: number
   incidentRetentionDays?: number
   stormNotifications?: {

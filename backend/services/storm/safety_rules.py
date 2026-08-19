@@ -1,7 +1,7 @@
 """
 Configurable Safety Engine policy.
 
-Administrators adjust values via environment variables — no code changes.
+Risk threshold is managed via Settings (MongoDB); other knobs remain env-driven.
 """
 
 from __future__ import annotations
@@ -49,7 +49,7 @@ class SafetyConfig:
     memory_threshold: float = 90.0
     maximum_attempts: int = 3
     allow_manual_override: bool = False
-    risk_threshold: float = 25.0
+    risk_threshold: float = 60.0
     require_ssh: bool = True
     # When CPU/memory metrics are unavailable, fail closed by default (secure).
     # Operators may explicitly enable fail-open via STORM_SAFETY_FAIL_OPEN_MISSING_HEALTH.
@@ -74,6 +74,8 @@ class SafetyConfig:
 
 @lru_cache(maxsize=1)
 def get_safety_config() -> SafetyConfig:
+    from services.settings_service import get_storm_risk_threshold  # noqa: PLC0415
+
     return SafetyConfig(
         safety_enabled=_env_bool("STORM_SAFETY_ENABLED", True),
         automation_enabled=_env_bool("STORM_AUTOMATION_ENABLED", True),
@@ -84,9 +86,7 @@ def get_safety_config() -> SafetyConfig:
         ),
         maximum_attempts=max(1, _env_int("STORM_MAXIMUM_ATTEMPTS", 3)),
         allow_manual_override=_env_bool("STORM_ALLOW_MANUAL_OVERRIDE", False),
-        risk_threshold=max(
-            0.0, min(100.0, _env_float("STORM_SAFETY_RISK_THRESHOLD", 25.0))
-        ),
+        risk_threshold=get_storm_risk_threshold(),
         require_ssh=_env_bool("STORM_SAFETY_REQUIRE_SSH", True),
         fail_open_missing_health=_env_bool(
             "STORM_SAFETY_FAIL_OPEN_MISSING_HEALTH", False

@@ -22,7 +22,7 @@ from typing import Any, Optional
 
 from bson import ObjectId
 
-from services.settings_service import get_settings
+from services.settings_service import get_storm_risk_threshold
 from services.storm.diagnostics.collector import capture_diagnostics
 from services.storm.incident import (
     append_timeline_event,
@@ -122,8 +122,7 @@ def _validate_live_storm_gates(
     if not _is_currently_confirmed(confirmation):
         return False, "Storm is not currently confirmed — fresh confirmation required"
 
-    settings = get_settings()
-    risk_threshold = float(settings.get("reMitigationThreshold", 25.0))
+    risk_threshold = get_storm_risk_threshold()
     risk = _latest_risk(device_id, interface)
     try:
         score = float((risk or {}).get("riskScore") or 0.0)

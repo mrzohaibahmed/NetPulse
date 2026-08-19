@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from config.database import db
-from services.settings_service import get_settings
+from services.settings_service import get_settings, get_storm_risk_threshold
 from services.storm.incident import append_timeline_event
 from services.storm.recovery.audit import record_recovery_history
 from services.storm.recovery.engine import execute_recovery, trigger_re_mitigation
@@ -114,7 +114,7 @@ def run_recovery_cycle() -> None:
     """
     settings = get_settings()
     auto_recovery = bool(settings.get("autoRecovery", True))
-    risk_threshold = float(settings.get("reMitigationThreshold", 25.0))
+    risk_threshold = get_storm_risk_threshold()
 
     now = datetime.now(timezone.utc)
 

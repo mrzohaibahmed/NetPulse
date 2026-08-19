@@ -71,7 +71,7 @@ def classify_storm_source(
     previous: Optional[dict[str, Any]],
     interface_context: Optional[dict[str, Any]] = None,
     risk_score: float = 0.0,
-    min_risk_for_analysis: float = 25.0,
+    min_risk_for_analysis: float = 60.0,
     dominance_ratio: float = 1.25,
     dominant_share: float = 0.6,
 ) -> dict[str, Any]:

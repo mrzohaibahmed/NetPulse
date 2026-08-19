@@ -38,6 +38,7 @@ from services.storm.analyzers.unknown_unicast import UnknownUnicastAnalyzer
 from services.storm.analyzers.utilization import UtilizationAnalyzer
 from services.storm.history import load_stats_pair
 from services.storm.models import RiskScoreResult, create_risk_document
+from services.settings_service import get_storm_risk_threshold
 from services.storm.source_classification import classify_storm_source
 from services.storm.thresholds import RiskConfig, get_risk_config
 from utils.monitor_logger import get_monitor_logger
@@ -212,6 +213,7 @@ class RiskScoreEngine:
             previous=previous,
             interface_context=interface_context,
             risk_score=result.risk_score,
+            min_risk_for_analysis=get_storm_risk_threshold(),
         )
         result.source_classification = source.get("sourceClassification")
         result.source_confidence = float(source.get("sourceConfidence") or 0.0)

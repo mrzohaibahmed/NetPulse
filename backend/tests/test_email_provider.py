@@ -620,7 +620,8 @@ class TestPasswordNotExposed(unittest.TestCase):
             "cooldownMinutes": 5,
             "stabilizationSeconds": 60,
             "maximumRecoveryAttempts": 3,
-            "reMitigationThreshold": 25,
+            "reMitigationThreshold": 60,
+            "requiredConfirmations": 4,
             "stormNotifications": {
                 "enabled": True,
                 "shutdownEmails": True,

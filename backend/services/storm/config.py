@@ -1,8 +1,8 @@
 """
 Storm Protection configuration.
 
-Values are read from environment variables and may later be overridden
-via persisted settings without changing engine code.
+Eligibility knobs remain env-driven. Confirmation risk threshold and required
+polls are managed via Settings and exposed through storm_config.
 """
 
 from __future__ import annotations

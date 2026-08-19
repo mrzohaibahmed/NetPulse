@@ -63,6 +63,7 @@ def update_settings_route():
                 "stabilizationSeconds": updated.get("stabilizationSeconds"),
                 "maximumRecoveryAttempts": updated.get("maximumRecoveryAttempts"),
                 "reMitigationThreshold": updated.get("reMitigationThreshold"),
+                "requiredConfirmations": updated.get("requiredConfirmations"),
                 "dataRetentionDays": updated.get("dataRetentionDays"),
                 "incidentRetentionDays": updated.get("incidentRetentionDays"),
             },

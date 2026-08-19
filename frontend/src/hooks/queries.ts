@@ -1047,7 +1047,10 @@ export function useSettingsMutation() {
     mutationFn: (payload: Record<string, unknown>) => updateSettings(payload),
     onSuccess: async (res) => {
       toast.success(res.message || 'Settings saved')
-      await qc.invalidateQueries({ queryKey: queryKeys.settings })
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: queryKeys.settings }),
+        qc.invalidateQueries({ queryKey: queryKeys.stormConfig }),
+      ])
     },
     onError: (err: Error) => toast.error(err.message),
   })

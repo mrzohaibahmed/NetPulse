@@ -274,7 +274,7 @@ Additional gates:
 | `cooldownMinutes` | Wait after mitigation before recovery | `5` |
 | `stabilizationSeconds` | MONITORING window after recovery | `60` |
 | `maximumRecoveryAttempts` | Cap before `RECOVERY_FAILED` | `3` |
-| `reMitigationThreshold` | Risk score that can re-trigger after recovery | `75` |
+| `reMitigationThreshold` | Risk score that can re-trigger after recovery | `60` |
 | `dataRetentionDays` | TTL for ping/stats/evaluation history | `90` |
 | `incidentRetentionDays` | Retention for closed incidents + attempt logs | `365` |
 | `stormNotifications` | Enable storm emails (shutdown / recovery / failure) + recipient | enabled |

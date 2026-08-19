@@ -1,7 +1,8 @@
 """
 Configurable Confirmation Engine rules and thresholds.
 
-Administrators adjust values via environment variables — no code changes.
+Risk threshold and required confirmations are managed via Settings (MongoDB).
+Environment variables seed defaults on first install only.
 """
 
 from __future__ import annotations
@@ -49,8 +50,8 @@ class ConfirmationConfig:
     """Policy knobs for storm confirmation."""
 
     confirmation_enabled: bool = True
-    required_confirmations: int = 2
-    risk_threshold: float = 25.0
+    required_confirmations: int = 4
+    risk_threshold: float = 60.0
     reset_on_poll_failure: bool = True
     reset_on_ineligible: bool = True
     reset_on_low_risk: bool = True
@@ -71,12 +72,15 @@ class ConfirmationConfig:
 
 @lru_cache(maxsize=1)
 def get_confirmation_config() -> ConfirmationConfig:
+    from services.settings_service import (  # noqa: PLC0415
+        get_storm_required_confirmations,
+        get_storm_risk_threshold,
+    )
+
     return ConfirmationConfig(
         confirmation_enabled=_env_bool("STORM_CONFIRMATION_ENABLED", True),
-        required_confirmations=max(
-            1, _env_int("STORM_REQUIRED_CONFIRMATIONS", 2)
-        ),
-        risk_threshold=max(0.0, min(100.0, _env_float("STORM_CONFIRMATION_RISK_THRESHOLD", 25.0))),
+        required_confirmations=get_storm_required_confirmations(),
+        risk_threshold=get_storm_risk_threshold(),
         reset_on_poll_failure=_env_bool("STORM_CONFIRMATION_RESET_ON_POLL_FAILURE", True),
         reset_on_ineligible=_env_bool("STORM_CONFIRMATION_RESET_ON_INELIGIBLE", True),
         reset_on_low_risk=_env_bool("STORM_CONFIRMATION_RESET_ON_LOW_RISK", True),

@@ -577,8 +577,8 @@ Examples use placeholders, not real secrets.
 | `STORM_THRESH_DISCARDS_*` | No | Discard rate bands | 1 / 10 / 50 / 200 | | |
 | `STORM_THRESH_CRC_*` | No | CRC rate bands | 1 / 5 / 20 / 50 | | |
 | `STORM_CONFIRMATION_ENABLED` | No | Confirmation engine | `true` | `true` | |
-| `STORM_REQUIRED_CONFIRMATIONS` | No | Consecutive high-risk cycles | `2` (min 1) | `2` | |
-| `STORM_CONFIRMATION_RISK_THRESHOLD` | No | Risk ≥ this counts as high | `25` | `25` | |
+| `STORM_REQUIRED_CONFIRMATIONS` | Seed | Consecutive high-risk cycles | `4` (min 1) | Settings → `requiredConfirmations` | |
+| `STORM_CONFIRMATION_RISK_THRESHOLD` | Seed | Risk ≥ this counts as high | `60` | Settings → `reMitigationThreshold` | |
 | `STORM_CONFIRMATION_RESET_ON_POLL_FAILURE` | No | Reset on stale stats | `true` | `true` | |
 | `STORM_CONFIRMATION_RESET_ON_INELIGIBLE` | No | Reset when ineligible | `true` | `true` | |
 | `STORM_CONFIRMATION_RESET_ON_LOW_RISK` | No | Reset on low risk | `true` | `true` | |
@@ -591,7 +591,7 @@ Examples use placeholders, not real secrets.
 | `STORM_MEMORY_THRESHOLD` | No | Memory % fail | `90` | `90` | |
 | `STORM_MAXIMUM_ATTEMPTS` | No | Max mitigation attempts | `3` | `3` | |
 | `STORM_ALLOW_MANUAL_OVERRIDE` | No | Safety override flag | `false` | `false` | |
-| `STORM_SAFETY_RISK_THRESHOLD` | No | Safety risk floor | `25` | `25` | |
+| `STORM_SAFETY_RISK_THRESHOLD` | Seed | Safety risk floor | `60` | Settings → `reMitigationThreshold` | |
 | `STORM_SAFETY_REQUIRE_SSH` | No | Require SSH for safety | `true` | `true` | |
 | `STORM_SAFETY_FAIL_OPEN_MISSING_HEALTH` | No | Fail-open if no CPU/mem | `false` | `false` | Default fail-closed |
 | `STORM_SAFETY_SSH_TIMEOUT` | No | Safety SSH timeout | `15` (min 5) | `15` | |
@@ -601,7 +601,7 @@ Examples use placeholders, not real secrets.
 | `STORM_RECOVERY_COOLDOWN_MINUTES` | Seed | Recovery cooldown | `5` | `5` | Maps to `settings.cooldownMinutes` |
 | `STORM_RECOVERY_STABILIZATION_SECONDS` | Seed | MONITORING window | `60` | `60` | |
 | `STORM_RECOVERY_MAX_ATTEMPTS` | Seed | Max recovery attempts | `3` | `3` | |
-| `STORM_RE_MITIGATION_THRESHOLD` | Seed | Prepare / re-mitigate risk | `25` | `25` | |
+| `STORM_RE_MITIGATION_THRESHOLD` | Seed | Prepare / re-mitigate risk | `60` | Settings → `reMitigationThreshold` | |
 | `STORM_EMAIL_ENABLED` | Seed | Storm emails | `true` | `true` | |
 | `STORM_EMAIL_SHUTDOWN` | Seed | Shutdown emails | `true` | `true` | |
 | `STORM_EMAIL_RECOVERY` | Seed | Recovery emails | `true` | `true` | |
@@ -1501,7 +1501,7 @@ See table above. UI filters include CRITICAL, HIGH, WARNING, MEDIUM, LOW, INFO (
 
 States: `NOT_CONFIRMED`, `PENDING`, `CONFIRMED`.
 
-Default: 2 consecutive cycles with risk ≥ `STORM_CONFIRMATION_RISK_THRESHOLD` (25) → CONFIRMED.
+Default: 4 consecutive cycles with risk ≥ `STORM_CONFIRMATION_RISK_THRESHOLD` (60) → CONFIRMED.
 
 Resets when configured: poll failure (stats older than 180s), ineligible, or low risk.
 
@@ -1569,7 +1569,8 @@ Settings (Mongo, also on Settings page **Recovery protection**):
 | `cooldownMinutes` | 5 | Wait after mitigation |
 | `stabilizationSeconds` | 60 | MONITORING window |
 | `maximumRecoveryAttempts` | 3 | Cap |
-| `reMitigationThreshold` | 25 | Risk to prepare / re-mitigate |
+| `reMitigationThreshold` | 60 | Unified storm risk threshold (confirmation, safety, re-mitigate) |
+| `requiredConfirmations` | 4 | Consecutive high-risk polls before CONFIRMED |
 | `autoRecovery` | true | Scheduler may recover |
 
 Recovery Safety rules **R0–R8** (independent of mitigation safety):
@@ -2145,7 +2146,7 @@ Not automated in-repo.
 | RX/TX not updating | Old stats | Stats job interval 0 or SNMP/SSH fail | `INTERFACE_STATS_INTERVAL`; `collectionMethod` | Enable job; fix SNMP |
 | Alerts missing | Offline but no alert | Not critical; failures < 3 | `critical`, `consecutiveFailures` | Flag critical; wait third failure |
 | Risk missing | 0 / skipped | Ineligible, no stats pair, risk disabled | Eligibility + two samples | Wait two stats cycles |
-| Storm delayed | No CONFIRMED | Separate jobs; need 2 high-risk cycles | pipeline cycles collection | Wait stats+analysis+confirmation |
+| Storm delayed | No CONFIRMED | Separate jobs; need 4 high-risk cycles | pipeline cycles collection | Wait stats+analysis+confirmation |
 | Reports empty | No rows | Window/filters; no history | Period 24h default | Widen period; check pingHistory |
 | Database errors | 500s | Pool timeout, disk | Mongo logs | Increase pool; disk; indexes |
 | CORS errors | Browser blocked | Production origins unset/wrong | Console CORS | Set `CORS_ALLOWED_ORIGINS` |

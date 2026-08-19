@@ -370,8 +370,8 @@ class ConfirmationFreezeGoldenTests(unittest.TestCase):
         engine = ConfirmationEngine(
             config=ConfirmationConfig(
                 confirmation_enabled=True,
-                required_confirmations=2,
-                risk_threshold=25.0,
+                required_confirmations=4,
+                risk_threshold=60.0,
                 reset_on_poll_failure=False,
                 reset_on_ineligible=True,
                 reset_on_low_risk=True,
