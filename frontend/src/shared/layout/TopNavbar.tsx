@@ -39,11 +39,11 @@ export function TopNavbar({ lastUpdated, monitoringOk }: TopNavbarProps) {
   const { user, logout } = useAuth()
   const { theme, toggleTheme } = useTheme()
   const health = useHealthQuery()
-  const alerts = useAlertsQuery('active', 10)
+  const alerts = useAlertsQuery('active', 1)
   const [query, setQuery] = useState('')
   const [refreshing, setRefreshing] = useState(false)
 
-  const alertCount = alerts.data?.count ?? alerts.data?.data?.length ?? 0
+  const alertCount = alerts.data?.total ?? alerts.data?.count ?? 0
   const apiOk = monitoringOk ?? (health.isError ? false : health.data ? true : null)
   const updatedLabel = lastUpdated
     ? formatRelative(new Date(lastUpdated).toISOString())
@@ -143,7 +143,11 @@ export function TopNavbar({ lastUpdated, monitoringOk }: TopNavbarProps) {
               size="icon"
               className="relative"
               onClick={() => navigate('/alerts')}
-              aria-label="View alerts"
+              aria-label={
+                alertCount > 0
+                  ? `View alerts, ${alertCount} active`
+                  : 'View alerts'
+              }
             >
               <Bell className="h-4 w-4" />
               {alertCount > 0 ? (
@@ -156,7 +160,11 @@ export function TopNavbar({ lastUpdated, monitoringOk }: TopNavbarProps) {
               ) : null}
             </Button>
           </TooltipTrigger>
-          <TooltipContent>Alerts</TooltipContent>
+          <TooltipContent>
+            {alertCount > 0
+              ? `${alertCount} active alert${alertCount === 1 ? '' : 's'}`
+              : 'No active alerts'}
+          </TooltipContent>
         </Tooltip>
 
         <DropdownMenu>
