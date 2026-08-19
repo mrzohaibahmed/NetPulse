@@ -63,7 +63,7 @@ export function IspConnectivitySection({ isps, isLoading }: IspConnectivitySecti
 
 function IspStatusCard({ isp, isLoading }: { isp: IspConnection; isLoading?: boolean }) {
   const online = isp.status === 'Online'
-  const offline = isp.status === 'Offline'
+  const offline = isp.status === 'Online'
 
   return (
     <Card
