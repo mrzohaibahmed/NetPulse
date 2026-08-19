@@ -58,6 +58,8 @@ import {
   getStormIncidentReportDetail,
   exportManagementReport,
   getUsers,
+  createUser,
+  deleteUser,
   importDevicesCsv,
   manualRecoverInterface,
   manualShutdownInterface,
@@ -1072,8 +1074,33 @@ export function useUserMutation() {
       payload,
     }: {
       id: string
-      payload: { username?: string; password?: string; role?: UserRole }
+      payload: { username?: string; password?: string; role?: UserRole; active?: boolean }
     }) => updateUser(id, payload),
+    onSuccess: async (res) => {
+      toast.success(res.message)
+      await qc.invalidateQueries({ queryKey: queryKeys.users })
+    },
+    onError: (err: Error) => toast.error(err.message),
+  })
+}
+
+export function useCreateUserMutation() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: { username: string; password: string; role: UserRole; active: boolean }) =>
+      createUser(payload),
+    onSuccess: async (res) => {
+      toast.success(res.message)
+      await qc.invalidateQueries({ queryKey: queryKeys.users })
+    },
+    onError: (err: Error) => toast.error(err.message),
+  })
+}
+
+export function useDeleteUserMutation() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => deleteUser(id),
     onSuccess: async (res) => {
       toast.success(res.message)
       await qc.invalidateQueries({ queryKey: queryKeys.users })

@@ -123,11 +123,27 @@ export const getUsers = () =>
 
 export const updateUser = (
   id: string,
-  payload: { username?: string; password?: string; role?: UserRole },
+  payload: { username?: string; password?: string; role?: UserRole; active?: boolean },
 ) =>
   apiRequest<{ success: boolean; message: string; data: User }>(`/api/users/${id}`, {
     method: 'PUT',
     body: payload,
+  })
+
+export const createUser = (payload: {
+  username: string
+  password: string
+  role: UserRole
+  active: boolean
+}) =>
+  apiRequest<{ success: boolean; message: string; data: User }>('/api/users', {
+    method: 'POST',
+    body: payload,
+  })
+
+export const deleteUser = (id: string) =>
+  apiRequest<{ success: boolean; message: string }>(`/api/users/${id}`, {
+    method: 'DELETE',
   })
 
 export const getDevices = (params: PaginationParams = {}) =>

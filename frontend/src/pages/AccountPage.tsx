@@ -1,8 +1,14 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { KeyRound, Shield, User as UserIcon, Users } from 'lucide-react'
+import { KeyRound, Plus, Shield, Trash2, User as UserIcon, Users } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAuth } from '@/shared/auth/AuthContext'
-import { useAccountMutation, useUserMutation, useUsersQuery } from '@/hooks/queries'
+import {
+  useAccountMutation,
+  useCreateUserMutation,
+  useDeleteUserMutation,
+  useUserMutation,
+  useUsersQuery,
+} from '@/hooks/queries'
 import type { User, UserRole } from '@/types'
 import { PageHeader } from '@/shared/components/PageHeader'
 import { Avatar, AvatarFallback } from '@/shared/ui/avatar'
@@ -26,6 +32,8 @@ export function AccountPage() {
   const { user, isAdmin, applySession } = useAuth()
   const accountMutation = useAccountMutation()
   const userMutation = useUserMutation()
+  const createMutation = useCreateUserMutation()
+  const deleteMutation = useDeleteUserMutation()
   const usersQuery = useUsersQuery(isAdmin)
 
   const [username, setUsername] = useState(user?.username ?? '')
@@ -39,6 +47,12 @@ export function AccountPage() {
   const [editPassword, setEditPassword] = useState('')
   const [editRole, setEditRole] = useState<UserRole>('user')
   const [adminError, setAdminError] = useState<string | null>(null)
+
+  const [showCreateForm, setShowCreateForm] = useState(false)
+  const [newUsername, setNewUsername] = useState('')
+  const [newUserPassword, setNewUserPassword] = useState('')
+  const [newUserRole, setNewUserRole] = useState<UserRole>('user')
+  const [newUserActive, setNewUserActive] = useState(true)
 
   useEffect(() => {
     setUsername(user?.username ?? '')
@@ -116,6 +130,44 @@ export function AccountPage() {
       setEditPassword('')
     } catch (err) {
       setAdminError(err instanceof Error ? err.message : 'Failed to update user')
+    }
+  }
+
+  const onCreateUser = async (event: FormEvent) => {
+    event.preventDefault()
+    setAdminError(null)
+    try {
+      await createMutation.mutateAsync({
+        username: newUsername.trim(),
+        password: newUserPassword,
+        role: newUserRole,
+        active: newUserActive,
+      })
+      setNewUsername('')
+      setNewUserPassword('')
+      setNewUserRole('user')
+      setNewUserActive(true)
+      setShowCreateForm(false)
+    } catch (err) {
+      setAdminError(err instanceof Error ? err.message : 'Failed to create user')
+    }
+  }
+
+  const onToggleActive = async (target: User) => {
+    setAdminError(null)
+    try {
+      await userMutation.mutateAsync({ id: target._id, payload: { active: !(target.active !== false) } })
+    } catch (err) {
+      setAdminError(err instanceof Error ? err.message : 'Failed to update user status')
+    }
+  }
+
+  const onDeleteUser = async (target: User) => {
+    setAdminError(null)
+    try {
+      await deleteMutation.mutateAsync(target._id)
+    } catch (err) {
+      setAdminError(err instanceof Error ? err.message : 'Failed to delete user')
     }
   }
 
@@ -245,19 +297,99 @@ export function AccountPage() {
               Manage users
             </CardTitle>
             <CardDescription>
-              Admin is the highest role. You can update existing accounts and assign only `user`
-              or `admin`.
+              Create, edit, enable/disable, or delete application users. Admins have full access;
+              users can view operations data and run day-to-day monitoring.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="rounded-lg border border-border/60 bg-secondary/20 px-3 py-2 text-sm text-muted-foreground">
-              NetPulse does not provide account creation from this page. New accounts are only
-              seeded during first-time bootstrap on an empty users collection.
-            </div>
             {adminError ? (
               <div className="rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
                 {adminError}
               </div>
+            ) : null}
+
+            <div className="flex justify-end">
+              <Button
+                type="button"
+                size="sm"
+                variant={showCreateForm ? 'ghost' : 'default'}
+                onClick={() => {
+                  setShowCreateForm((v) => !v)
+                  setAdminError(null)
+                }}
+              >
+                {showCreateForm ? 'Cancel' : (
+                  <>
+                    <Plus className="mr-1.5 h-4 w-4" />
+                    Add user
+                  </>
+                )}
+              </Button>
+            </div>
+
+            {showCreateForm ? (
+              <form
+                className="space-y-4 rounded-xl border border-border bg-secondary/20 p-4"
+                onSubmit={(e) => void onCreateUser(e)}
+              >
+                <h3 className="font-semibold">Create new user</h3>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label>Username</Label>
+                    <Input
+                      required
+                      minLength={3}
+                      value={newUsername}
+                      onChange={(e) => setNewUsername(e.target.value)}
+                      placeholder="Minimum 3 characters"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Password</Label>
+                    <Input
+                      type="password"
+                      required
+                      minLength={6}
+                      value={newUserPassword}
+                      onChange={(e) => setNewUserPassword(e.target.value)}
+                      placeholder="Minimum 6 characters"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Role</Label>
+                    <Select value={newUserRole} onValueChange={(v) => setNewUserRole(v as UserRole)}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select role" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {ASSIGNABLE_ROLES.map((r) => (
+                          <SelectItem key={r} value={r}>{r}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Status</Label>
+                    <Select
+                      value={newUserActive ? 'active' : 'inactive'}
+                      onValueChange={(v) => setNewUserActive(v === 'active')}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="active">Active</SelectItem>
+                        <SelectItem value="inactive">Inactive</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div className="flex justify-end">
+                  <Button type="submit" disabled={createMutation.isPending}>
+                    {createMutation.isPending ? 'Creating…' : 'Create user'}
+                  </Button>
+                </div>
+              </form>
             ) : null}
 
             <Table>
@@ -265,21 +397,54 @@ export function AccountPage() {
                 <TableRow>
                   <TableHead>Username</TableHead>
                   <TableHead>Role</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Created</TableHead>
                   <TableHead>Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {(usersQuery.data ?? []).map((row) => (
-                  <TableRow key={row._id}>
-                    <TableCell className="font-semibold">{row.username}</TableCell>
-                    <TableCell className="capitalize text-muted-foreground">{row.role}</TableCell>
-                    <TableCell>
-                      <Button type="button" size="sm" variant="secondary" onClick={() => openEdit(row)}>
-                        Edit
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {(usersQuery.data ?? []).map((row) => {
+                  const isActive = row.active !== false
+                  return (
+                    <TableRow key={row._id}>
+                      <TableCell className="font-semibold">{row.username}</TableCell>
+                      <TableCell className="capitalize text-muted-foreground">{row.role}</TableCell>
+                      <TableCell>
+                        <Badge variant={isActive ? 'default' : 'secondary'}>
+                          {isActive ? 'Active' : 'Inactive'}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {row.createdAt ? new Date(row.createdAt).toLocaleDateString() : '-'}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex gap-1.5">
+                          <Button type="button" size="sm" variant="secondary" onClick={() => openEdit(row)}>
+                            Edit
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => void onToggleActive(row)}
+                            disabled={userMutation.isPending}
+                          >
+                            {isActive ? 'Disable' : 'Enable'}
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="destructive"
+                            onClick={() => void onDeleteUser(row)}
+                            disabled={deleteMutation.isPending}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
               </TableBody>
             </Table>
 
