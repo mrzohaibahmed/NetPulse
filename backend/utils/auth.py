@@ -5,6 +5,7 @@ from pathlib import Path
 
 import bcrypt
 import jwt
+from bson import ObjectId
 from dotenv import load_dotenv
 from flask import g, jsonify, request
 
@@ -126,10 +127,29 @@ def require_auth(roles=None, allow_password_change=False):
                     "message": "Insufficient permissions",
                 }), 403
 
+            user_id = payload.get("sub")
+            username = payload.get("username")
+            from config.database import db as _auth_db  # noqa: PLC0415
+
+            user_doc = None
+            if user_id and ObjectId.is_valid(user_id):
+                user_doc = _auth_db.users.find_one(
+                    {"_id": ObjectId(user_id)}, {"active": 1}
+                )
+            if user_doc is None and username:
+                user_doc = _auth_db.users.find_one(
+                    {"username": username}, {"active": 1}
+                )
+            if user_doc and user_doc.get("active") is False:
+                return jsonify({
+                    "success": False,
+                    "message": "Account is disabled",
+                }), 403
+
             must_change = bool(payload.get("mustChangePassword"))
             g.user = {
-                "id": payload.get("sub"),
-                "username": payload.get("username"),
+                "id": user_id,
+                "username": username,
                 "role": role,
                 "mustChangePassword": must_change,
             }

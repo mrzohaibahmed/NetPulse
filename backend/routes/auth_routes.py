@@ -33,6 +33,7 @@ def serialize_user(user):
         "_id": str(user["_id"]),
         "username": user.get("username"),
         "role": normalize_role(user.get("role", "user")),
+        "active": user.get("active") is not False,
         "mustChangePassword": bool(user.get("mustChangePassword")),
         "createdAt": format_datetime(user.get("createdAt")),
         "updatedAt": format_datetime(user.get("updatedAt")),
@@ -96,6 +97,12 @@ def login():
                 payload["retryAfterSeconds"] = result.get("retryAfterSeconds")
                 return jsonify(payload), 429
             return jsonify(payload), 401
+
+        if user.get("active") is False:
+            return jsonify({
+                "success": False,
+                "message": "Account is disabled. Contact an administrator.",
+            }), 403
 
         clear_login_failures(username, ip)
 
@@ -285,11 +292,18 @@ def update_user(user_id):
         new_password = data.get("password") or data.get("newPassword") or ""
         raw_role = data.get("role")
         new_role = normalize_role(raw_role) if raw_role is not None else None
+        raw_active = data.get("active")
+        new_active = bool(raw_active) if raw_active is not None else None
 
-        if not new_username and not new_password and new_role is None:
+        if (
+            not new_username
+            and not new_password
+            and new_role is None
+            and new_active is None
+        ):
             return jsonify({
                 "success": False,
-                "message": "Provide a username, password, and/or role to update",
+                "message": "Provide a username, password, role, and/or active status to update",
             }), 400
 
         target_role = normalize_role(target.get("role"))
@@ -331,6 +345,20 @@ def update_user(user_id):
         if new_role is not None and new_role != target_role:
             update["role"] = new_role
 
+        if new_active is not None and new_active != (target.get("active") is not False):
+            update["active"] = new_active
+
+        if _is_active_admin(target) and _active_admin_count() <= 1:
+            would_lose_admin = (
+                update.get("active") is False
+                or ("role" in update and update["role"] != "admin")
+            )
+            if would_lose_admin:
+                return jsonify({
+                    "success": False,
+                    "message": "Cannot remove the last active administrator",
+                }), 400
+
         if len(update) == 1:
             return jsonify({
                 "success": False,
@@ -355,7 +383,9 @@ def update_user(user_id):
                 "usernameChanged": "username" in update,
                 "passwordChanged": "passwordHash" in update,
                 "roleChanged": "role" in update,
+                "activeChanged": "active" in update,
                 "role": updated.get("role"),
+                "active": updated.get("active") is not False,
             },
         )
 
@@ -367,3 +397,136 @@ def update_user(user_id):
 
     except Exception as error:
         return internal_error_response(error, message="Failed to update user")
+
+
+def _active_admin_count() -> int:
+    return db.users.count_documents({
+        "role": "admin",
+        "$or": [{"active": True}, {"active": {"$exists": False}}],
+    })
+
+
+def _is_active_admin(user_doc) -> bool:
+    return (
+        normalize_role(user_doc.get("role")) == "admin"
+        and user_doc.get("active") is not False
+    )
+
+
+@auth_bp.route("/users", methods=["POST"])
+@require_auth(roles=["admin"])
+def create_user():
+    try:
+        data = request.get_json() or {}
+        username = (data.get("username") or "").strip()
+        password = data.get("password") or ""
+        raw_role = data.get("role")
+        active = data.get("active")
+
+        if not username:
+            return jsonify({"success": False, "message": "Username is required"}), 400
+        if len(username) < 3:
+            return jsonify({
+                "success": False,
+                "message": "Username must be at least 3 characters",
+            }), 400
+        if not password:
+            return jsonify({"success": False, "message": "Password is required"}), 400
+        if len(password) < 6:
+            return jsonify({
+                "success": False,
+                "message": "Password must be at least 6 characters",
+            }), 400
+        if raw_role is None:
+            return jsonify({"success": False, "message": "Role is required"}), 400
+        if active is None:
+            return jsonify({"success": False, "message": "Active status is required"}), 400
+
+        role = normalize_role(raw_role)
+        if str(raw_role).strip().lower() not in VALID_ROLES:
+            return jsonify({
+                "success": False,
+                "message": f"Invalid role. Allowed: {', '.join(VALID_ROLES)}",
+            }), 400
+
+        if _username_taken(username):
+            return jsonify({
+                "success": False,
+                "message": "Username is already taken",
+            }), 409
+
+        now = datetime.now(timezone.utc)
+        doc = {
+            "username": username,
+            "passwordHash": hash_password(password),
+            "role": role,
+            "active": bool(active),
+            "mustChangePassword": False,
+            "createdAt": now,
+            "updatedAt": now,
+        }
+
+        try:
+            result = db.users.insert_one(doc)
+        except DuplicateKeyError:
+            return jsonify({
+                "success": False,
+                "message": "Username is already taken",
+            }), 409
+
+        created = db.users.find_one({"_id": result.inserted_id})
+
+        log_audit(
+            action="user_created",
+            entity_type="user",
+            entity_id=created["_id"],
+            details={
+                "username": created.get("username"),
+                "role": created.get("role"),
+                "active": created.get("active"),
+            },
+        )
+
+        return jsonify({
+            "success": True,
+            "message": "User created successfully",
+            "data": serialize_user(created),
+        }), 201
+
+    except Exception as error:
+        return internal_error_response(error, message="Failed to create user")
+
+
+@auth_bp.route("/users/<user_id>", methods=["DELETE"])
+@require_auth(roles=["admin"])
+def delete_user(user_id):
+    try:
+        if not ObjectId.is_valid(user_id):
+            return jsonify({"success": False, "message": "Invalid user ID"}), 400
+
+        target = db.users.find_one({"_id": ObjectId(user_id)})
+        if not target:
+            return jsonify({"success": False, "message": "User not found"}), 404
+
+        if _is_active_admin(target) and _active_admin_count() <= 1:
+            return jsonify({
+                "success": False,
+                "message": "Cannot delete the last active administrator",
+            }), 400
+
+        db.users.delete_one({"_id": target["_id"]})
+
+        log_audit(
+            action="user_deleted",
+            entity_type="user",
+            entity_id=target["_id"],
+            details={"username": target.get("username"), "role": target.get("role")},
+        )
+
+        return jsonify({
+            "success": True,
+            "message": "User deleted successfully",
+        }), 200
+
+    except Exception as error:
+        return internal_error_response(error, message="Failed to delete user")
