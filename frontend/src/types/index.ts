@@ -614,6 +614,7 @@ export interface PaginationParams {
   operStatus?: string
   mode?: string
   eligible?: boolean
+  critical?: boolean
   severity?: string
   state?: string
   safetyStatus?: string

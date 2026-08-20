@@ -51,6 +51,12 @@ def build_device_filter():
                 ]
             })
 
+    critical_raw = (request.args.get("critical") or "").strip().lower()
+    if critical_raw in ("true", "1", "yes"):
+        query["critical"] = True
+    elif critical_raw in ("false", "0", "no"):
+        query["critical"] = False
+
     search = (request.args.get("q") or "").strip()
     if search:
         pattern = re.compile(re.escape(search), re.IGNORECASE)

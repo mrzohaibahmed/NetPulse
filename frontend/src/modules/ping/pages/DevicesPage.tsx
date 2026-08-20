@@ -99,6 +99,12 @@ export function DevicesPage() {
     const type = searchParams.get('type')
     return type && type.trim() ? type : 'all'
   })
+  const [criticalFilter, setCriticalFilter] = useState(() => {
+    const critical = searchParams.get('critical')
+    if (critical === 'true') return 'critical'
+    if (critical === 'false') return 'non-critical'
+    return 'all'
+  })
   const [page, setPage] = useState(1)
   const [limit, setLimit] = useState(DEFAULT_LIMIT)
   const [sorting, setSorting] = useState<SortingState>([])
@@ -151,7 +157,7 @@ export function DevicesPage() {
 
   useEffect(() => {
     setPage(1)
-  }, [debouncedQuery, statusFilter, typeFilter, limit])
+  }, [debouncedQuery, statusFilter, typeFilter, criticalFilter, limit])
 
   useEffect(() => {
     const q = searchParams.get('q')
@@ -160,6 +166,10 @@ export function DevicesPage() {
     if (status != null && status !== statusFilter) setStatusFilter(status || 'all')
     const type = searchParams.get('type')
     if (type != null && type !== typeFilter) setTypeFilter(type || 'all')
+    const critical = searchParams.get('critical')
+    const nextCritical =
+      critical === 'true' ? 'critical' : critical === 'false' ? 'non-critical' : 'all'
+    if (critical != null && nextCritical !== criticalFilter) setCriticalFilter(nextCritical)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams])
 
@@ -177,6 +187,8 @@ export function DevicesPage() {
     q: debouncedQuery,
     status: statusFilter !== 'all' ? statusFilter : undefined,
     deviceType: typeFilter !== 'all' ? typeFilter : undefined,
+    critical:
+      criticalFilter === 'critical' ? true : criticalFilter === 'non-critical' ? false : undefined,
   })
 
   const devices = devicesQuery.data?.data ?? []
@@ -211,6 +223,15 @@ export function DevicesPage() {
     else next.set('status', status)
     setSearchParams(next, { replace: true })
     document.getElementById('inventory-section')?.scrollIntoView({ behavior: 'smooth' })
+  }
+
+  const handleCriticalFilterChange = (val: string) => {
+    setCriticalFilter(val)
+    const next = new URLSearchParams(searchParams)
+    if (val === 'critical') next.set('critical', 'true')
+    else if (val === 'non-critical') next.set('critical', 'false')
+    else next.delete('critical')
+    setSearchParams(next, { replace: true })
   }
 
   const columns = useMemo<ColumnDef<Device>[]>(
@@ -544,7 +565,9 @@ export function DevicesPage() {
               <Filter className="h-4 w-4 text-primary" />
               Filters
             </CardTitle>
-            <CardDescription>Narrow the inventory by hostname, IP, type, or status.</CardDescription>
+            <CardDescription>
+              Narrow the inventory by hostname, IP, type, status, or critical flag.
+            </CardDescription>
           </CardHeader>
           <CardContent>
             <div className="flex flex-wrap items-end gap-3">
@@ -609,6 +632,19 @@ export function DevicesPage() {
                   </SelectContent>
                 </Select>
               </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">Critical</label>
+                <Select value={criticalFilter} onValueChange={handleCriticalFilterChange}>
+                  <SelectTrigger className="w-[180px]">
+                    <SelectValue placeholder="Critical" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All devices</SelectItem>
+                    <SelectItem value="critical">Critical only</SelectItem>
+                    <SelectItem value="non-critical">Non-critical only</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
               <Button type="button" variant="secondary" onClick={() => void devicesQuery.refetch()}>
                 <RefreshCw className="h-4 w-4" />
                 Refresh
@@ -654,11 +690,23 @@ export function DevicesPage() {
           />
         ) : devices.length === 0 ? (
           <EmptyState
-            title={total === 0 && !debouncedQuery && statusFilter === 'all' ? 'No devices yet' : 'No matches'}
+            title={
+              total === 0 &&
+              !debouncedQuery &&
+              statusFilter === 'all' &&
+              typeFilter === 'all' &&
+              criticalFilter === 'all'
+                ? 'No devices yet'
+                : 'No matches'
+            }
             description={
-              total === 0 && !debouncedQuery && statusFilter === 'all'
+              total === 0 &&
+              !debouncedQuery &&
+              statusFilter === 'all' &&
+              typeFilter === 'all' &&
+              criticalFilter === 'all'
                 ? 'Add a device manually, import CSV, or discover hosts on your network.'
-                : 'Try a different search or status filter.'
+                : 'Try a different search or filter.'
             }
           />
         ) : (

@@ -73,6 +73,8 @@ function toQuery(params: PaginationParams = {}): string {
   if (params.mode && params.mode !== 'all') search.set('mode', params.mode)
   if (params.eligible === true) search.set('eligible', 'true')
   if (params.eligible === false) search.set('eligible', 'false')
+  if (params.critical === true) search.set('critical', 'true')
+  if (params.critical === false) search.set('critical', 'false')
   if (params.severity && params.severity !== 'all') {
     search.set('severity', params.severity)
   }
