@@ -38,10 +38,12 @@ def ensure_monitoring_idempotency_indexes() -> None:
             [("deviceId", ASCENDING)],
             unique=True,
             name="uniq_alerts_active_critical_offline",
+            # Partial indexes reject $ne ($not). Active alerts always store
+            # resolved/dismissed as False at insert time (see alert_service).
             partialFilterExpression={
                 "status": STATUS_OFFLINE_CRITICAL,
-                "resolved": {"$ne": True},
-                "dismissed": {"$ne": True},
+                "resolved": False,
+                "dismissed": False,
                 "deviceId": {"$type": "objectId"},
             },
         )
