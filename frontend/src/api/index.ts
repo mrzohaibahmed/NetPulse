@@ -12,6 +12,7 @@ import type {
   DevicePayload,
   DeviceStatusRow,
   DiscoveryResult,
+  DiscoveryDevice,
   EligibilityResult,
   InterfaceStat,
   IspConnection,
@@ -871,10 +872,57 @@ export const deleteNetwork = (id: string) =>
     method: 'DELETE',
   })
 
-export const scanNetworks = (payload: { networkIds?: string[]; scanAllEnabled?: boolean }) =>
+export const scanNetworks = (payload: {
+  networkIds?: string[]
+  scanAllEnabled?: boolean
+  scanId?: string
+}) =>
   apiRequest<DiscoveryResult>('/api/discovery/scan-networks', {
     method: 'POST',
     body: payload,
     timeoutMs: 300000,
+  })
+
+export const discoverDevice = (ipAddress: string) =>
+  apiRequest<DiscoveryResult>('/api/discovery/discover-device', {
+    method: 'POST',
+    body: { ipAddress },
+    timeoutMs: 60000,
+  })
+
+export const getDiscoveryScanProgress = (scanId: string) =>
+  apiRequest<{
+    success: boolean
+    progress: {
+      scanId: string
+      status: 'pending' | 'running' | 'complete' | 'failed'
+      total: number
+      completed: number
+      online: number
+      newlySaved: number
+      elapsedSeconds: number
+      percent: number
+    }
+  }>(`/api/discovery/scan-progress/${scanId}`)
+
+export const getDiscoveryEnrichmentStatus = (ipAddresses: string[]) =>
+  apiRequest<{
+    success: boolean
+    devices: Array<
+      Pick<
+        DiscoveryDevice,
+        | 'ipAddress'
+        | 'hostname'
+        | 'deviceType'
+        | 'vendor'
+        | 'operatingSystem'
+        | 'classificationConfidence'
+        | 'classificationMethod'
+        | 'discoveryStatus'
+      > & { discoveryEnrichmentError?: string | null }
+    >
+  }>('/api/discovery/enrichment-status', {
+    method: 'POST',
+    body: { ipAddresses },
   })
 

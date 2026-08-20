@@ -7,13 +7,12 @@ Used by nmap_service (manual / rescan / bulk) and discovery_service
 
 from __future__ import annotations
 
-import threading
 from typing import Any
 
 from bson import ObjectId
 from pymongo.errors import DuplicateKeyError
 
-from config.database import MAX_SCAN_THREADS, db
+from config.database import db
 from models.device import create_device
 from services.discovery.classifier import (
     ClassificationResult,
@@ -21,10 +20,14 @@ from services.discovery.classifier import (
     evidence_from_network_info,
     is_unknown_hostname,
     log_classification,
+    DEVICE_TYPE_UNKNOWN,
+)
+from services.discovery.enrichment import (
+    DISCOVERY_STATUS_PENDING,
+    enqueue_discovery_enrichment,
 )
 from services.discovery.identity_management import (
     apply_identity_fields_to_classification_update,
-    ownership_for_device_edit,
 )
 from services.discovery.ssh_hostname import (
     fetch_ssh_hostname,
@@ -37,9 +40,6 @@ from utils.monitor_logger import get_monitor_logger
 from utils.utc import utc_now
 
 logger = get_monitor_logger("discovery")
-
-# Bound concurrent Nmap work started from discovery sweeps.
-_nmap_semaphore = threading.Semaphore(max(1, int(MAX_SCAN_THREADS or 5)))
 
 
 def classification_fields(result: ClassificationResult) -> dict[str, Any]:
@@ -192,6 +192,7 @@ def _discovery_result_payload(
         "operatingSystem": device.get("operatingSystem"),
         "classificationConfidence": device.get("classificationConfidence"),
         "classificationMethod": device.get("classificationMethod"),
+        "discoveryStatus": device.get("discoveryStatus"),
         "nmapError": nmap_error,
     }
 
@@ -206,7 +207,7 @@ def enrich_online_host(
     Discovery enrichment for one online host.
 
     New device
-        Nmap → classify → insert (full pipeline).
+        Insert minimal device immediately → queue background Nmap enrichment.
 
     Existing device
         Skip Nmap and classification. Update only reachability fields and
@@ -242,77 +243,33 @@ def enrich_online_host(
             saved=False,
         )
 
-    # ── New device: full Nmap → classify → insert ─────────────────────────
-    from services.discovery_service import get_hostname  # noqa: PLC0415
-    from services.nmap_service import scan_device_nmap  # noqa: PLC0415
-
-    network_info = None
-    nmap_error = None
-
-    with _nmap_semaphore:
-        try:
-            network_info = scan_device_nmap(ip_address, profile="quick")
-        except Exception as exc:  # noqa: BLE001
-            nmap_error = str(exc)
-            logger.warning(
-                "[DISCOVERY] Nmap skipped/failed | host=%s | %s",
-                ip_address,
-                exc,
-            )
-
-    # Seed PTR from OS reverse DNS when nmap did not return a hostname.
-    dns_hostname = get_hostname(ip_address) or ""
-    if network_info is None:
-        network_info = {
-            "hostname": dns_hostname,
-            "macAddress": "",
-            "vendor": "",
-            "os": {"name": "", "family": "", "generation": "", "accuracy": ""},
-            "deviceType": "",
-            "ports": [],
-            "services": [],
-            "lastScan": now,
-        }
-    elif not (network_info.get("hostname") or "").strip() and dns_hostname:
-        network_info = dict(network_info)
-        network_info["hostname"] = dns_hostname
-
-    result, _evidence = classify_network_info(
-        network_info,
-        ip_address=ip_address,
-        existing=None,
-        try_ssh=False,
-    )
-
+    # ── New device: insert immediately, enrich in background ───────────────
     device = create_device(
-        hostname=result.hostname if not is_unknown_hostname(result.hostname) else (
-            dns_hostname or "Unknown"
-        ),
+        hostname="Unknown",
         ip_address=ip_address,
-        device_type=result.device_type,
+        device_type=DEVICE_TYPE_UNKNOWN,
         critical=False,
         monitor=True,
     )
-    # Keep monitoring fields consistent on insert (Phase 3).
     device["status"] = "Online"
     device["responseTime"] = ping_result.get("responseTime")
     device["lastSeen"] = ping_result.get("lastSeen") or now
     device["lastCheckedAt"] = now
     device["consecutiveFailures"] = 0
     device["updatedAt"] = now
-    device["networkInfo"] = network_info
-    device["vendor"] = result.vendor or None
-    device["operatingSystem"] = result.operating_system or None
-    device["classificationConfidence"] = int(result.confidence)
-    device["classificationMethod"] = result.classification_method
-    device["discoverySource"] = result.discovery_source
-    if is_unknown_hostname(device["hostname"]):
-        device["hostname"] = "Unknown"
+    device["discoveryStatus"] = DISCOVERY_STATUS_PENDING
+    device["discoverySource"] = "discovery"
 
     try:
         insert_result = db.devices.insert_one(device)
         device["_id"] = insert_result.inserted_id
         saved = True
+        logger.info(
+            "[DISCOVERY] Device inserted | ip=%s | deviceId=%s | discoveryStatus=pending",
+            ip_address,
+            insert_result.inserted_id,
+        )
+        enqueue_discovery_enrichment(insert_result.inserted_id, ip_address)
     except DuplicateKeyError:
         logger.info(
             "[DEVICE DUPLICATE] ip=%s using existing inventory record",
@@ -321,7 +278,6 @@ def enrich_online_host(
         existing_doc = db.devices.find_one({"ipAddress": ip_address})
         if not existing_doc:
             raise
-        # Race with another inserter — sync monitoring fields consistently.
         from services.monitor_service import apply_ping_result  # noqa: PLC0415
 
         apply_ping_result(existing_doc, ping_result, scan_type="Discovery")
@@ -333,5 +289,5 @@ def enrich_online_host(
         ping_result=ping_result,
         device=device,
         saved=saved,
-        nmap_error=nmap_error,
+        nmap_error=None,
     )

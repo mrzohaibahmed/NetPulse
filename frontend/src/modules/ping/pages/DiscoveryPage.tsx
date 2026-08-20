@@ -24,6 +24,7 @@ import {
   useNetworkMutation,
   useScanNetworksMutation,
 } from '@/hooks/queries'
+import { getDiscoveryEnrichmentStatus, getDiscoveryScanProgress } from '@/api'
 import { formatMs } from '@/utils/format'
 import type { DiscoveryDevice, DiscoverySummary, NetworkProfile } from '@/types'
 import { displayDeviceType } from '@/modules/ping/constants/devices'
@@ -46,6 +47,17 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { toast } from 'sonner'
 
 // Helper utilities for IP and Subnet matching
+function formatElapsed(totalSeconds: number): string {
+  const seconds = Math.max(0, Math.floor(totalSeconds))
+  const hours = Math.floor(seconds / 3600)
+  const minutes = Math.floor((seconds % 3600) / 60)
+  const remainder = seconds % 60
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, '0')}:${String(remainder).padStart(2, '0')}`
+  }
+  return `${minutes}:${String(remainder).padStart(2, '0')}`
+}
+
 function ipToLong(ip: string): number {
   return ip.split('.').reduce((ipInt, octet) => (ipInt << 8) + parseInt(octet, 10), 0) >>> 0
 }
@@ -112,7 +124,17 @@ export function DiscoveryPage() {
   const [summary, setSummary] = useState<DiscoverySummary | null>(null)
   const [devices, setDevices] = useState<DiscoveryDevice[]>([])
   const [showOnlineOnly, setShowOnlineOnly] = useState(false)
-  const [progress, setProgress] = useState(0)
+  const [scanId, setScanId] = useState<string | null>(null)
+  const [scanStartedAt, setScanStartedAt] = useState<number | null>(null)
+  const [elapsedSeconds, setElapsedSeconds] = useState(0)
+  const [scanProgress, setScanProgress] = useState<{
+    percent: number
+    completed: number
+    total: number
+    online: number
+    newlySaved: number
+    status: string
+  } | null>(null)
 
   // Filter Discovered Devices by Network
   const [filterNetworkId, setFilterNetworkId] = useState<string>('all')
@@ -144,19 +166,6 @@ export function DiscoveryPage() {
       setSnmpCommunity('public')
     }
   }, [editingNetwork, isDialogOpen])
-
-  // Progress Bar Animation
-  useEffect(() => {
-    if (!scanMutation.isPending) {
-      setProgress(0)
-      return
-    }
-    setProgress(8)
-    const timer = window.setInterval(() => {
-      setProgress((p) => (p >= 92 ? p : p + Math.random() * 8))
-    }, 600)
-    return () => window.clearInterval(timer)
-  }, [scanMutation.isPending])
 
   const networks = networksQuery.data ?? []
 
@@ -196,6 +205,87 @@ export function DiscoveryPage() {
   const onlineCount = networkFilteredDevices.filter((d) => d.status === 'Online').length
   const offlineCount = networkFilteredDevices.filter((d) => d.status !== 'Online').length
   const newSavedCount = networkFilteredDevices.filter((d) => d.saved).length
+  const enrichingCount = networkFilteredDevices.filter(
+    (d) => d.discoveryStatus === 'pending' || d.discoveryStatus === 'enriching',
+  ).length
+  const readyCount = networkFilteredDevices.filter(
+    (d) => d.discoveryStatus === 'completed' || d.discoveryStatus == null,
+  ).length
+
+  const mergeEnrichmentUpdates = (
+    current: DiscoveryDevice[],
+    updates: Awaited<ReturnType<typeof getDiscoveryEnrichmentStatus>>['devices'],
+  ) => {
+    const byIp = new Map(updates.map((row) => [row.ipAddress, row]))
+    return current.map((device) => {
+      const update = byIp.get(device.ipAddress)
+      if (!update) return device
+      return {
+        ...device,
+        hostname: update.hostname ?? device.hostname,
+        deviceType: update.deviceType ?? device.deviceType,
+        vendor: update.vendor ?? device.vendor,
+        operatingSystem: update.operatingSystem ?? device.operatingSystem,
+        classificationConfidence:
+          update.classificationConfidence ?? device.classificationConfidence,
+        classificationMethod: update.classificationMethod ?? device.classificationMethod,
+        discoveryStatus: update.discoveryStatus ?? device.discoveryStatus,
+        nmapError: update.discoveryEnrichmentError ?? device.nmapError,
+      }
+    })
+  }
+
+  const pendingEnrichmentKey = useMemo(
+    () =>
+      devices
+        .filter((d) => d.discoveryStatus === 'pending' || d.discoveryStatus === 'enriching')
+        .map((d) => d.ipAddress)
+        .sort()
+        .join(','),
+    [devices],
+  )
+
+  useEffect(() => {
+    if (!pendingEnrichmentKey) {
+      return
+    }
+
+    const ipAddresses = pendingEnrichmentKey.split(',')
+    let attempts = 0
+    let cancelled = false
+
+    const poll = async () => {
+      if (cancelled) return
+      attempts += 1
+      try {
+        const response = await getDiscoveryEnrichmentStatus(ipAddresses)
+        if (cancelled) return
+        setDevices((current) => mergeEnrichmentUpdates(current, response.devices))
+        const stillPending = response.devices.some(
+          (d) => d.discoveryStatus === 'pending' || d.discoveryStatus === 'enriching',
+        )
+        if (!stillPending || attempts >= 18) {
+          cancelled = true
+          window.clearInterval(timer)
+        }
+      } catch {
+        if (attempts >= 18) {
+          cancelled = true
+          window.clearInterval(timer)
+        }
+      }
+    }
+
+    const timer = window.setInterval(() => {
+      void poll()
+    }, 10_000)
+    void poll()
+
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [pendingEnrichmentKey])
 
   const pagination = useClientPagination(visible, 25)
   const { reset } = pagination
@@ -203,6 +293,55 @@ export function DiscoveryPage() {
   useEffect(() => {
     reset()
   }, [showOnlineOnly, filterNetworkId, devices, reset])
+
+  const scanning = scanMutation.isPending
+
+  useEffect(() => {
+    if (!scanning || scanStartedAt == null) {
+      return
+    }
+    setElapsedSeconds(Math.floor((Date.now() - scanStartedAt) / 1000))
+    const timer = window.setInterval(() => {
+      setElapsedSeconds(Math.floor((Date.now() - scanStartedAt) / 1000))
+    }, 250)
+    return () => window.clearInterval(timer)
+  }, [scanning, scanStartedAt])
+
+  useEffect(() => {
+    if (!scanning || !scanId) {
+      return
+    }
+
+    let cancelled = false
+
+    const poll = async () => {
+      try {
+        const response = await getDiscoveryScanProgress(scanId)
+        if (cancelled) return
+        const progress = response.progress
+        setScanProgress({
+          percent: progress.percent,
+          completed: progress.completed,
+          total: progress.total,
+          online: progress.online,
+          newlySaved: progress.newlySaved,
+          status: progress.status,
+        })
+      } catch {
+        // Non-fatal — scan POST is still the source of truth.
+      }
+    }
+
+    void poll()
+    const timer = window.setInterval(() => {
+      void poll()
+    }, 750)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [scanning, scanId])
 
   if (!isAdmin) return <Navigate to="/" replace />
 
@@ -276,23 +415,52 @@ export function DiscoveryPage() {
   }
 
   const runScan = async (payload: { networkIds?: string[]; scanAllEnabled?: boolean }) => {
+    const nextScanId = crypto.randomUUID()
     setSummary(null)
     setDevices([])
+    setScanId(nextScanId)
+    setScanStartedAt(Date.now())
+    setElapsedSeconds(0)
+    setScanProgress({
+      percent: 0,
+      completed: 0,
+      total: 0,
+      online: 0,
+      newlySaved: 0,
+      status: 'pending',
+    })
     try {
-      const result = await scanMutation.mutateAsync(payload)
-      setProgress(100)
-      setSummary(result.summary)
+      const result = await scanMutation.mutateAsync({ ...payload, scanId: nextScanId })
+      const enriching = result.devices.filter(
+        (d) => d.discoveryStatus === 'pending' || d.discoveryStatus === 'enriching',
+      ).length
+      setSummary({ ...result.summary, enriching })
       setDevices(result.devices)
+      setScanProgress({
+        percent: 100,
+        completed: result.summary.totalScanned,
+        total: result.summary.totalScanned,
+        online: result.summary.online,
+        newlySaved: result.summary.newlySaved ?? 0,
+        status: 'complete',
+      })
 
       if (result.summary.online === 0) {
         toast.message('No online hosts found in the scanned targets.')
       } else if ((result.summary.newlySaved ?? 0) === 0) {
         toast.success('Scan complete. All online hosts were already monitored.')
+      } else if (enriching > 0) {
+        toast.success(
+          `Saved ${result.summary.newlySaved} new device(s). ${enriching} still enriching in background.`,
+        )
       } else {
         toast.success(`Scan complete. Saved ${result.summary.newlySaved} new device(s).`)
       }
     } catch {
       // error handled in mutation
+    } finally {
+      setScanId(null)
+      setScanStartedAt(null)
     }
   }
 
@@ -312,8 +480,6 @@ export function DiscoveryPage() {
     runScan({ scanAllEnabled: true })
     scrollToProgress()
   }
-
-  const scanning = scanMutation.isPending
 
   return (
     <div className="np-page">
@@ -462,7 +628,7 @@ export function DiscoveryPage() {
         <section id="discovery-progress-section" className="space-y-4" aria-label="Discovery progress">
           <SectionHeading
             title="Discovery Progress"
-            description="Probing hosts in parallel across the selected target ranges."
+            description="Pinging hosts in parallel across the selected target ranges."
           />
           <Card className="glass overflow-hidden rounded-xl border-l-[3px] border-l-primary">
             <CardContent className="space-y-6 py-8">
@@ -475,21 +641,36 @@ export function DiscoveryPage() {
                   <Radar className="h-8 w-8" />
                 </motion.div>
                 <div className="min-w-0 flex-1 space-y-1">
-                  <p className="text-lg font-semibold tracking-tight">Scanning targets</p>
-                  <p className="text-sm text-muted-foreground">Pinging hosts in parallel using Multi-Class ranges…</p>
+                  <p className="text-lg font-semibold tracking-tight">Scanning network</p>
+                  <p className="text-sm text-muted-foreground">
+                    {scanProgress && scanProgress.total > 0
+                      ? `Pinged ${scanProgress.completed} of ${scanProgress.total} hosts. New devices are saved immediately; Nmap enrichment continues in the background.`
+                      : 'Resolving scan targets, then pinging hosts in parallel.'}
+                  </p>
                 </div>
                 <div className="text-center sm:text-right">
                   <p className="text-3xl font-bold tabular-nums tracking-tight text-primary">
-                    {Math.round(progress)}%
+                    {scanProgress?.percent ?? 0}%
                   </p>
-                  <p className="text-xs uppercase tracking-wider text-muted-foreground">Complete</p>
+                  <p className="text-xs uppercase tracking-wider text-muted-foreground">
+                    {formatElapsed(elapsedSeconds)} elapsed
+                  </p>
                 </div>
               </div>
               <div className="space-y-2">
-                <Progress value={progress} className="h-3" />
-                <div className="flex justify-between text-xs text-muted-foreground">
-                  <span>Initializing sweep</span>
-                  <span>Awaiting results</span>
+                <Progress value={scanProgress?.percent ?? 0} className="h-3" />
+                <div className="flex flex-wrap justify-between gap-2 text-xs text-muted-foreground">
+                  <span>
+                    {scanProgress && scanProgress.total > 0
+                      ? `${scanProgress.completed} / ${scanProgress.total} hosts`
+                      : 'Preparing scan'}
+                  </span>
+                  <span>
+                    Online {scanProgress?.online ?? 0}
+                    {scanProgress && scanProgress.newlySaved > 0
+                      ? ` · ${scanProgress.newlySaved} new`
+                      : ''}
+                  </span>
                 </div>
               </div>
             </CardContent>
@@ -569,6 +750,7 @@ export function DiscoveryPage() {
                         <TableHead>Confidence</TableHead>
                         <TableHead>Status</TableHead>
                         <TableHead>RTT</TableHead>
+                        <TableHead>Enrichment</TableHead>
                         <TableHead>Saved</TableHead>
                       </TableRow>
                     </TableHeader>
@@ -605,6 +787,22 @@ export function DiscoveryPage() {
                             <StatusBadge status={device.status} />
                           </TableCell>
                           <TableCell className="mono">{formatMs(device.responseTime)}</TableCell>
+                          <TableCell>
+                            {device.saved &&
+                            (device.discoveryStatus === 'pending' ||
+                              device.discoveryStatus === 'enriching') ? (
+                              <Badge variant="secondary" className="gap-1">
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                                Enriching
+                              </Badge>
+                            ) : device.discoveryStatus === 'failed' ? (
+                              <Badge variant="danger">Enrichment failed</Badge>
+                            ) : device.saved ? (
+                              <Badge variant="outline">Ready</Badge>
+                            ) : (
+                              <span className="text-sm text-muted-foreground">—</span>
+                            )}
+                          </TableCell>
                           <TableCell>
                             {device.saved ? (
                               <Badge variant="default">New device</Badge>
@@ -647,6 +845,17 @@ export function DiscoveryPage() {
             <KpiCard label="Online" value={onlineCount} icon={CheckCircle2} tone="success" />
             <KpiCard label="Offline" value={offlineCount} icon={NetIcon} tone="danger" />
             <KpiCard label="Newly saved" value={newSavedCount} icon={Upload} tone="accent" />
+            {enrichingCount > 0 ? (
+              <KpiCard
+                label="Enriching"
+                value={enrichingCount}
+                icon={Loader2}
+                tone="accent"
+              />
+            ) : null}
+            {readyCount > 0 && enrichingCount === 0 && newSavedCount > 0 ? (
+              <KpiCard label="Ready" value={readyCount} icon={CheckCircle2} tone="success" />
+            ) : null}
           </div>
         </section>
       ) : null}

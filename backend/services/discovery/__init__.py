@@ -15,6 +15,13 @@ from services.discovery.apply import (
     apply_classification_to_device,
     enrich_online_host,
 )
+from services.discovery.enrichment import (
+    DISCOVERY_STATUS_COMPLETED,
+    DISCOVERY_STATUS_ENRICHING,
+    DISCOVERY_STATUS_FAILED,
+    DISCOVERY_STATUS_PENDING,
+    enqueue_discovery_enrichment,
+)
 
 __all__ = [
     "ClassificationEvidence",
@@ -23,4 +30,9 @@ __all__ = [
     "evidence_from_network_info",
     "apply_classification_to_device",
     "enrich_online_host",
+    "DISCOVERY_STATUS_PENDING",
+    "DISCOVERY_STATUS_ENRICHING",
+    "DISCOVERY_STATUS_COMPLETED",
+    "DISCOVERY_STATUS_FAILED",
+    "enqueue_discovery_enrichment",
 ]

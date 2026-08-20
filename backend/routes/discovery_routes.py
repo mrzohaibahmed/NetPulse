@@ -1,4 +1,5 @@
 import ipaddress
+import re
 from utils.api_errors import internal_error_response
 from flask import Blueprint, jsonify, request
 from bson import ObjectId
@@ -12,6 +13,11 @@ from utils.utc import utc_now
 from utils.ip_parser import parse_scan_targets
 
 discovery_bp = Blueprint("discovery", __name__)
+
+IPV4_RE = re.compile(
+    r"^(?:(?:25[0-5]|2[0-4]\d|[01]?\d?\d)\.){3}"
+    r"(?:25[0-5]|2[0-4]\d|[01]?\d?\d)$"
+)
 
 
 # ── Network Stats Helper ──────────────────────────────────────────────────────
@@ -301,7 +307,8 @@ def scan_range():
             }), 400
 
         from services.discovery_service import discover_devices
-        devices = discover_devices(start_ip, end_ip)
+        scan_id = data.get("scanId")
+        devices = discover_devices(start_ip, end_ip, scan_id=scan_id)
 
         online = sum(1 for device in devices if device["status"] == "Online")
         offline = sum(1 for device in devices if device["status"] == "Offline")
@@ -325,6 +332,144 @@ def scan_range():
         }), 400
     except Exception as error:
         return internal_error_response(error, message="Failed to scan IP range")
+
+
+@discovery_bp.route("/discovery/discover-device", methods=["POST"])
+@require_auth(roles=["admin"])
+def discover_device():
+    """Ping a single IP and auto-save if online (Nmap enrichment runs in background)."""
+    try:
+        data = request.get_json() or {}
+        ip_address = (data.get("ipAddress") or "").strip()
+
+        if not ip_address:
+            return jsonify({
+                "success": False,
+                "message": "ipAddress is required",
+            }), 400
+
+        if not IPV4_RE.match(ip_address):
+            return jsonify({
+                "success": False,
+                "message": "Invalid IPv4 address",
+            }), 400
+
+        from services.discovery_service import scan_single_ip
+
+        device_row = scan_single_ip(ip_address)
+        online = 1 if device_row.get("status") == "Online" else 0
+        offline = 0 if online else 1
+        newly_saved = 1 if device_row.get("saved") else 0
+
+        return jsonify({
+            "success": True,
+            "summary": {
+                "totalScanned": 1,
+                "online": online,
+                "offline": offline,
+                "newlySaved": newly_saved,
+            },
+            "devices": [device_row],
+        }), 200
+    except Exception as error:
+        return internal_error_response(error, message="Failed to discover device")
+
+
+@discovery_bp.route("/discovery/enrichment-status", methods=["POST"])
+@require_auth(roles=["admin"])
+def enrichment_status():
+    """Return discovery enrichment status for a set of IP addresses."""
+    try:
+        data = request.get_json() or {}
+        ip_addresses = data.get("ipAddresses") or []
+
+        if not isinstance(ip_addresses, list) or not ip_addresses:
+            return jsonify({
+                "success": False,
+                "message": "ipAddresses must be a non-empty array",
+            }), 400
+
+        normalized = []
+        for raw in ip_addresses:
+            ip = str(raw).strip()
+            if ip and IPV4_RE.match(ip):
+                normalized.append(ip)
+
+        if not normalized:
+            return jsonify({
+                "success": False,
+                "message": "No valid IPv4 addresses provided",
+            }), 400
+
+        cursor = db.devices.find(
+            {"ipAddress": {"$in": normalized}},
+            {
+                "ipAddress": 1,
+                "hostname": 1,
+                "deviceType": 1,
+                "vendor": 1,
+                "operatingSystem": 1,
+                "classificationConfidence": 1,
+                "classificationMethod": 1,
+                "discoveryStatus": 1,
+                "discoveryEnrichmentError": 1,
+            },
+        )
+
+        devices = []
+        for doc in cursor:
+            devices.append({
+                "ipAddress": doc.get("ipAddress"),
+                "hostname": doc.get("hostname"),
+                "deviceType": doc.get("deviceType"),
+                "vendor": doc.get("vendor"),
+                "operatingSystem": doc.get("operatingSystem"),
+                "classificationConfidence": doc.get("classificationConfidence"),
+                "classificationMethod": doc.get("classificationMethod"),
+                "discoveryStatus": doc.get("discoveryStatus"),
+                "discoveryEnrichmentError": doc.get("discoveryEnrichmentError"),
+            })
+
+        return jsonify({
+            "success": True,
+            "devices": devices,
+        }), 200
+    except Exception as error:
+        return internal_error_response(error, message="Failed to fetch enrichment status")
+
+
+@discovery_bp.route("/discovery/scan-progress/<scan_id>", methods=["GET"])
+@require_auth(roles=["admin"])
+def scan_progress(scan_id):
+    """Return live ping-sweep progress for an in-flight discovery scan."""
+    try:
+        from services.discovery_service import get_scan_progress, is_valid_scan_id
+
+        if not is_valid_scan_id(scan_id):
+            return jsonify({
+                "success": False,
+                "message": "Invalid scanId",
+            }), 400
+
+        progress = get_scan_progress(scan_id)
+        if progress is None:
+            return jsonify({
+                "success": True,
+                "progress": {
+                    "scanId": scan_id,
+                    "status": "pending",
+                    "total": 0,
+                    "completed": 0,
+                    "online": 0,
+                    "newlySaved": 0,
+                    "elapsedSeconds": 0,
+                    "percent": 0,
+                },
+            }), 200
+
+        return jsonify({"success": True, "progress": progress}), 200
+    except Exception as error:
+        return internal_error_response(error, message="Failed to fetch scan progress")
 
 
 @discovery_bp.route("/discovery/scan-networks", methods=["POST"])
@@ -372,8 +517,8 @@ def scan_networks():
                 "message": "No IP addresses resolved from the selected scan targets",
             }), 400
 
-        # Run sweep
-        devices = discover_ips(resolved_ips)
+        scan_id = data.get("scanId")
+        devices = discover_ips(resolved_ips, scan_id=scan_id)
 
         online = sum(1 for device in devices if device["status"] == "Online")
         offline = sum(1 for device in devices if device["status"] == "Offline")

@@ -562,6 +562,8 @@ export interface DiscoveryDevice {
   operatingSystem?: string | null
   classificationConfidence?: number | null
   classificationMethod?: string | null
+  discoveryStatus?: 'pending' | 'enriching' | 'completed' | 'failed' | null
+  nmapError?: string | null
 }
 
 export interface DiscoverySummary {
@@ -569,6 +571,7 @@ export interface DiscoverySummary {
   online: number
   offline: number
   newlySaved?: number
+  enriching?: number
 }
 
 export interface NetworkHint {

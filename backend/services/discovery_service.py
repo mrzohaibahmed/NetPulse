@@ -1,9 +1,111 @@
 import ipaddress
+import re
 import socket
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from config.database import db
 from services.ping_service import ping_device
+from utils.monitor_logger import get_monitor_logger
+
+logger = get_monitor_logger("discovery")
+
+_SCAN_ID_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
+_SCAN_PROGRESS_TTL_SECONDS = 1800
+_scan_progress_lock = threading.Lock()
+_scan_progress: dict[str, dict] = {}
+
+
+def is_valid_scan_id(scan_id) -> bool:
+    return bool(scan_id) and bool(_SCAN_ID_RE.match(str(scan_id).strip()))
+
+
+def _prune_scan_progress(now: float | None = None) -> None:
+    cutoff = (now if now is not None else time.monotonic()) - _SCAN_PROGRESS_TTL_SECONDS
+    stale = [
+        key
+        for key, value in _scan_progress.items()
+        if float(value.get("startedMonotonic") or 0) < cutoff
+    ]
+    for key in stale:
+        _scan_progress.pop(key, None)
+
+
+def begin_scan_progress(scan_id: str | None, total: int) -> None:
+    if not is_valid_scan_id(scan_id):
+        return
+    now = time.monotonic()
+    with _scan_progress_lock:
+        _prune_scan_progress(now)
+        _scan_progress[str(scan_id).strip()] = {
+            "status": "running",
+            "total": int(total),
+            "completed": 0,
+            "online": 0,
+            "newlySaved": 0,
+            "startedMonotonic": now,
+            "elapsedSeconds": 0.0,
+        }
+
+
+def _record_scan_result(scan_id: str | None, row: dict | None) -> None:
+    if not is_valid_scan_id(scan_id):
+        return
+    key = str(scan_id).strip()
+    with _scan_progress_lock:
+        state = _scan_progress.get(key)
+        if not state:
+            return
+        state["completed"] = int(state.get("completed") or 0) + 1
+        if (row or {}).get("status") == "Online":
+            state["online"] = int(state.get("online") or 0) + 1
+        if (row or {}).get("saved"):
+            state["newlySaved"] = int(state.get("newlySaved") or 0) + 1
+        started = float(state.get("startedMonotonic") or time.monotonic())
+        state["elapsedSeconds"] = round(time.monotonic() - started, 1)
+
+
+def finish_scan_progress(scan_id: str | None, *, status: str = "complete") -> None:
+    if not is_valid_scan_id(scan_id):
+        return
+    key = str(scan_id).strip()
+    with _scan_progress_lock:
+        state = _scan_progress.get(key)
+        if not state:
+            return
+        started = float(state.get("startedMonotonic") or time.monotonic())
+        state["elapsedSeconds"] = round(time.monotonic() - started, 1)
+        state["status"] = status
+        if status == "complete":
+            state["completed"] = int(state.get("total") or state.get("completed") or 0)
+
+
+def get_scan_progress(scan_id: str | None) -> dict | None:
+    if not is_valid_scan_id(scan_id):
+        return None
+    key = str(scan_id).strip()
+    with _scan_progress_lock:
+        state = _scan_progress.get(key)
+        if not state:
+            return None
+        started = float(state.get("startedMonotonic") or time.monotonic())
+        elapsed = round(time.monotonic() - started, 1)
+        total = max(int(state.get("total") or 0), 0)
+        completed = min(int(state.get("completed") or 0), total) if total else int(state.get("completed") or 0)
+        percent = 0 if total <= 0 else min(100, int((completed / total) * 100))
+        return {
+            "scanId": key,
+            "status": state.get("status") or "running",
+            "total": total,
+            "completed": completed,
+            "online": int(state.get("online") or 0),
+            "newlySaved": int(state.get("newlySaved") or 0),
+            "elapsedSeconds": elapsed,
+            "percent": percent,
+        }
 
 
 def get_hostname(ip_address, timeout=1.0):
@@ -94,27 +196,54 @@ def scan_single_ip(ip_address):
         }
 
 
-def discover_ips(ip_addresses):
+def discover_ips(ip_addresses, scan_id=None):
     if len(ip_addresses) > 1024:
         raise ValueError("Scan target list is too large. Maximum 1024 addresses per scan.")
 
-    results = []
-    with ThreadPoolExecutor(max_workers=20) as executor:
-        futures = [
-            executor.submit(scan_single_ip, ip)
-            for ip in ip_addresses
-        ]
+    started = time.monotonic()
+    target_count = len(ip_addresses)
+    logger.info("[DISCOVERY] Scan started | targets=%s | scanId=%s", target_count, scan_id or "-")
+    begin_scan_progress(scan_id, target_count)
 
-        for future in as_completed(futures):
-            results.append(future.result())
+    results = []
+    try:
+        with ThreadPoolExecutor(max_workers=20) as executor:
+            futures = [
+                executor.submit(scan_single_ip, ip)
+                for ip in ip_addresses
+            ]
+
+            for future in as_completed(futures):
+                row = future.result()
+                results.append(row)
+                _record_scan_result(scan_id, row)
+        finish_scan_progress(scan_id, status="complete")
+    except Exception:
+        finish_scan_progress(scan_id, status="failed")
+        raise
 
     results.sort(
         key=lambda item: ipaddress.IPv4Address(item["ipAddress"])
     )
+
+    elapsed = round(time.monotonic() - started, 2)
+    online = sum(1 for item in results if item.get("status") == "Online")
+    newly_saved = sum(1 for item in results if item.get("saved"))
+    existing_online = online - newly_saved
+    logger.info(
+        "[DISCOVERY] Scan completed | targets=%s | online=%s | new=%s | "
+        "existingOnline=%s | elapsed=%ss | scanId=%s",
+        target_count,
+        online,
+        newly_saved,
+        existing_online,
+        elapsed,
+        scan_id or "-",
+    )
     return results
 
 
-def discover_devices(start_ip, end_ip):
+def discover_devices(start_ip, end_ip, scan_id=None):
     try:
         start = ipaddress.IPv4Address(start_ip)
         end = ipaddress.IPv4Address(end_ip)
@@ -132,4 +261,4 @@ def discover_devices(start_ip, end_ip):
         str(ipaddress.IPv4Address(ip))
         for ip in range(int(start), int(end) + 1)
     ]
-    return discover_ips(ip_addresses)
+    return discover_ips(ip_addresses, scan_id=scan_id)

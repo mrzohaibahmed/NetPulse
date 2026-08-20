@@ -1217,7 +1217,7 @@ export function useNetworkMutation() {
 export function useScanNetworksMutation() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (payload: { networkIds?: string[]; scanAllEnabled?: boolean }) =>
+    mutationFn: (payload: { networkIds?: string[]; scanAllEnabled?: boolean; scanId?: string }) =>
       scanNetworks(payload),
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ['devices'] })
