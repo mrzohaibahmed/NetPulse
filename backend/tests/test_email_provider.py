@@ -55,7 +55,9 @@ os.environ.setdefault(
 from services.settings_service import normalize_provider, _resolve_default_provider  # noqa: E402
 from services.email_service import (  # noqa: E402
     PROVIDER_PRESETS,
+    _authenticate_smtp,
     _classify_smtp_error,
+    _open_smtp_connection,
     send_email,
     send_email_with_result,
 )
@@ -646,6 +648,196 @@ class TestPasswordNotExposed(unittest.TestCase):
         self.assertEqual(smtp["provider"], "gmail")
         # Must have fromName
         self.assertIn("fromName", smtp)
+
+
+# ---------------------------------------------------------------------------
+# SMTP security mode selection (port 465 SSL vs 587 STARTTLS)
+# ---------------------------------------------------------------------------
+
+class TestSmtpSecurityModeSelection(unittest.TestCase):
+    """Port 465 must use SMTP_SSL; port 587 uses SMTP + optional STARTTLS."""
+
+    def _send(
+        self,
+        *,
+        host="smtp.example.com",
+        port=587,
+        use_tls=True,
+        user="mailbox@example.com",
+        password="secret",
+        from_address="mailbox@example.com",
+        to_address="alerts@example.com",
+        provider="gmail",
+        use_with_result=False,
+    ):
+        settings = {
+            "smtp": _smtp_cfg(
+                provider=provider,
+                host=host,
+                port=port,
+                user=user,
+                password=password,
+                from_address=from_address,
+                to_address=to_address,
+                use_tls=use_tls,
+            )
+        }
+        mock_server = _mock_smtp_server()
+        smtp_patch = patch("smtplib.SMTP", return_value=mock_server)
+        ssl_patch = patch("smtplib.SMTP_SSL", return_value=mock_server)
+
+        with patch("services.email_service.get_settings", return_value=settings), \
+             patch("services.email_service.decrypt_secret", side_effect=lambda x: x), \
+             smtp_patch as mock_smtp, \
+             ssl_patch as mock_ssl:
+            if use_with_result:
+                result = send_email_with_result("Test", "body")
+            else:
+                result = send_email("Test", "body")
+
+        return result, mock_server, mock_smtp, mock_ssl
+
+    def test_port_465_uses_smtp_ssl(self):
+        result, mock_server, mock_smtp, mock_ssl = self._send(
+            host="webmail.centurypaper.com.pk",
+            port=465,
+            use_tls=True,
+        )
+        self.assertTrue(result)
+        mock_ssl.assert_called_once_with("webmail.centurypaper.com.pk", 465, timeout=30)
+        mock_smtp.assert_not_called()
+        mock_server.starttls.assert_not_called()
+
+    def test_port_465_does_not_call_starttls_even_when_use_tls_true(self):
+        _, mock_server, _, _ = self._send(port=465, use_tls=True)
+        mock_server.starttls.assert_not_called()
+
+    def test_port_465_login_and_sendmail(self):
+        _, mock_server, _, _ = self._send(
+            host="webmail.centurypaper.com.pk",
+            port=465,
+            user="smtp-user@centurypaper.com.pk",
+            password="secret",
+            from_address="alerts@centurypaper.com.pk",
+            to_address="noc@example.com",
+        )
+        mock_server.login.assert_called_once_with(
+            "smtp-user@centurypaper.com.pk",
+            "secret",
+        )
+        mock_server.sendmail.assert_called_once()
+        send_args = mock_server.sendmail.call_args[0]
+        self.assertEqual(send_args[0], "alerts@centurypaper.com.pk")
+        self.assertEqual(send_args[1], ["noc@example.com"])
+
+    def test_port_587_use_tls_true_uses_smtp_and_starttls(self):
+        result, mock_server, mock_smtp, mock_ssl = self._send(
+            host="smtp.example.com",
+            port=587,
+            use_tls=True,
+        )
+        self.assertTrue(result)
+        mock_smtp.assert_called_once_with("smtp.example.com", 587, timeout=30)
+        mock_ssl.assert_not_called()
+        mock_server.starttls.assert_called_once()
+
+    def test_port_587_use_tls_false_skips_starttls(self):
+        result, mock_server, mock_smtp, mock_ssl = self._send(
+            port=587,
+            use_tls=False,
+        )
+        self.assertTrue(result)
+        mock_smtp.assert_called_once_with("smtp.example.com", 587, timeout=30)
+        mock_ssl.assert_not_called()
+        mock_server.starttls.assert_not_called()
+
+    def test_gmail_preset_still_uses_smtp_starttls(self):
+        result, mock_server, mock_smtp, mock_ssl = self._send(
+            host="smtp.gmail.com",
+            port=587,
+            use_tls=True,
+            provider="gmail",
+            user="alerts@gmail.com",
+            from_address="alerts@gmail.com",
+        )
+        self.assertTrue(result)
+        mock_smtp.assert_called_once_with("smtp.gmail.com", 587, timeout=30)
+        mock_ssl.assert_not_called()
+        mock_server.starttls.assert_called_once()
+
+    def test_outlook_preset_still_uses_smtp_starttls(self):
+        result, mock_server, mock_smtp, mock_ssl = self._send(
+            host="smtp.office365.com",
+            port=587,
+            use_tls=True,
+            provider="outlook",
+            user="alerts@outlook.com",
+            from_address="alerts@outlook.com",
+        )
+        self.assertTrue(result)
+        mock_smtp.assert_called_once_with("smtp.office365.com", 587, timeout=30)
+        mock_ssl.assert_not_called()
+        mock_server.starttls.assert_called_once()
+
+    def test_smtp_ssl_timeout_is_30(self):
+        _, _, _, mock_ssl = self._send(port=465)
+        mock_ssl.assert_called_once_with("smtp.example.com", 465, timeout=30)
+
+    def test_smtp_timeout_is_30(self):
+        _, _, mock_smtp, _ = self._send(port=587, use_tls=True)
+        mock_smtp.assert_called_once_with("smtp.example.com", 587, timeout=30)
+
+    def test_smtp_ssl_error_maps_to_friendly_test_email_message(self):
+        settings = {
+            "smtp": _smtp_cfg(
+                host="webmail.centurypaper.com.pk",
+                port=465,
+                use_tls=True,
+            )
+        }
+        with patch("services.email_service.get_settings", return_value=settings), \
+             patch("services.email_service.decrypt_secret", side_effect=lambda x: x), \
+             patch(
+                 "smtplib.SMTP_SSL",
+                 side_effect=ssl.SSLError("certificate verify failed"),
+             ):
+            ok, msg = send_email_with_result("Test", "body")
+        self.assertFalse(ok)
+        self.assertIn("TLS/SSL", msg)
+        self.assertNotIn("secret", msg)
+
+    def test_open_smtp_connection_helper_selects_ssl_for_465(self):
+        mock_server = _mock_smtp_server()
+        with patch("smtplib.SMTP_SSL", return_value=mock_server) as mock_ssl, \
+             patch("smtplib.SMTP") as mock_smtp:
+            server = _open_smtp_connection("webmail.example.com", 465, True)
+        self.assertIs(server, mock_server)
+        mock_ssl.assert_called_once_with("webmail.example.com", 465, timeout=30)
+        mock_smtp.assert_not_called()
+
+    def test_authenticate_skips_starttls_on_port_465(self):
+        mock_server = MagicMock()
+        _authenticate_smtp(
+            mock_server,
+            port=465,
+            use_tls=True,
+            user="u",
+            password="p",
+        )
+        mock_server.starttls.assert_not_called()
+        mock_server.login.assert_called_once_with("u", "p")
+
+    def test_authenticate_calls_starttls_on_587_when_use_tls(self):
+        mock_server = MagicMock()
+        _authenticate_smtp(
+            mock_server,
+            port=587,
+            use_tls=True,
+            user="u",
+            password="p",
+        )
+        mock_server.starttls.assert_called_once()
+        mock_server.login.assert_called_once_with("u", "p")
 
 
 if __name__ == "__main__":

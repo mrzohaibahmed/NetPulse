@@ -368,9 +368,15 @@ export function SettingsPage() {
               <Checkbox
                 checked={form.watch('useTls')}
                 onCheckedChange={(checked) => form.setValue('useTls', Boolean(checked))}
+                disabled={form.watch('smtpPort') === 465}
               />
               Use STARTTLS
             </label>
+            <p className="text-xs text-muted-foreground -mt-2">
+              {form.watch('smtpPort') === 465
+                ? 'Port 465 uses SSL/TLS (implicit encryption) automatically. STARTTLS is not used.'
+                : 'Port 587 typically uses STARTTLS. Port 465 uses SSL/TLS instead.'}
+            </p>
 
             {/* Test email */}
             <div className="flex items-center gap-3 pt-1">

@@ -61,6 +61,34 @@ def _smtp_ready(smtp: dict) -> bool:
     )
 
 
+def _open_smtp_connection(host: str, port: int, use_tls: bool) -> smtplib.SMTP:
+    """
+    Create an SMTP client with the correct security mode.
+
+    Port 465 → SMTP_SSL (implicit TLS); caller must not call STARTTLS.
+    Other ports → SMTP; caller applies STARTTLS when ``use_tls`` is True.
+
+    TLS certificate verification uses Python defaults (never disabled).
+    """
+    if port == 465:
+        return smtplib.SMTP_SSL(host, port, timeout=30)
+    return smtplib.SMTP(host, port, timeout=30)
+
+
+def _authenticate_smtp(
+    server: smtplib.SMTP,
+    *,
+    port: int,
+    use_tls: bool,
+    user: str,
+    password: str,
+) -> None:
+    """Apply STARTTLS when appropriate, then authenticate."""
+    if port != 465 and use_tls:
+        server.starttls()
+    server.login(user, password)
+
+
 def _classify_smtp_error(error: Exception, provider: str) -> str:
     """Return a user-friendly, credential-safe error description."""
     msg = str(error).lower()
@@ -168,10 +196,14 @@ def send_email(
         if body_html:
             message.attach(MIMEText(body_html, "html", "utf-8"))
 
-        with smtplib.SMTP(host, port, timeout=30) as server:
-            if use_tls:
-                server.starttls()
-            server.login(user, password)
+        with _open_smtp_connection(host, port, use_tls) as server:
+            _authenticate_smtp(
+                server,
+                port=port,
+                use_tls=use_tls,
+                user=user,
+                password=password,
+            )
             server.sendmail(from_address, [to], message.as_string())
 
         logger.info(
@@ -250,10 +282,14 @@ def send_email_with_result(
         message.attach(MIMEText(body_html, "html", "utf-8"))
 
     try:
-        with smtplib.SMTP(host, port, timeout=30) as server:
-            if use_tls:
-                server.starttls()
-            server.login(user, password)
+        with _open_smtp_connection(host, port, use_tls) as server:
+            _authenticate_smtp(
+                server,
+                port=port,
+                use_tls=use_tls,
+                user=user,
+                password=password,
+            )
             server.sendmail(from_address, [to], message.as_string())
 
         logger.info(
