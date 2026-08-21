@@ -264,7 +264,29 @@ export function DiscoveryPage() {
         const stillPending = response.devices.some(
           (d) => d.discoveryStatus === 'pending' || d.discoveryStatus === 'enriching',
         )
-        if (!stillPending || attempts >= 18) {
+        if (!stillPending) {
+          cancelled = true
+          window.clearInterval(timer)
+          const completed = response.devices.filter((d) => d.discoveryStatus === 'completed').length
+          const failed = response.devices.filter((d) => d.discoveryStatus === 'failed').length
+          if (failed > 0 && completed === 0) {
+            toast.error(
+              failed === 1
+                ? 'Nmap enrichment failed for 1 device.'
+                : `Nmap enrichment failed for ${failed} devices.`,
+            )
+          } else if (failed > 0) {
+            toast.warning(
+              `Nmap enrichment finished: ${completed} succeeded, ${failed} failed.`,
+            )
+          } else {
+            toast.success(
+              completed === 1
+                ? 'Nmap enrichment complete for 1 device.'
+                : `Nmap enrichment complete for ${completed || ipAddresses.length} devices.`,
+            )
+          }
+        } else if (attempts >= 18) {
           cancelled = true
           window.clearInterval(timer)
         }
