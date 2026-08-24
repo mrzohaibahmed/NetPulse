@@ -7,7 +7,7 @@ def create_device(
     ip_address,
     device_type,
     critical=False,
-    monitor=True,
+    monitor=False,
     ping_interval=None,
     ping_timeout_ms=None,
     ping_retries=None,

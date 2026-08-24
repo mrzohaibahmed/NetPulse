@@ -303,7 +303,7 @@ def enrich_online_host(
         ip_address=ip_address,
         device_type=DEVICE_TYPE_UNKNOWN,
         critical=False,
-        monitor=True,
+        monitor=False,
     )
     device["status"] = "Online"
     device["responseTime"] = ping_result.get("responseTime")

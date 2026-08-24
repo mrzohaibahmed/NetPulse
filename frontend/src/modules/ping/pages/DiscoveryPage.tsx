@@ -850,9 +850,9 @@ export function DiscoveryPage() {
                           </TableCell>
                           <TableCell>
                             {device.saved ? (
-                              <Badge variant="default">New device</Badge>
+                              <Badge variant="outline" className="border-warning/30 text-warning">Saved (Unmonitored)</Badge>
                             ) : device.status === 'Online' ? (
-                              <span className="text-sm text-muted-foreground">Already monitored</span>
+                              <span className="text-sm text-muted-foreground">Existing device</span>
                             ) : (
                               <span className="text-sm text-muted-foreground">—</span>
                             )}

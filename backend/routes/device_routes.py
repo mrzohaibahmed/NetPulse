@@ -57,6 +57,12 @@ def build_device_filter():
     elif critical_raw in ("false", "0", "no"):
         query["critical"] = False
 
+    monitor_raw = (request.args.get("monitor") or "").strip().lower()
+    if monitor_raw in ("true", "1", "yes"):
+        query["monitor"] = True
+    elif monitor_raw in ("false", "0", "no"):
+        query["monitor"] = False
+
     search = (request.args.get("q") or "").strip()
     if search:
         pattern = re.compile(re.escape(search), re.IGNORECASE)
@@ -122,7 +128,7 @@ def add_device():
             ip_address=data["ipAddress"].strip(),
             device_type=data["deviceType"].strip(),
             critical=bool(data.get("critical", False)),
-            monitor=bool(data.get("monitor", True)),
+            monitor=bool(data.get("monitor", False)),
             ping_interval=_optional_int(data.get("pingInterval")),
             ping_timeout_ms=_optional_int(data.get("pingTimeoutMs")),
             ping_retries=_optional_int(data.get("pingRetries")),
@@ -244,7 +250,7 @@ def import_devices_csv():
                 continue
 
             critical = critical_raw in ("1", "true", "yes", "y")
-            monitor = True if monitor_raw == "" else monitor_raw in ("1", "true", "yes", "y")
+            monitor = False if monitor_raw == "" else monitor_raw in ("1", "true", "yes", "y")
 
             device = create_device(
                 hostname=hostname,

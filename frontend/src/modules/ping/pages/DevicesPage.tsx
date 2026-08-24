@@ -105,6 +105,13 @@ export function DevicesPage() {
     if (critical === 'false') return 'non-critical'
     return 'all'
   })
+  const [monitorFilter, setMonitorFilter] = useState(() => {
+    const monitor = searchParams.get('monitor')
+    if (monitor === 'true') return 'monitored'
+    if (monitor === 'false') return 'unmonitored'
+    return 'all'
+  })
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [page, setPage] = useState(1)
   const [limit, setLimit] = useState(DEFAULT_LIMIT)
   const [sorting, setSorting] = useState<SortingState>([])
@@ -157,7 +164,8 @@ export function DevicesPage() {
 
   useEffect(() => {
     setPage(1)
-  }, [debouncedQuery, statusFilter, typeFilter, criticalFilter, limit])
+    setSelectedIds([])
+  }, [debouncedQuery, statusFilter, typeFilter, criticalFilter, monitorFilter, limit])
 
   useEffect(() => {
     const q = searchParams.get('q')
@@ -189,6 +197,8 @@ export function DevicesPage() {
     deviceType: typeFilter !== 'all' ? typeFilter : undefined,
     critical:
       criticalFilter === 'critical' ? true : criticalFilter === 'non-critical' ? false : undefined,
+    monitor:
+      monitorFilter === 'monitored' ? true : monitorFilter === 'unmonitored' ? false : undefined,
   })
 
   const devices = devicesQuery.data?.data ?? []
@@ -234,8 +244,53 @@ export function DevicesPage() {
     setSearchParams(next, { replace: true })
   }
 
+  const handleSelectedMonitoringUpdate = async (enable: boolean) => {
+    if (selectedIds.length === 0) return
+    setIsBulkUpdating(true)
+    try {
+      for (const id of selectedIds) {
+        await update.mutateAsync({ id, payload: { monitor: enable } })
+      }
+      toast.success(`${enable ? 'Enabled' : 'Disabled'} monitoring for ${selectedIds.length} selected device(s).`)
+      setSelectedIds([])
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Monitoring update failed')
+    } finally {
+      setIsBulkUpdating(false)
+    }
+  }
+
   const columns = useMemo<ColumnDef<Device>[]>(
     () => [
+      {
+        id: 'select',
+        header: () => (
+          <Checkbox
+            checked={devices.length > 0 && selectedIds.length === devices.length}
+            onCheckedChange={(checked) => {
+              if (checked) {
+                setSelectedIds(devices.map((d) => d._id))
+              } else {
+                setSelectedIds([])
+              }
+            }}
+            aria-label="Select all"
+          />
+        ),
+        cell: ({ row }) => (
+          <Checkbox
+            checked={selectedIds.includes(row.original._id)}
+            onCheckedChange={(checked) => {
+              if (checked) {
+                setSelectedIds((prev) => [...prev, row.original._id])
+              } else {
+                setSelectedIds((prev) => prev.filter((id) => id !== row.original._id))
+              }
+            }}
+            aria-label="Select row"
+          />
+        ),
+      },
       {
         accessorKey: 'hostname',
         header: ({ column }) => (
@@ -645,6 +700,29 @@ export function DevicesPage() {
                   </SelectContent>
                 </Select>
               </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">Monitoring</label>
+                <Select
+                  value={monitorFilter}
+                  onValueChange={(val) => {
+                    setMonitorFilter(val)
+                    const next = new URLSearchParams(searchParams)
+                    if (val === 'monitored') next.set('monitor', 'true')
+                    else if (val === 'unmonitored') next.set('monitor', 'false')
+                    else next.delete('monitor')
+                    setSearchParams(next, { replace: true })
+                  }}
+                >
+                  <SelectTrigger className="w-[180px]">
+                    <SelectValue placeholder="Monitoring" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All devices</SelectItem>
+                    <SelectItem value="monitored">Monitored only</SelectItem>
+                    <SelectItem value="unmonitored">Unmonitored only</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
               <Button type="button" variant="secondary" onClick={() => void devicesQuery.refetch()}>
                 <RefreshCw className="h-4 w-4" />
                 Refresh
@@ -680,6 +758,42 @@ export function DevicesPage() {
             </div>
           </CardContent>
         </Card>
+
+        {selectedIds.length > 0 && isAdmin ? (
+          <div className="flex items-center justify-between rounded-xl border border-primary/30 bg-primary/10 p-3">
+            <span className="text-sm font-semibold text-primary">
+              {selectedIds.length} device(s) selected
+            </span>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="default"
+                disabled={isBulkUpdating}
+                onClick={() => void handleSelectedMonitoringUpdate(true)}
+              >
+                Enable Monitoring
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={isBulkUpdating}
+                onClick={() => void handleSelectedMonitoringUpdate(false)}
+              >
+                Disable Monitoring
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={() => setSelectedIds([])}
+              >
+                Clear selection
+              </Button>
+            </div>
+          </div>
+        ) : null}
 
         {devicesQuery.isLoading && devices.length === 0 ? (
           <TableSkeleton />
@@ -739,6 +853,7 @@ export function DevicesPage() {
                             key={cell.id}
                             onClick={(e) => {
                               if (
+                                cell.column.id === 'select' ||
                                 cell.column.id === 'actions' ||
                                 cell.column.id === 'flags' ||
                                 cell.column.id === 'monitor'
