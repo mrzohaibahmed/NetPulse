@@ -13,7 +13,7 @@ load_dotenv(BASE_DIR / ".env")
 SCAN_INTERVAL = int(os.getenv("SCAN_INTERVAL", 60))
 
 # ── Nmap Scanner configuration ─────────────────────────────────────────────────
-# How often (seconds) the background Nmap scheduler runs. Default: 1 hour.
+# Preserved for backward compatibility. Device enrichment is event-driven & manual.
 NMAP_SCAN_INTERVAL = int(os.getenv("NMAP_SCAN_INTERVAL", 3600))
 
 # Deep / diagnostic Nmap profile (manual Scan Details).
@@ -40,6 +40,15 @@ NMAP_CACHE_TTL = int(os.getenv("NMAP_CACHE_TTL", 21600))
 # Absolute path to the nmap binary. Empty → python-nmap auto-detects from PATH.
 # Windows users typically need: C:\Program Files (x86)\Nmap\nmap.exe
 NMAP_PATH = os.getenv("NMAP_PATH", "") or None
+
+# ── WMI / WinRM configuration ─────────────────────────────────────────────────
+# Per-host timeout for WinRM connections (seconds). Prevents one unreachable PC
+# from blocking discovery of other devices.
+WMI_TIMEOUT = int(os.getenv("WMI_TIMEOUT", 15))
+
+# ── ONVIF Camera configuration ────────────────────────────────────────────────
+# Per-host timeout for ONVIF SOAP requests (seconds).
+ONVIF_TIMEOUT = int(os.getenv("ONVIF_TIMEOUT", 5))
 
 # ── Interface Discovery (SSH) ──────────────────────────────────────────────────
 # How often (seconds) the background interface discovery job runs. Default: 1 hour.

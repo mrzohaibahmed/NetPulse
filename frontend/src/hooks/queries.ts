@@ -84,6 +84,8 @@ import {
   createNetwork,
   updateNetwork,
   deleteNetwork,
+  enrichNetwork,
+  enrichDevice,
   scanNetworks,
 } from '@/api'
 import { queryKeys } from '@/hooks/queryKeys'
@@ -1223,6 +1225,31 @@ export function useScanNetworksMutation() {
       await qc.invalidateQueries({ queryKey: ['devices'] })
       await qc.invalidateQueries({ queryKey: ['networks'] })
       await qc.invalidateQueries({ queryKey: queryKeys.dashboard.all })
+    },
+    onError: (err: Error) => toast.error(err.message),
+  })
+}
+
+export function useEnrichNetworkMutation() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (networkId: string) => enrichNetwork(networkId),
+    onSuccess: async (data) => {
+      toast.success(data.message || 'Device enrichment started in background')
+      await qc.invalidateQueries({ queryKey: ['devices'] })
+      await qc.invalidateQueries({ queryKey: ['networks'] })
+    },
+    onError: (err: Error) => toast.error(err.message),
+  })
+}
+
+export function useEnrichDeviceMutation() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (deviceId: string) => enrichDevice(deviceId),
+    onSuccess: async (data) => {
+      toast.success(data.message || 'Device enrichment started in background')
+      await qc.invalidateQueries({ queryKey: ['devices'] })
     },
     onError: (err: Error) => toast.error(err.message),
   })

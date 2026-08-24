@@ -14,6 +14,7 @@ from pymongo.errors import DuplicateKeyError
 
 from config.database import db
 from models.device import create_device
+from services.discovery.device_types import build_identification
 from services.discovery.classifier import (
     ClassificationResult,
     classify_device,
@@ -21,6 +22,10 @@ from services.discovery.classifier import (
     is_unknown_hostname,
     log_classification,
     DEVICE_TYPE_UNKNOWN,
+)
+from services.discovery.identification import (
+    DEFAULT_IDENTIFICATION_MANAGER,
+    IdentificationContext,
 )
 from services.discovery.enrichment import (
     DISCOVERY_STATUS_PENDING,
@@ -52,6 +57,13 @@ def classification_fields(result: ClassificationResult) -> dict[str, Any]:
         "classificationConfidence": int(result.confidence),
         "classificationMethod": result.classification_method,
         "discoverySource": result.discovery_source,
+        "identification": build_identification(
+            display_type=result.device_type,
+            canonical_type=getattr(result, "canonical_type", None),
+            method=(getattr(result, "identification_method", "") or result.classification_method),
+            confidence=result.confidence,
+            evidence=getattr(result, "identification_evidence", None),
+        ),
     }
 
 
@@ -103,6 +115,13 @@ def apply_classification_to_device(
         update_fields["vendor"] = result.vendor
     if result.operating_system:
         update_fields["operatingSystem"] = result.operating_system
+    update_fields["identification"] = build_identification(
+        display_type=result.device_type,
+        canonical_type=getattr(result, "canonical_type", None),
+        method=(getattr(result, "identification_method", "") or result.classification_method),
+        confidence=result.confidence,
+        evidence=getattr(result, "identification_evidence", None),
+    )
     if network_info is not None:
         update_fields["networkInfo"] = network_info
 
@@ -172,6 +191,40 @@ def classify_network_info(
     return result, evidence
 
 
+def identify_network_info(
+    network_info: dict | None,
+    *,
+    ip_address: str,
+    existing: dict | None = None,
+    try_ssh: bool = True,
+) -> tuple[ClassificationResult, Any]:
+    """
+    Route identification through the Phase 2 manager/orchestrator.
+
+    Current live execution path still ends in the Nmap-backed classifier; future
+    identifiers are plan-only stubs for now and must not trigger extra scans.
+    """
+    outcome = DEFAULT_IDENTIFICATION_MANAGER.identify(
+        IdentificationContext(
+            ip_address=ip_address,
+            network_info=network_info,
+            existing=existing,
+            try_ssh=try_ssh,
+            preferred_device_type=(existing or {}).get("deviceType"),
+        )
+    )
+    if outcome.classification is not None:
+        return outcome.classification, outcome.raw_evidence
+    result, evidence = classify_network_info(
+        network_info,
+        ip_address=ip_address,
+        existing=existing,
+        try_ssh=try_ssh,
+    )
+    result.identification_method = outcome.method or "nmap"
+    return result, evidence
+
+
 def _discovery_result_payload(
     *,
     ip_address: str,
@@ -193,6 +246,7 @@ def _discovery_result_payload(
         "classificationConfidence": device.get("classificationConfidence"),
         "classificationMethod": device.get("classificationMethod"),
         "discoveryStatus": device.get("discoveryStatus"),
+        "identification": device.get("identification"),
         "nmapError": nmap_error,
     }
 

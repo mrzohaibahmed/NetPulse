@@ -751,8 +751,8 @@ def start_scheduler():
             interval,
         )
 
-        # Job 2: Nmap metadata scan (independent; registered after scheduler.start).
-        _start_nmap_job()
+        # Note: Nmap/hardware device enrichment is event-driven (runs once upon network
+        # discovery) and manually triggered via API/UI. Hourly periodic Nmap scans are disabled.
 
         # Job 3: SSH interface discovery (independent of ping / Nmap).
         _start_interface_job()

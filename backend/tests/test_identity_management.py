@@ -12,6 +12,14 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
+if "config.database" not in sys.modules:
+    import types
+
+    _db_mod = types.ModuleType("config.database")
+    _db_mod.db = MagicMock()
+    _db_mod.MAX_SCAN_THREADS = 5
+    sys.modules["config.database"] = _db_mod
+
 from bson import ObjectId
 
 from services.discovery.apply import apply_classification_to_device
@@ -62,6 +70,8 @@ def test_auto_device_classification_updates_hostname_and_type():
     assert update_fields["deviceType"] == "Managed Switch"
     assert update_fields["vendor"] == "Cisco Systems"
     assert update_fields["operatingSystem"] == "Cisco IOS XE"
+    assert update_fields["identification"]["deviceType"] == "SWITCH"
+    assert update_fields["identification"]["displayType"] == "Managed Switch"
     mock_db.devices.update_one.assert_called_once()
 
 

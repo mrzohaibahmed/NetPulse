@@ -872,6 +872,28 @@ export const deleteNetwork = (id: string) =>
     method: 'DELETE',
   })
 
+export const enrichNetwork = (networkId: string) =>
+  apiRequest<{
+    success: boolean
+    status: string
+    message: string
+    queued: number
+    skippedEnriching: number
+    total: number
+  }>(`/api/networks/${networkId}/enrich`, {
+    method: 'POST',
+  })
+
+export const enrichDevice = (deviceId: string) =>
+  apiRequest<{
+    success: boolean
+    status: string
+    message: string
+    data?: Device
+  }>(`/api/devices/${deviceId}/enrich`, {
+    method: 'POST',
+  })
+
 export const scanNetworks = (payload: {
   networkIds?: string[]
   scanAllEnabled?: boolean

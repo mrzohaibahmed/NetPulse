@@ -18,6 +18,10 @@ export const DEVICE_TYPES = [
   'WiFi Camera',
   'IP Phone',
   'NVR',
+  'Laptop',
+  'PC',
+  'IoT',
+  'Network Device',
   'Unknown Device',
   'Other',
 ] as const
@@ -34,5 +38,9 @@ export function displayDeviceType(
   if (confidence != null && confidence < 50) {
     return 'Unknown Device'
   }
-  return (deviceType || 'Unknown Device').trim() || 'Unknown Device'
+  const raw = (deviceType || 'Unknown Device').trim() || 'Unknown Device'
+  if (raw.toUpperCase() === 'UNKNOWN') {
+    return 'Unknown Device'
+  }
+  return raw
 }

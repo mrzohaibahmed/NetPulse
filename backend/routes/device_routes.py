@@ -507,3 +507,61 @@ def delete_device(device_id):
 
     except Exception as error:
         return internal_error_response(error, message="Failed to delete device")
+
+
+@device_bp.route("/devices/<device_id>/enrich", methods=["POST"])
+@require_auth(roles=["admin", "user"])
+def enrich_single_device(device_id: str):
+    """
+    Trigger manual asynchronous background enrichment for a single device.
+    Returns immediately without blocking the browser.
+    """
+    try:
+        if not ObjectId.is_valid(device_id):
+            return jsonify({"success": False, "message": "Invalid device ID"}), 400
+
+        oid = ObjectId(device_id)
+        device = db.devices.find_one({"_id": oid})
+        if not device:
+            return jsonify({"success": False, "message": "Device not found"}), 404
+
+        if device.get("status") != "Online":
+            return jsonify({
+                "success": False,
+                "message": (
+                    f"Device is not online (current status: {device.get('status', 'Unknown')}). "
+                    "Enrichment requires an online device."
+                ),
+            }), 409
+
+        from services.discovery.enrichment import (
+            DISCOVERY_STATUS_ENRICHING,
+            DISCOVERY_STATUS_PENDING,
+            enqueue_discovery_enrichment,
+        )
+
+        if device.get("discoveryStatus") == DISCOVERY_STATUS_ENRICHING:
+            return jsonify({
+                "success": True,
+                "status": "enriching",
+                "message": "Enrichment is already in progress for this device",
+                "data": serialize_device(device),
+            }), 200
+
+        db.devices.update_one(
+            {"_id": oid},
+            {"$set": {"discoveryStatus": DISCOVERY_STATUS_PENDING}},
+        )
+
+        enqueue_discovery_enrichment(oid, device["ipAddress"])
+
+        updated_device = db.devices.find_one({"_id": oid})
+        return jsonify({
+            "success": True,
+            "status": "queued",
+            "message": "Device enrichment started in background",
+            "data": serialize_device(updated_device),
+        }), 200
+
+    except Exception as error:
+        return internal_error_response(error, message="Failed to trigger device enrichment")

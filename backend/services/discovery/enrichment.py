@@ -76,6 +76,23 @@ def enqueue_discovery_enrichment(device_id: ObjectId, ip_address: str) -> None:
     _get_executor().submit(_run_discovery_enrichment, device_id, ip_address)
 
 
+def enqueue_batch_enrichment(items: list[tuple[ObjectId, str]]) -> None:
+    """
+    Schedule background enrichment for a list of (device_id, ip_address) tuples.
+
+    Enables asynchronous multi-network discovery without blocking HTTP handlers or
+    creating duplicate thread pools.
+    """
+    executor = _get_executor()
+    for device_id, ip_address in items:
+        logger.info(
+            "[DISCOVERY] Batch enrichment queued | ip=%s | deviceId=%s",
+            ip_address,
+            device_id,
+        )
+        executor.submit(_run_discovery_enrichment, device_id, ip_address)
+
+
 def _claim_enrichment(device_id: ObjectId) -> dict[str, Any] | None:
     """
     Atomically move pending/failed → enriching.
@@ -192,13 +209,13 @@ def _run_discovery_enrichment(device_id: ObjectId, ip_address: str) -> None:
 
         from services.discovery.apply import (  # noqa: PLC0415
             apply_classification_to_device,
-            classify_network_info,
+            identify_network_info,
         )
 
         # Refresh device — may have been updated since insert.
         existing = db.devices.find_one({"_id": device_id}) or device
 
-        result, _evidence = classify_network_info(
+        result, _evidence = identify_network_info(
             network_info,
             ip_address=ip_address,
             existing=existing,

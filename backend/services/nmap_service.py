@@ -615,10 +615,10 @@ def scan_and_update_device(
         # Automatic hostname / device-type classification (does not redesign scan flow).
         from services.discovery.apply import (  # noqa: PLC0415
             apply_classification_to_device,
-            classify_network_info,
+            identify_network_info,
         )
 
-        classification, _evidence = classify_network_info(
+        classification, _evidence = identify_network_info(
             network_info,
             ip_address=ip_address,
             existing=device,

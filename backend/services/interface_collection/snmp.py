@@ -48,6 +48,66 @@ OID_IF_HC_OUT_OCTETS = "1.3.6.1.2.1.31.1.1.1.10"
 OID_IF_HC_OUT_UCAST = "1.3.6.1.2.1.31.1.1.1.11"
 OID_IF_HIGH_SPEED = "1.3.6.1.2.1.31.1.1.1.15"
 
+# System Group (RFC 1213 / MIB-II)
+OID_SYS_DESCR = "1.3.6.1.2.1.1.1"
+OID_SYS_OBJECT_ID = "1.3.6.1.2.1.1.2"
+OID_SYS_UPTIME = "1.3.6.1.2.1.1.3"
+OID_SYS_NAME = "1.3.6.1.2.1.1.5"
+
+# ENTITY-MIB entPhysicalTable (RFC 3433 / RFC 6933)
+OID_ENT_PHYSICAL_TABLE = "1.3.6.1.2.1.47.1.1.1.1"
+OID_ENT_PHYSICAL_DESCR = "1.3.6.1.2.1.47.1.1.1.1.2"
+OID_ENT_PHYSICAL_HARDWARE_REV = "1.3.6.1.2.1.47.1.1.1.1.8"
+OID_ENT_PHYSICAL_FIRMWARE_REV = "1.3.6.1.2.1.47.1.1.1.1.9"
+OID_ENT_PHYSICAL_SOFTWARE_REV = "1.3.6.1.2.1.47.1.1.1.1.10"
+OID_ENT_PHYSICAL_SERIAL_NUM = "1.3.6.1.2.1.47.1.1.1.1.11"
+OID_ENT_PHYSICAL_MFG_NAME = "1.3.6.1.2.1.47.1.1.1.1.12"
+OID_ENT_PHYSICAL_MODEL_NAME = "1.3.6.1.2.1.47.1.1.1.1.13"
+
+ENTERPRISE_OID_VENDORS: tuple[tuple[str, str], ...] = (
+    ("1.3.6.1.4.1.9.", "Cisco"),
+    ("1.3.6.1.4.1.11.", "HP"),
+    ("1.3.6.1.4.1.2636.", "Juniper"),
+    ("1.3.6.1.4.1.14823.", "Aruba"),
+    ("1.3.6.1.4.1.388.", "Fortinet"),
+    ("1.3.6.1.4.1.5577.", "Ubiquiti"),
+    ("1.3.6.1.4.1.14988.", "MikroTik"),
+    ("1.3.6.1.4.1.6486.", "Alcatel-Lucent"),
+    ("1.3.6.1.4.1.171.", "D-Link"),
+    ("1.3.6.1.4.1.3076.", "Canon"),
+    ("1.3.6.1.4.1.253.", "Xerox"),
+    ("1.3.6.1.4.1.1347.", "Kyocera"),
+    ("1.3.6.1.4.1.18334.", "Konica Minolta"),
+    ("1.3.6.1.4.1.311.", "Microsoft"),
+    ("1.3.6.1.4.1.8072.", "Net-SNMP"),
+)
+
+
+def vendor_from_sys_object_id(sys_object_id: str) -> str:
+    """Map sysObjectID enterprise prefix to standard vendor name."""
+    oid = (sys_object_id or "").strip()
+    for prefix, vendor in ENTERPRISE_OID_VENDORS:
+        if prefix in oid or oid.startswith(prefix.lstrip(".")):
+            return vendor
+    return ""
+
+
+@dataclass
+class SnmpDeviceInfo:
+    """Normalized SNMP hardware and system identification result."""
+
+    sys_descr: str = ""
+    sys_object_id: str = ""
+    sys_name: str = ""
+    sys_uptime: str = ""
+    manufacturer: str = ""
+    model: str = ""
+    serial_number: str = ""
+    hardware_rev: str = ""
+    firmware_rev: str = ""
+    software_rev: str = ""
+    vendor_from_oid: str = ""
+
 
 class SNMPCollectorError(Exception):
     """Raised when SNMP collection fails in a recoverable way."""
@@ -181,6 +241,98 @@ class SNMPInterfaceCollector:
         except Exception as exc:  # noqa: BLE001
             logger.info("[SNMP] Probe failed | host=%s | %s", self.credentials.host, exc)
             return False
+
+    def collect_inventory(self) -> SnmpDeviceInfo:
+        """
+        Query System group (1.3.6.1.2.1.1) and ENTITY-MIB (1.3.6.1.2.1.47.1.1.1.1)
+        for device hardware and system identification.
+        """
+        sys_info: dict[Any, Any] = {}
+        try:
+            sys_rows = asyncio.run(self._walk_oid("1.3.6.1.2.1.1", max_rows=20))
+            sys_info = sys_rows or {}
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("[SNMP] System group walk failed | host=%s | %s", self.credentials.host, exc)
+
+        sys_descr = _as_str(sys_info.get(1) or sys_info.get("1"))
+        sys_object_id = _as_str(sys_info.get(2) or sys_info.get("2"))
+        sys_uptime = _as_str(sys_info.get(3) or sys_info.get("3"))
+        sys_name = _as_str(sys_info.get(5) or sys_info.get("5"))
+
+        if not sys_descr and not sys_object_id and not sys_name:
+            raise SNMPCollectorError(f"No SNMP response or system information from {self.credentials.host}")
+
+        ent_mfg = ""
+        ent_model = ""
+        ent_serial = ""
+        ent_hw_rev = ""
+        ent_fw_rev = ""
+        ent_sw_rev = ""
+
+        try:
+            ent_mfg_rows = asyncio.run(self._walk_oid(OID_ENT_PHYSICAL_MFG_NAME, max_rows=10))
+            if ent_mfg_rows:
+                ent_mfg = _as_str(next(iter(ent_mfg_rows.values()), ""))
+        except Exception:  # noqa: BLE001
+            pass
+
+        try:
+            ent_model_rows = asyncio.run(self._walk_oid(OID_ENT_PHYSICAL_MODEL_NAME, max_rows=10))
+            if ent_model_rows:
+                ent_model = _as_str(next(iter(ent_model_rows.values()), ""))
+        except Exception:  # noqa: BLE001
+            pass
+
+        try:
+            ent_serial_rows = asyncio.run(self._walk_oid(OID_ENT_PHYSICAL_SERIAL_NUM, max_rows=10))
+            if ent_serial_rows:
+                ent_serial = _as_str(next(iter(ent_serial_rows.values()), ""))
+        except Exception:  # noqa: BLE001
+            pass
+
+        try:
+            ent_hw_rows = asyncio.run(self._walk_oid(OID_ENT_PHYSICAL_HARDWARE_REV, max_rows=10))
+            if ent_hw_rows:
+                ent_hw_rev = _as_str(next(iter(ent_hw_rows.values()), ""))
+        except Exception:  # noqa: BLE001
+            pass
+
+        try:
+            ent_fw_rows = asyncio.run(self._walk_oid(OID_ENT_PHYSICAL_FIRMWARE_REV, max_rows=10))
+            if ent_fw_rows:
+                ent_fw_rev = _as_str(next(iter(ent_fw_rows.values()), ""))
+        except Exception:  # noqa: BLE001
+            pass
+
+        try:
+            ent_sw_rows = asyncio.run(self._walk_oid(OID_ENT_PHYSICAL_SOFTWARE_REV, max_rows=10))
+            if ent_sw_rows:
+                ent_sw_rev = _as_str(next(iter(ent_sw_rows.values()), ""))
+        except Exception:  # noqa: BLE001
+            pass
+
+        vendor_from_oid = vendor_from_sys_object_id(sys_object_id)
+        manufacturer = ent_mfg or vendor_from_oid
+
+        return SnmpDeviceInfo(
+            sys_descr=sys_descr,
+            sys_object_id=sys_object_id,
+            sys_name=sys_name,
+            sys_uptime=sys_uptime,
+            manufacturer=manufacturer,
+            model=ent_model,
+            serial_number=ent_serial,
+            hardware_rev=ent_hw_rev,
+            firmware_rev=ent_fw_rev,
+            software_rev=ent_sw_rev,
+            vendor_from_oid=vendor_from_oid,
+        )
+
+
+def collect_snmp_inventory(credentials: SNMPCredentials) -> SnmpDeviceInfo:
+    """Convenience helper to collect SNMP system and hardware inventory."""
+    collector = SNMPInterfaceCollector(credentials)
+    return collector.collect_inventory()
 
     # ------------------------------------------------------------------
     # Internal

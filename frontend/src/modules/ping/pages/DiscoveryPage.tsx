@@ -23,6 +23,7 @@ import {
   useNetworksQuery,
   useNetworkMutation,
   useScanNetworksMutation,
+  useEnrichNetworkMutation,
 } from '@/hooks/queries'
 import { getDiscoveryEnrichmentStatus, getDiscoveryScanProgress } from '@/api'
 import { formatMs } from '@/utils/format'
@@ -100,6 +101,7 @@ export function DiscoveryPage() {
   const networksQuery = useNetworksQuery()
   const networkMutation = useNetworkMutation()
   const scanMutation = useScanNetworksMutation()
+  const enrichNetworkMutation = useEnrichNetworkMutation()
 
   // Selection states
   const [selectedIds, setSelectedIds] = useState<string[]>([])
@@ -544,6 +546,17 @@ export function DiscoveryPage() {
               <Play className="h-4 w-4" />
               Scan All Enabled
             </Button>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={enrichNetworkMutation.isPending || selectedIds.length === 0}
+              onClick={() => {
+                selectedIds.forEach((id) => enrichNetworkMutation.mutate(id))
+              }}
+            >
+              <Sparkles className="h-4 w-4" />
+              Enrich Selected ({selectedIds.length})
+            </Button>
             <Button type="button" onClick={handleOpenAddDialog} disabled={scanning}>
               <Plus className="h-4 w-4" />
               Add Network
@@ -580,7 +593,7 @@ export function DiscoveryPage() {
                       <TableHead className="text-center">Devices</TableHead>
                       <TableHead className="text-center">Switches</TableHead>
                       <TableHead className="text-center">Online</TableHead>
-                      <TableHead className="text-right w-24">Actions</TableHead>
+                      <TableHead className="text-right w-32">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -613,6 +626,16 @@ export function DiscoveryPage() {
                         </TableCell>
                         <TableCell className="text-right">
                           <div className="flex items-center justify-end gap-1.5">
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-8 w-8 text-muted-foreground hover:text-primary"
+                              title="Enrich Devices (WMI/SNMP/ONVIF/Nmap)"
+                              disabled={enrichNetworkMutation.isPending}
+                              onClick={() => enrichNetworkMutation.mutate(net.id)}
+                            >
+                              <Sparkles className="h-4 w-4" />
+                            </Button>
                             <Button
                               size="icon"
                               variant="ghost"

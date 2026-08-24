@@ -106,4 +106,39 @@ def normalize_device_credentials(raw, existing=None) -> dict | None:
         except (TypeError, ValueError) as exc:
             raise ValueError("snmpTimeout must be a number") from exc
 
+    # ── WinRM credentials ──────────────────────────────────────────────────
+    if "winrmUsername" in raw and raw["winrmUsername"] is not None:
+        credentials["winrmUsername"] = str(raw["winrmUsername"]).strip()
+
+    if "winrmPassword" in raw and raw["winrmPassword"] not in (None, ""):
+        credentials["winrmPassword"] = encrypt_secret(str(raw["winrmPassword"]))
+
+    if "winrmPort" in raw and raw["winrmPort"] not in ("", None):
+        try:
+            winrm_port = int(raw["winrmPort"])
+        except (TypeError, ValueError) as exc:
+            raise ValueError("winrmPort must be an integer") from exc
+        if not (1 <= winrm_port <= 65535):
+            raise ValueError("winrmPort must be between 1 and 65535")
+        credentials["winrmPort"] = winrm_port
+
+    if "winrmUseSsl" in raw and raw["winrmUseSsl"] is not None:
+        credentials["winrmUseSsl"] = bool(raw["winrmUseSsl"])
+
+    # ── ONVIF credentials ──────────────────────────────────────────────────
+    if "onvifUsername" in raw and raw["onvifUsername"] is not None:
+        credentials["onvifUsername"] = str(raw["onvifUsername"]).strip()
+
+    if "onvifPassword" in raw and raw["onvifPassword"] not in (None, ""):
+        credentials["onvifPassword"] = encrypt_secret(str(raw["onvifPassword"]))
+
+    if "onvifPort" in raw and raw["onvifPort"] not in ("", None):
+        try:
+            onvif_port = int(raw["onvifPort"])
+        except (TypeError, ValueError) as exc:
+            raise ValueError("onvifPort must be an integer") from exc
+        if not (1 <= onvif_port <= 65535):
+            raise ValueError("onvifPort must be between 1 and 65535")
+        credentials["onvifPort"] = onvif_port
+
     return credentials or None

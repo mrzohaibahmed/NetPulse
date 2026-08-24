@@ -18,9 +18,10 @@ import {
   ScanLine,
   Server,
   Shield,
+  Sparkles,
   Wifi,
 } from 'lucide-react'
-import { useDeviceHistoryQuery, useDeviceMutations, useNmapScanMutation } from '@/hooks/queries'
+import { useDeviceHistoryQuery, useDeviceMutations, useNmapScanMutation, useEnrichDeviceMutation } from '@/hooks/queries'
 import { useAuth } from '@/shared/auth/AuthContext'
 import { formatDateTime, formatMs, formatPercent, formatRelative } from '@/utils/format'
 import { StatusBadge } from '@/shared/components/StatusBadge'
@@ -65,6 +66,7 @@ export function DeviceDrawer({ deviceId, open, onOpenChange }: DeviceDrawerProps
   )
   const { scan } = useDeviceMutations()
   const nmapScan = useNmapScanMutation()
+  const enrichDevice = useEnrichDeviceMutation()
 
   const data = query.data
   const device = data?.device
@@ -108,24 +110,33 @@ export function DeviceDrawer({ deviceId, open, onOpenChange }: DeviceDrawerProps
 
         <ScrollArea className="flex-1">
           <div className="space-y-6 p-6">
-            {query.isLoading && !data ? <LoadingState label="Loading device history…" /> : null}
-            {query.error && !data ? (
+            {query.isLoading ? (
+              <LoadingState message="Fetching device telemetry…" />
+            ) : query.isError ? (
               <ErrorState
-                message={query.error instanceof Error ? query.error.message : 'Failed to load'}
-                onRetry={() => void query.refetch()}
+                message="Failed to load telemetry"
+                onRetry={() => {
+                  void query.refetch()
+                }}
               />
-            ) : null}
-
-            {device ? (
+            ) : !device ? (
+              <EmptyState title="Device not found" />
+            ) : (
               <>
-                <Card className="glass rounded-xl border-l-[3px] border-l-primary">
-                  <CardContent className="flex flex-wrap items-center gap-2 py-4">
-                    <StatusBadge status={device.status} />
-                    {device.critical ? <Badge variant="danger">Critical</Badge> : null}
-                    <Badge variant={device.monitor ? 'success' : 'muted'}>
-                      {device.monitor ? 'Monitored' : 'Not monitored'}
-                    </Badge>
-                    <div className="ml-auto flex flex-wrap gap-2">
+                <Card className="glass rounded-xl border-l-4 border-l-primary">
+                  <CardContent className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex items-center gap-3">
+                      <StatusBadge status={device.status} />
+                      <div>
+                        <p className="text-xs font-medium text-muted-foreground">Monitoring state</p>
+                        <p className="text-sm font-semibold text-foreground">
+                          {device.status === 'Online'
+                            ? 'Reachable via ICMP'
+                            : 'Host unresponsive or down'}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
                       <Button
                         type="button"
                         size="sm"
@@ -141,30 +152,55 @@ export function DeviceDrawer({ deviceId, open, onOpenChange }: DeviceDrawerProps
                         Ping now
                       </Button>
                       {isUser ? (
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant={networkInfo ? 'secondary' : 'default'}
-                          disabled={nmapScan.isPending || device.status !== 'Online'}
-                          title={
-                            device.status !== 'Online' ? 'Device must be Online to run Nmap' : undefined
-                          }
-                          onClick={() => {
-                            nmapScan.mutate(device._id, {
-                              onSuccess: () => {
-                                void query.refetch()
-                                setActiveTab('network')
-                              },
-                            })
-                          }}
-                        >
-                          {nmapScan.isPending ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <ScanLine className="h-4 w-4" />
-                          )}
-                          {nmapScan.isPending ? 'Scanning…' : networkInfo ? 'Re-scan' : 'Nmap scan'}
-                        </Button>
+                        <>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            disabled={enrichDevice.isPending || device.status !== 'Online'}
+                            title={
+                              device.status !== 'Online' ? 'Device must be Online to run enrichment' : undefined
+                            }
+                            onClick={() => {
+                              enrichDevice.mutate(device._id, {
+                                onSuccess: () => {
+                                  void query.refetch()
+                                },
+                              })
+                            }}
+                          >
+                            {enrichDevice.isPending ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Sparkles className="h-4 w-4" />
+                            )}
+                            {enrichDevice.isPending ? 'Enriching…' : 'Enrich Device'}
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={networkInfo ? 'secondary' : 'default'}
+                            disabled={nmapScan.isPending || device.status !== 'Online'}
+                            title={
+                              device.status !== 'Online' ? 'Device must be Online to run Nmap' : undefined
+                            }
+                            onClick={() => {
+                              nmapScan.mutate(device._id, {
+                                onSuccess: () => {
+                                  void query.refetch()
+                                  setActiveTab('network')
+                                },
+                              })
+                            }}
+                          >
+                            {nmapScan.isPending ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <ScanLine className="h-4 w-4" />
+                            )}
+                            {nmapScan.isPending ? 'Scanning…' : networkInfo ? 'Re-scan' : 'Nmap scan'}
+                          </Button>
+                        </>
                       ) : null}
                     </div>
                   </CardContent>
@@ -207,6 +243,77 @@ export function DeviceDrawer({ deviceId, open, onOpenChange }: DeviceDrawerProps
                             device.credentials?.sshPasswordConfigured ? '••••••••' : 'Not Configured'
                           }
                         />
+                        {device.credentials?.winrmUsername ? (
+                          <>
+                            <Meta
+                              label="WinRM Username"
+                              value={device.credentials.winrmUsername}
+                            />
+                            <Meta
+                              label="WinRM Password"
+                              value={
+                                device.credentials.winrmPasswordConfigured ? '••••••••' : 'Not Configured'
+                              }
+                            />
+                          </>
+                        ) : null}
+                        {device.identification?.evidence?.manufacturer ? (
+                          <Meta
+                            label="Manufacturer"
+                            value={device.identification.evidence.manufacturer}
+                          />
+                        ) : null}
+                        {device.identification?.evidence?.model ? (
+                          <Meta
+                            label="Model"
+                            value={device.identification.evidence.model}
+                          />
+                        ) : null}
+                        {device.identification?.evidence?.serialNumber ? (
+                          <Meta
+                            label="Serial Number"
+                            value={device.identification.evidence.serialNumber}
+                            mono
+                          />
+                        ) : null}
+                        {device.identification?.evidence?.osVersion ? (
+                          <Meta
+                            label="OS Version"
+                            value={device.identification.evidence.osVersion}
+                          />
+                        ) : null}
+                        {device.identification?.evidence?.sysObjectID ? (
+                          <Meta
+                            label="SysObjectID"
+                            value={device.identification.evidence.sysObjectID}
+                            mono
+                          />
+                        ) : null}
+                        {device.identification?.evidence?.sysName ? (
+                          <Meta
+                            label="SysName"
+                            value={device.identification.evidence.sysName}
+                          />
+                        ) : null}
+                        {device.identification?.evidence?.firmwareRev ? (
+                          <Meta
+                            label="Firmware"
+                            value={device.identification.evidence.firmwareRev}
+                          />
+                        ) : null}
+                        {device.identification?.evidence?.deviceName ? (
+                          <Meta
+                            label="Camera Device Name"
+                            value={device.identification.evidence.deviceName}
+                          />
+                        ) : null}
+                        {device.identification?.evidence?.onvifHardwareId ? (
+                          <Meta
+                            label="Hardware ID"
+                            value={device.identification.evidence.onvifHardwareId}
+                            mono
+                          />
+                        ) : null}
                         <Meta label="Monitor" value={device.monitor ? 'Enabled' : 'Disabled'} />
                         <Meta label="Last seen" value={formatRelative(device.lastSeen)} />
                         <Meta label="Response time" value={formatMs(device.responseTime)} mono />
@@ -515,7 +622,7 @@ export function DeviceDrawer({ deviceId, open, onOpenChange }: DeviceDrawerProps
                   </>
                 )}
               </>
-            ) : null}
+            )}
           </div>
         </ScrollArea>
       </SheetContent>

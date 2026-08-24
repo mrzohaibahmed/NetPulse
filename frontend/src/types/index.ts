@@ -44,6 +44,46 @@ export interface NetworkInfo {
   lastScan: string
 }
 
+export interface DeviceIdentificationEvidence {
+  os?: string
+  osFamily?: string
+  osGeneration?: string
+  osAccuracy?: string
+  vendor?: string
+  hostname?: string
+  ports?: number[]
+  services?: string[]
+  nmapDeviceType?: string
+  signals?: string[]
+  // WMI / hardware fields
+  manufacturer?: string
+  model?: string
+  serialNumber?: string
+  osVersion?: string
+  osBuild?: string
+  systemUuid?: string
+  cpu?: string
+  totalRamGb?: number
+  // SNMP identification fields
+  sysDescr?: string
+  sysObjectID?: string
+  sysName?: string
+  sysUpTime?: string
+  firmwareRev?: string
+  softwareRev?: string
+  // ONVIF identification fields
+  deviceName?: string
+  onvifHardwareId?: string
+}
+
+export interface DeviceIdentification {
+  deviceType: string
+  displayType?: string
+  method: string
+  confidence: number
+  evidence?: DeviceIdentificationEvidence
+}
+
 export interface Device {
   _id: string
   hostname: string
@@ -69,9 +109,10 @@ export interface Device {
   classificationConfidence?: number | null
   classificationMethod?: string | null
   discoverySource?: string | null
+  identification?: DeviceIdentification | null
   networkInfo?: NetworkInfo | null
   /**
-   * SSH/SNMP credentials metadata.
+   * SSH/SNMP/WinRM/ONVIF credentials metadata.
    * Secrets are never returned (passwords are represented via configured flags).
    */
   credentials?: DeviceCredentials | null
@@ -102,6 +143,13 @@ export interface DeviceCredentials {
   snmpCommunityConfigured: boolean
   snmpPort: number
   snmpVersion: string
+  winrmUsername?: string
+  winrmPort?: number
+  winrmUseSsl?: boolean
+  winrmPasswordConfigured?: boolean
+  onvifUsername?: string
+  onvifPort?: number
+  onvifPasswordConfigured?: boolean
 }
 
 export interface DeviceCredentialsPayload {
@@ -114,6 +162,13 @@ export interface DeviceCredentialsPayload {
   snmpVersion?: string
   snmpPort?: number
   snmpTimeout?: number
+  winrmUsername?: string
+  winrmPassword?: string
+  winrmPort?: number
+  winrmUseSsl?: boolean
+  onvifUsername?: string
+  onvifPassword?: string
+  onvifPort?: number
 }
 
 export interface PingHistory {
@@ -563,6 +618,7 @@ export interface DiscoveryDevice {
   classificationConfidence?: number | null
   classificationMethod?: string | null
   discoveryStatus?: 'pending' | 'enriching' | 'completed' | 'failed' | null
+  identification?: DeviceIdentification | null
   nmapError?: string | null
 }
 

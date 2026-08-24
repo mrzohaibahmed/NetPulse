@@ -90,6 +90,15 @@ def serialize_credentials(credentials: dict | None) -> dict | None:
         "snmpCommunityConfigured": bool(credentials.get("snmpCommunity")),
         "snmpPort": credentials.get("snmpPort") or 161,
         "snmpVersion": credentials.get("snmpVersion") or "2c",
+        # WinRM credentials (password never returned).
+        "winrmUsername": credentials.get("winrmUsername") or "",
+        "winrmPort": credentials.get("winrmPort") or 5985,
+        "winrmUseSsl": bool(credentials.get("winrmUseSsl")),
+        "winrmPasswordConfigured": bool(credentials.get("winrmPassword")),
+        # ONVIF credentials (password never returned).
+        "onvifUsername": credentials.get("onvifUsername") or "",
+        "onvifPort": credentials.get("onvifPort") or 80,
+        "onvifPasswordConfigured": bool(credentials.get("onvifPassword")),
     }
 
 
@@ -240,6 +249,7 @@ def serialize_device(device):
         "classificationConfidence": device.get("classificationConfidence"),
         "classificationMethod": device.get("classificationMethod"),
         "discoverySource": device.get("discoverySource"),
+        "identification": device.get("identification"),
         # Nmap metadata — present after the first successful scan, None before.
         "networkInfo": serialize_network_info(device.get("networkInfo")),
         # SSH credentials metadata (secrets never returned).

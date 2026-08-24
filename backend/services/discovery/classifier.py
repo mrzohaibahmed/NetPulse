@@ -16,6 +16,17 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 
+from services.discovery.device_types import (
+    CANONICAL_UNKNOWN,
+    DISPLAY_IOT,
+    DISPLAY_LAPTOP,
+    DISPLAY_NETWORK_DEVICE,
+    DISPLAY_PC,
+    DISPLAY_PHONE,
+    canonical_device_type,
+    compact_identification_evidence,
+)
+
 
 # ---------------------------------------------------------------------------
 # Canonical device types (inventory-facing)
@@ -34,6 +45,11 @@ DEVICE_TYPE_NAS = "NAS"
 DEVICE_TYPE_PRINTER = "Printer"
 DEVICE_TYPE_IP_CAMERA = "IP Camera"
 DEVICE_TYPE_ACCESS_POINT = "Access Point"
+DEVICE_TYPE_PHONE = DISPLAY_PHONE
+DEVICE_TYPE_IOT = DISPLAY_IOT
+DEVICE_TYPE_NETWORK_DEVICE = DISPLAY_NETWORK_DEVICE
+DEVICE_TYPE_PC = DISPLAY_PC
+DEVICE_TYPE_LAPTOP = DISPLAY_LAPTOP
 DEVICE_TYPE_UNKNOWN = "Unknown Device"
 
 UNKNOWN_HOSTNAMES = frozenset({
@@ -64,6 +80,7 @@ class ClassificationEvidence:
     os_name: str = ""
     os_family: str = ""
     os_generation: str = ""
+    os_accuracy: str = ""
     nmap_device_type: str = ""
     ports: list[dict[str, Any]] = field(default_factory=list)
     services: list[str] = field(default_factory=list)
@@ -81,6 +98,9 @@ class ClassificationResult:
     classification_method: str
     discovery_source: str
     signals_matched: list[str] = field(default_factory=list)
+    canonical_type: str = CANONICAL_UNKNOWN
+    identification_evidence: dict[str, Any] = field(default_factory=dict)
+    identification_method: str = ""
 
 
 @dataclass(frozen=True)
@@ -99,7 +119,57 @@ _HIGH_FINGERPRINT_METHODS = frozenset({
     "hypervisor-fingerprint",
     "firewall-fingerprint",
     "access-point-fingerprint",
+    "phone-fingerprint",
+    "iot-fingerprint",
 })
+
+_STRONG_TYPED_METHODS = frozenset({
+    "cisco-switch",
+    "cisco-router",
+    "cisco-mixed-routing",
+    "windows-pc",
+    "windows-server",
+    "linux-server",
+    "linux-pc",
+    "laptop",
+})
+
+_CONFLICT_SCORE_MIN = 70
+_CONFLICT_SCORE_DELTA = 15
+_WEAK_OS_ACCURACY = 70
+
+_LAPTOP_HOSTNAME_HINTS = (
+    "laptop",
+    "notebook",
+    "macbook",
+    "thinkpad",
+    "latitude",
+    "elitebook",
+    "probook",
+    "xps",
+    "yoga",
+    "surface",
+)
+
+_PHONE_VENDORS = (
+    "yealink",
+    "polycom",
+    "grandstream",
+    "mitel",
+    "avaya",
+    "cisco ip phone",
+)
+
+_IOT_HINTS = (
+    "tuya",
+    "shelly",
+    "sonoff",
+    "espressif",
+    "esp32",
+    "esp8266",
+    "smartthings",
+    "mqtt",
+)
 
 
 def _norm(value: Any) -> str:
@@ -157,6 +227,7 @@ def evidence_from_network_info(
         os_name=_norm(os_block.get("name")),
         os_family=_norm(os_block.get("family")),
         os_generation=_norm(os_block.get("generation")),
+        os_accuracy=_norm(os_block.get("accuracy")),
         nmap_device_type=_norm(info.get("deviceType")),
         ports=ports,
         services=services,
@@ -225,8 +296,11 @@ def _open_ports(evidence: ClassificationEvidence) -> set[int]:
     for port in evidence.ports:
         if _lower(port.get("state")) != "open":
             continue
+        port_value = port.get("port")
+        if port_value is None:
+            continue
         try:
-            result.add(int(port.get("port")))
+            result.add(int(port_value))
         except (TypeError, ValueError):
             continue
     return result
@@ -246,8 +320,52 @@ def _has_vendor_signal(evidence: ClassificationEvidence) -> bool:
     return bool(_norm(evidence.vendor or evidence.mac_vendor))
 
 
+def _os_accuracy_int(evidence: ClassificationEvidence) -> int | None:
+    raw = _norm(getattr(evidence, "os_accuracy", "") or "")
+    if not raw:
+        return None
+    try:
+        return int(float(raw))
+    except (TypeError, ValueError):
+        return None
+
+
 def _has_os_signal(evidence: ClassificationEvidence) -> bool:
-    return bool(_norm(evidence.os_name or evidence.os_family))
+    if not _norm(evidence.os_name or evidence.os_family):
+        return False
+    accuracy = _os_accuracy_int(evidence)
+    if accuracy is not None and accuracy < _WEAK_OS_ACCURACY:
+        return False
+    return True
+
+
+def _hostname_blob(evidence: ClassificationEvidence) -> str:
+    return " ".join(
+        part
+        for part in (
+            evidence.hostname_ptr,
+            evidence.hostname_service,
+            evidence.hostname_ssh,
+            evidence.hostname_existing,
+        )
+        if part
+    ).lower()
+
+
+def _signal_count(evidence: ClassificationEvidence) -> int:
+    return sum(
+        (
+            _has_vendor_signal(evidence),
+            _has_os_signal(evidence),
+            _has_port_signal(evidence),
+            _has_service_signal(evidence),
+        )
+    )
+
+
+def _laptop_hints(evidence: ClassificationEvidence, hay: str) -> bool:
+    blob = f"{hay} {_hostname_blob(evidence)}"
+    return _contains_any(blob, _LAPTOP_HOSTNAME_HINTS)
 
 
 def _has_port_signal(evidence: ClassificationEvidence) -> bool:
@@ -310,26 +428,50 @@ def _calibrate_confidence(
     """
     Map raw rule scores into calibrated bands.
 
-    Vendor-only: 40–60. Generic rules cap at 95 unless a high-fingerprint
-    method produced very strong evidence.
+    Strong fingerprints and multi-signal typed rules stay high.
+    Vendor-only, OS-class-only, and conflicting evidence stay low.
     """
     method = match.method
+    signals = _signal_count(evidence)
+    score = max(0, int(raw))
+
+    if method in {"unknown", "conflicting-evidence"}:
+        return 35 if method == "conflicting-evidence" else 20
 
     if method == "vendor-only-unknown":
         return 40
 
     if method == "vendor-only":
-        return min(60, max(40, raw))
+        return min(50, max(40, score if score <= 50 else 45))
+
+    if method == "nmap-osclass":
+        return min(60, max(40, score))
 
     if method in _HIGH_FINGERPRINT_METHODS:
-        if raw >= 90:
-            return min(99, max(96, raw))
-        return min(95, max(20, raw))
+        if score >= 90 and signals >= 2:
+            return min(99, max(96, score))
+        if signals >= 2:
+            return min(95, max(70, score))
+        return min(75, max(55, score))
 
-    ceiling = _generic_confidence_ceiling(evidence)
-    floor = _generic_confidence_floor(evidence)
-    calibrated = min(raw, ceiling)
-    return max(floor, min(ceiling, calibrated))
+    if method in _STRONG_TYPED_METHODS:
+        if signals >= 4:
+            return min(95, max(92, min(score, 95)))
+        if signals >= 3:
+            return min(95, max(80, min(score, 95)))
+        if signals == 2:
+            return min(80, max(65, min(score, 80)))
+        return min(60, max(40, score))
+
+    if signals >= 4:
+        return min(95, score)
+    if signals == 3:
+        return min(88, score)
+    if signals == 2:
+        return min(75, max(40, score))
+    if signals == 1:
+        return min(55, max(20, score))
+    return min(40, max(20, score))
 
 
 def _haystack(evidence: ClassificationEvidence) -> str:
@@ -340,6 +482,10 @@ def _haystack(evidence: ClassificationEvidence) -> str:
         evidence.os_family,
         evidence.os_generation,
         evidence.nmap_device_type,
+        evidence.hostname_ptr,
+        evidence.hostname_service,
+        evidence.hostname_ssh,
+        evidence.hostname_existing,
         " ".join(evidence.services),
         " ".join(evidence.products),
         _norm(evidence.extra.get("snmpSysDescr")),
@@ -355,6 +501,51 @@ def _haystack(evidence: ClassificationEvidence) -> str:
 
 def _contains_any(text: str, needles: Iterable[str]) -> bool:
     return any(n in text for n in needles)
+
+
+def _select_match(matches: list[_RuleMatch]) -> _RuleMatch | None:
+    """Pick the winning rule; conflicting strong categories become UNKNOWN."""
+    if not matches:
+        return None
+    matches.sort(key=lambda m: m.score, reverse=True)
+    top = matches[0]
+    if len(matches) >= 2:
+        second = matches[1]
+        top_cat = canonical_device_type(top.device_type)
+        second_cat = canonical_device_type(second.device_type)
+        if (
+            top.score >= _CONFLICT_SCORE_MIN
+            and second.score >= _CONFLICT_SCORE_MIN
+            and (top.score - second.score) < _CONFLICT_SCORE_DELTA
+            and top_cat != second_cat
+            and CANONICAL_UNKNOWN not in {top_cat, second_cat}
+        ):
+            return _RuleMatch(
+                DEVICE_TYPE_UNKNOWN,
+                35,
+                "conflicting-evidence",
+                ("conflict", top.method, second.method),
+            )
+    return top
+
+
+def _identification_evidence(
+    evidence: ClassificationEvidence,
+    hostname: str,
+    signals: list[str],
+) -> dict[str, Any]:
+    return compact_identification_evidence(
+        os_name=evidence.os_name,
+        os_family=evidence.os_family,
+        os_generation=evidence.os_generation,
+        os_accuracy=getattr(evidence, "os_accuracy", "") or "",
+        vendor=_norm(evidence.vendor) or _norm(evidence.mac_vendor),
+        hostname="" if is_unknown_hostname(hostname) else hostname,
+        ports=sorted(_open_ports(evidence)),
+        services=sorted(_service_names(evidence)),
+        nmap_device_type=evidence.nmap_device_type,
+        signals=signals,
+    )
 
 
 def _evaluate_rules(evidence: ClassificationEvidence) -> _RuleMatch | None:
@@ -373,7 +564,7 @@ def _evaluate_rules(evidence: ClassificationEvidence) -> _RuleMatch | None:
         ("hewlett", "hp inc", "hp ", "canon", "epson", "brother", "xerox", "ricoh", "kyocera", "lexmark"),
     )
     printer_service = bool(services & {"printer", "ipp", "jetdirect", "pdl-datastream", "printer_raw"})
-    if printer_ports or printer_service or ("printer" in evidence.nmap_device_type.lower()):
+    if printer_ports or printer_service or ("printer" in evidence.nmap_device_type.lower()) or ("printer" in hay):
         score = 55
         signals = ["ports-or-service"]
         if printer_ports:
@@ -382,7 +573,7 @@ def _evaluate_rules(evidence: ClassificationEvidence) -> _RuleMatch | None:
         if printer_vendor:
             score += 15
             signals.append("vendor")
-        if printer_service:
+        if printer_service or ("printer" in hay):
             score += 5
             signals.append("service")
         matches.append(_RuleMatch(DEVICE_TYPE_PRINTER, min(score, 96), "printer-fingerprint", tuple(signals)))
@@ -393,7 +584,14 @@ def _evaluate_rules(evidence: ClassificationEvidence) -> _RuleMatch | None:
         ("hikvision", "dahua", "axis communications", "uniview", "reolink", "foscam", "hanwha", "vivotek"),
     )
     camera_ports = bool(ports & {554, 8000, 37777, 34567})
-    if camera_vendor or (camera_ports and _contains_any(hay, ("camera", "ipcam", "nvr", "dvr", "rtsp"))):
+    nmap_type = evidence.nmap_device_type.lower()
+    camera_named = _contains_any(hay, ("camera", "ipcam", "nvr", "dvr", "webcam"))
+    if (
+        (camera_vendor and (camera_ports or camera_named or "webcam" in nmap_type))
+        or (camera_ports and camera_named)
+        or "webcam" in nmap_type
+        or "camera" in nmap_type
+    ):
         score = 50
         signals: list[str] = []
         if camera_vendor:
@@ -412,7 +610,9 @@ def _evaluate_rules(evidence: ClassificationEvidence) -> _RuleMatch | None:
         hay,
         ("synology", "qnap", "truenas", "freenas", "netgear", "diskstation"),
     )
-    if nas_vendor or ("diskstation" in hay):
+    if (nas_vendor and (bool(ports & {5000, 5001, 548, 2049}) or bool(services & {"nfs", "afp"}))) or (
+        "diskstation" in hay
+    ):
         score = 60
         signals = ["vendor"]
         if bool(ports & {5000, 5001, 548, 2049}):
@@ -424,7 +624,10 @@ def _evaluate_rules(evidence: ClassificationEvidence) -> _RuleMatch | None:
         matches.append(_RuleMatch(DEVICE_TYPE_NAS, min(score, 96), "nas-fingerprint", tuple(signals)))
 
     # --- Hypervisor ---
-    if _contains_any(hay, ("vmware", "esxi", "esx ", "vsphere", "proxmox", "xenserver", "hyper-v")):
+    hypervisor_named = _contains_any(hay, ("esxi", "esx ", "vsphere", "proxmox", "xenserver", "hyper-v"))
+    if hypervisor_named or (
+        _contains_any(hay, ("vmware",)) and (902 in ports or 903 in ports)
+    ):
         score = 70
         signals = ["os-or-vendor"]
         if _contains_any(hay, ("esxi", "esx", "vmware esx")):
@@ -436,10 +639,13 @@ def _evaluate_rules(evidence: ClassificationEvidence) -> _RuleMatch | None:
         matches.append(_RuleMatch(DEVICE_TYPE_HYPERVISOR, min(score, 99), "hypervisor-fingerprint", tuple(signals)))
 
     # --- Firewall ---
-    if _contains_any(
+    firewall_vendor = _contains_any(
         hay,
-        ("fortinet", "fortigate", "palo alto", "firewall", "asa ", "firepower", "checkpoint", "sophos", "pfsense"),
-    ) or "firewall" in evidence.nmap_device_type.lower():
+        ("fortinet", "fortigate", "palo alto", "asa ", "firepower", "checkpoint", "sophos", "pfsense"),
+    )
+    if "firewall" in nmap_type or (
+        firewall_vendor and (22 in ports or bool(ports & {443, 10443, 8443}))
+    ):
         score = 70
         signals = ["vendor-or-os"]
         if bool(ports & {443, 10443, 8443}) or 22 in ports:
@@ -448,7 +654,13 @@ def _evaluate_rules(evidence: ClassificationEvidence) -> _RuleMatch | None:
         matches.append(_RuleMatch(DEVICE_TYPE_FIREWALL, min(score, 96), "firewall-fingerprint", tuple(signals)))
 
     # --- Access Point ---
-    if _contains_any(hay, ("access point", "aironet", "aruba ap", "unifi", "ubiquiti", "wireless ap", "capwap")):
+    ap_named = _contains_any(
+        hay,
+        ("access point", "aironet", "aruba ap", "wireless ap", "capwap", "wap"),
+    )
+    ap_vendor = _contains_any(hay, ("unifi", "ubiquiti", "aruba", "ruckus", "meraki"))
+    ap_host = _contains_any(_hostname_blob(evidence), ("-ap", "ap-", "wap-", "access-point"))
+    if ap_named or "wap" in nmap_type or (ap_vendor and ap_host):
         score = 72
         signals = ["vendor-or-fingerprint"]
         matches.append(_RuleMatch(DEVICE_TYPE_ACCESS_POINT, min(score, 95), "access-point-fingerprint", tuple(signals)))
@@ -464,7 +676,7 @@ def _evaluate_rules(evidence: ClassificationEvidence) -> _RuleMatch | None:
     ) or "router" in evidence.nmap_device_type.lower()
     switch_hints = _contains_any(
         hay,
-        ("switch", "catalyst", "nexus", "layer2", "l2"),
+        ("switch", "catalyst", "nexus", "layer2", "l2", "ws-c", "c3750", "c3560", "c2960", "c3850", "c9300", "c9200", "c9500"),
     ) or "switch" in evidence.nmap_device_type.lower()
     has_ssh = 22 in ports or "ssh" in services
     has_snmp = 161 in ports or "snmp" in services
@@ -489,7 +701,7 @@ def _evaluate_rules(evidence: ClassificationEvidence) -> _RuleMatch | None:
                 score += 10
                 signals.append("ssh")
             matches.append(_RuleMatch(DEVICE_TYPE_ROUTER, min(score, 92), "cisco-router", tuple(signals)))
-        elif switch_hints or (cisco_like and (has_ssh or has_snmp)):
+        elif switch_hints:
             score = 65
             signals = ["switch-or-cisco"]
             if cisco_like:
@@ -506,6 +718,23 @@ def _evaluate_rules(evidence: ClassificationEvidence) -> _RuleMatch | None:
                 signals.append("snmp")
             dtype = DEVICE_TYPE_MANAGED_SWITCH if cisco_like and (has_ssh or has_snmp) else DEVICE_TYPE_SWITCH
             matches.append(_RuleMatch(dtype, min(score, 92), "cisco-switch", tuple(signals)))
+        elif cisco_like and (has_ssh or has_snmp):
+            score = 55
+            signals = ["cisco-mgmt"]
+            if has_ssh:
+                score += 8
+                signals.append("ssh")
+            if has_snmp:
+                score += 5
+                signals.append("snmp")
+            matches.append(
+                _RuleMatch(
+                    DEVICE_TYPE_NETWORK_DEVICE,
+                    min(score, 70),
+                    "cisco-network-device",
+                    tuple(signals),
+                )
+            )
 
     # Generic router / switch from nmap class alone
     nmap_type = evidence.nmap_device_type.lower()
@@ -517,12 +746,64 @@ def _evaluate_rules(evidence: ClassificationEvidence) -> _RuleMatch | None:
         matches.append(_RuleMatch(DEVICE_TYPE_SWITCH, 60, "nmap-osclass", ("nmap-deviceType",)))
     if nmap_type == "printer" and not any(m.device_type == DEVICE_TYPE_PRINTER for m in matches):
         matches.append(_RuleMatch(DEVICE_TYPE_PRINTER, 60, "nmap-osclass", ("nmap-deviceType",)))
+    if nmap_type in {"firewall", "security-misc"} and not any(
+        m.device_type == DEVICE_TYPE_FIREWALL for m in matches
+    ):
+        matches.append(_RuleMatch(DEVICE_TYPE_FIREWALL, 60, "nmap-osclass", ("nmap-deviceType",)))
+    if nmap_type in {"wap", "access point", "access-point"} and not any(
+        m.device_type == DEVICE_TYPE_ACCESS_POINT for m in matches
+    ):
+        matches.append(_RuleMatch(DEVICE_TYPE_ACCESS_POINT, 60, "nmap-osclass", ("nmap-deviceType",)))
+    if "phone" in nmap_type and not any(m.device_type == DEVICE_TYPE_PHONE for m in matches):
+        matches.append(_RuleMatch(DEVICE_TYPE_PHONE, 60, "nmap-osclass", ("nmap-deviceType",)))
+
+    # --- IP Phone ---
+    phone_vendor = _contains_any(hay, _PHONE_VENDORS)
+    sip = bool(ports & {5060, 5061}) or bool(services & {"sip", "sip-tls"})
+    skinny = 2000 in ports
+    if phone_vendor or "phone" in nmap_type or (sip and phone_vendor) or (
+        skinny and phone_vendor
+    ):
+        score = 70
+        signals = ["phone"]
+        if phone_vendor:
+            score += 15
+            signals.append("vendor")
+        if sip or skinny:
+            score += 10
+            signals.append("voip-ports")
+        matches.append(_RuleMatch(DEVICE_TYPE_PHONE, min(score, 95), "phone-fingerprint", tuple(signals)))
+
+    # --- IoT ---
+    iot_hint = _contains_any(hay, _IOT_HINTS)
+    iot_ports = bool(ports & {1883, 8883, 5683})
+    if iot_hint and (iot_ports or _contains_any(hay, ("mqtt", "coap", "zigbee", "tuya", "shelly", "sonoff"))):
+        score = 68
+        signals = ["iot-fingerprint"]
+        if iot_ports:
+            score += 10
+            signals.append("iot-ports")
+        matches.append(_RuleMatch(DEVICE_TYPE_IOT, min(score, 90), "iot-fingerprint", tuple(signals)))
+
+    specialized = {m.device_type for m in matches} & {
+        DEVICE_TYPE_PRINTER,
+        DEVICE_TYPE_IP_CAMERA,
+        DEVICE_TYPE_ACCESS_POINT,
+        DEVICE_TYPE_PHONE,
+        DEVICE_TYPE_FIREWALL,
+        DEVICE_TYPE_IOT,
+        DEVICE_TYPE_NAS,
+        DEVICE_TYPE_HYPERVISOR,
+        DEVICE_TYPE_ROUTER,
+        DEVICE_TYPE_SWITCH,
+        DEVICE_TYPE_MANAGED_SWITCH,
+    }
 
     # --- Windows PC / Workstation ---
     windows = _contains_any(hay, ("windows", "microsoft"))
     smb = bool(ports & {139, 445}) or bool(services & {"microsoft-ds", "netbios-ssn", "smb"})
     rdp = 3389 in ports or "ms-wbt-server" in services or "rdp" in services
-    if windows or (smb and rdp):
+    if (windows or (smb and rdp)) and not specialized:
         score = 50
         signals = []
         if windows:
@@ -537,6 +818,10 @@ def _evaluate_rules(evidence: ClassificationEvidence) -> _RuleMatch | None:
         # Server vs PC: Windows Server keywords → Server
         if _contains_any(hay, ("windows server", "server 201", "server 202")):
             matches.append(_RuleMatch(DEVICE_TYPE_SERVER, min(score, 96), "windows-server", tuple(signals or ["os"])))
+        elif _laptop_hints(evidence, hay):
+            matches.append(
+                _RuleMatch(DEVICE_TYPE_LAPTOP, min(score, 96), "laptop", tuple(signals + ["laptop-hint"]))
+            )
         else:
             matches.append(
                 _RuleMatch(DEVICE_TYPE_WINDOWS_PC, min(score, 96), "windows-pc", tuple(signals or ["ports"]))
@@ -545,7 +830,7 @@ def _evaluate_rules(evidence: ClassificationEvidence) -> _RuleMatch | None:
     # --- Linux Server ---
     linux = _contains_any(hay, ("linux", "ubuntu", "debian", "centos", "redhat", "red hat", "fedora", "alpine"))
     has_ssh_only_mgmt = has_ssh and not smb and not rdp
-    if linux or (has_ssh_only_mgmt and evidence.os_family.lower() in ("linux", "linux kernel")):
+    if (linux or (has_ssh_only_mgmt and evidence.os_family.lower() in ("linux", "linux kernel"))) and not specialized:
         score = 55
         signals = []
         if linux or evidence.os_family.lower().startswith("linux"):
@@ -558,31 +843,46 @@ def _evaluate_rules(evidence: ClassificationEvidence) -> _RuleMatch | None:
         if bool(ports & {80, 443}):
             score += 5
             signals.append("http")
-        matches.append(_RuleMatch(DEVICE_TYPE_LINUX_SERVER, min(score, 95), "linux-server", tuple(signals or ["ssh"])))
+        host_blob = _hostname_blob(evidence)
+        desktop = _contains_any(host_blob, ("desktop", "pc-", "-pc", "workstation", "laptop", "notebook"))
+        server_ports = bool(ports & {80, 443, 3306, 5432, 8080})
+        if desktop and not server_ports:
+            if _laptop_hints(evidence, hay):
+                matches.append(
+                    _RuleMatch(DEVICE_TYPE_LAPTOP, min(score, 90), "laptop", tuple(signals + ["laptop-hint"]))
+                )
+            else:
+                matches.append(_RuleMatch(DEVICE_TYPE_PC, min(score, 90), "linux-pc", tuple(signals)))
+        else:
+            matches.append(
+                _RuleMatch(DEVICE_TYPE_LINUX_SERVER, min(score, 95), "linux-server", tuple(signals or ["ssh"]))
+            )
 
     # Vendor-only weak match
+    # Vendor-only: never guess a specific role from OUI alone.
     vendor = _lower(evidence.vendor or evidence.mac_vendor)
     if vendor and not matches:
-        if _contains_any(vendor, ("cisco",)):
-            matches.append(_RuleMatch(DEVICE_TYPE_MANAGED_SWITCH, 60, "vendor-only", ("vendor",)))
-        elif _contains_any(vendor, ("hewlett", "hp ", "canon", "epson", "brother", "xerox")):
-            matches.append(_RuleMatch(DEVICE_TYPE_PRINTER, 60, "vendor-only", ("vendor",)))
-        elif _contains_any(vendor, ("hikvision", "dahua", "axis")):
-            matches.append(_RuleMatch(DEVICE_TYPE_IP_CAMERA, 60, "vendor-only", ("vendor",)))
-        elif _contains_any(vendor, ("synology", "qnap")):
-            matches.append(_RuleMatch(DEVICE_TYPE_NAS, 60, "vendor-only", ("vendor",)))
-        elif _contains_any(vendor, ("vmware",)):
-            matches.append(_RuleMatch(DEVICE_TYPE_HYPERVISOR, 60, "vendor-only", ("vendor",)))
-        elif _contains_any(vendor, ("microsoft",)):
-            matches.append(_RuleMatch(DEVICE_TYPE_WINDOWS_PC, 55, "vendor-only", ("vendor",)))
+        network_ouis = (
+            "cisco",
+            "juniper",
+            "aruba",
+            "mikrotik",
+            "fortinet",
+            "palo alto",
+            "ubiquiti",
+            "netgear",
+            "huawei",
+            "zte",
+        )
+        if _contains_any(vendor, network_ouis):
+            matches.append(_RuleMatch(DEVICE_TYPE_NETWORK_DEVICE, 45, "vendor-only", ("vendor",)))
         else:
             matches.append(_RuleMatch(DEVICE_TYPE_UNKNOWN, 40, "vendor-only-unknown", ("vendor",)))
 
     if not matches:
         return None
 
-    matches.sort(key=lambda m: m.score, reverse=True)
-    return matches[0]
+    return _select_match(matches)
 
 
 def classify_device(evidence: ClassificationEvidence) -> ClassificationResult:
@@ -600,6 +900,7 @@ def classify_device(evidence: ClassificationEvidence) -> ClassificationResult:
     match = _evaluate_rules(evidence)
 
     if match is None:
+        ident_ev = _identification_evidence(evidence, hostname, [])
         return ClassificationResult(
             hostname=hostname,
             vendor=vendor or "",
@@ -609,6 +910,8 @@ def classify_device(evidence: ClassificationEvidence) -> ClassificationResult:
             classification_method="unknown",
             discovery_source=host_source if host_source != "none" else "none",
             signals_matched=[],
+            canonical_type=CANONICAL_UNKNOWN,
+            identification_evidence=ident_ev,
         )
 
     confidence = _calibrate_confidence(int(match.score), match, evidence)
@@ -620,6 +923,7 @@ def classify_device(evidence: ClassificationEvidence) -> ClassificationResult:
     elif host_source == "nmap-ptr":
         discovery_source = "nmap"
 
+    ident_ev = _identification_evidence(evidence, hostname, list(match.signals))
     return ClassificationResult(
         hostname=hostname,
         vendor=vendor or "",
@@ -629,6 +933,8 @@ def classify_device(evidence: ClassificationEvidence) -> ClassificationResult:
         classification_method=match.method,
         discovery_source=discovery_source,
         signals_matched=list(match.signals),
+        canonical_type=canonical_device_type(match.device_type),
+        identification_evidence=ident_ev,
     )
 
 

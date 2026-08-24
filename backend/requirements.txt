@@ -20,6 +20,7 @@ cryptography>=42.0.0
 pysnmp>=7.1.0
 python-dotenv==1.2.2
 python-nmap>=0.7.1
+pywinrm>=0.5.0
 tzdata==2026.3
 tzlocal==5.4.4
 Werkzeug==3.1.8

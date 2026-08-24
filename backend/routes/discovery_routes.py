@@ -413,6 +413,7 @@ def enrichment_status():
                 "classificationMethod": 1,
                 "discoveryStatus": 1,
                 "discoveryEnrichmentError": 1,
+                "identification": 1,
             },
         )
 
@@ -428,6 +429,7 @@ def enrichment_status():
                 "classificationMethod": doc.get("classificationMethod"),
                 "discoveryStatus": doc.get("discoveryStatus"),
                 "discoveryEnrichmentError": doc.get("discoveryEnrichmentError"),
+                "identification": doc.get("identification"),
             })
 
         return jsonify({
@@ -537,3 +539,86 @@ def scan_networks():
 
     except Exception as error:
         return internal_error_response(error, message="Failed to scan networks")
+
+
+@discovery_bp.route("/networks/<network_id>/enrich", methods=["POST"])
+@require_auth(roles=["admin", "user"])
+def enrich_network(network_id: str):
+    """
+    Trigger manual asynchronous background enrichment for all online devices in a network.
+    Returns immediately without blocking the browser.
+    """
+    try:
+        if not ObjectId.is_valid(network_id):
+            return jsonify({"success": False, "message": "Invalid network ID"}), 400
+
+        network = db.networks.find_one({"_id": ObjectId(network_id)})
+        if not network:
+            return jsonify({"success": False, "message": "Network not found"}), 404
+
+        cidr_str = network.get("cidr") or ""
+        scan_targets = network.get("scanTargets") or ""
+
+        target_ips = []
+        if scan_targets:
+            try:
+                target_ips = parse_scan_targets(scan_targets)
+            except Exception:
+                pass
+
+        if not target_ips and cidr_str:
+            try:
+                net = ipaddress.IPv4Network(cidr_str, strict=False)
+                target_ips = [str(ip) for ip in net.hosts()]
+            except Exception:
+                pass
+
+        query = {"status": "Online"}
+        if target_ips:
+            query["ipAddress"] = {"$in": target_ips}
+
+        devices = list(db.devices.find(query, {"_id": 1, "ipAddress": 1, "discoveryStatus": 1}))
+
+        if not devices:
+            return jsonify({
+                "success": True,
+                "status": "queued",
+                "message": "No online devices found in network to enrich",
+                "queued": 0,
+                "total": 0,
+            }), 200
+
+        from services.discovery.enrichment import (
+            DISCOVERY_STATUS_ENRICHING,
+            DISCOVERY_STATUS_PENDING,
+            enqueue_batch_enrichment,
+        )
+
+        to_enrich = []
+        skipped_enriching = 0
+
+        for d in devices:
+            if d.get("discoveryStatus") == DISCOVERY_STATUS_ENRICHING:
+                skipped_enriching += 1
+            else:
+                to_enrich.append(d)
+
+        if to_enrich:
+            enrich_ids = [d["_id"] for d in to_enrich]
+            db.devices.update_many(
+                {"_id": {"$in": enrich_ids}},
+                {"$set": {"discoveryStatus": DISCOVERY_STATUS_PENDING}},
+            )
+            enqueue_batch_enrichment([(d["_id"], d["ipAddress"]) for d in to_enrich])
+
+        return jsonify({
+            "success": True,
+            "status": "queued",
+            "message": f"Enrichment started in background for {len(to_enrich)} device(s)",
+            "queued": len(to_enrich),
+            "skippedEnriching": skipped_enriching,
+            "total": len(devices),
+        }), 200
+
+    except Exception as error:
+        return internal_error_response(error, message="Failed to trigger network enrichment")
