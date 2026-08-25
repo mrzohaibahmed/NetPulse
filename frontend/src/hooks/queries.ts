@@ -919,6 +919,8 @@ export function useDeviceMutations() {
   const invalidate = () =>
     Promise.all([
       qc.invalidateQueries({ queryKey: ['devices'] }),
+      qc.invalidateQueries({ queryKey: ['device'] }),
+      qc.invalidateQueries({ queryKey: ['device-history'] }),
       qc.invalidateQueries({ queryKey: queryKeys.dashboard.all }),
     ])
 

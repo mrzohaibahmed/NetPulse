@@ -135,6 +135,15 @@ def add_device():
             credentials=credentials,
         )
 
+        # Manually created devices should lock identity fields so background
+        # discovery doesn't overwrite them.
+        device["identityManagement"] = {
+            "hostname": "manual",
+            "deviceType": "manual",
+        }
+        device["classificationConfidence"] = 100
+        device["classificationMethod"] = "manual"
+
         try:
             result = db.devices.insert_one(device)
         except DuplicateKeyError:
@@ -468,6 +477,9 @@ def update_device(device_id):
         identity_updates = ownership_for_device_edit(device, update_data)
         if identity_updates is not None:
             update_data["identityManagement"] = identity_updates
+            if identity_updates.get("deviceType") == "manual" and "deviceType" in update_data:
+                update_data["classificationConfidence"] = 100
+                update_data["classificationMethod"] = "manual"
 
         try:
             db.devices.update_one(
