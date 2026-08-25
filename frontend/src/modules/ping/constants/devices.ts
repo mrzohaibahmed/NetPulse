@@ -31,8 +31,5 @@ export function displayDeviceType(
   deviceType: string | null | undefined,
   confidence?: number | null,
 ): string {
-  if (confidence != null && confidence < 50) {
-    return 'Unknown Device'
-  }
   return (deviceType || 'Unknown Device').trim() || 'Unknown Device'
 }
