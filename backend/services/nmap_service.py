@@ -618,17 +618,21 @@ def scan_and_update_device(
             classify_network_info,
         )
 
+        # Fetch the absolute latest snapshot to avoid overwriting a manual edit
+        # that occurred while the Nmap scan was running.
+        latest_device = db.devices.find_one({"_id": device_id}) or device
+
         classification, _evidence = classify_network_info(
             network_info,
             ip_address=ip_address,
-            existing=device,
+            existing=latest_device,
             try_ssh=True,
         )
         apply_classification_to_device(
             device_id,
             classification,
             network_info=network_info,
-            existing=device,
+            existing=latest_device,
         )
         return {"success": True, "ip": ip_address, "error": None}
 
