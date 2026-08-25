@@ -30,6 +30,7 @@ import {
   useDashboardQuery,
   useDeviceMutations,
   useDevicesQuery,
+  useDeviceNetworksQuery,
   useNmapScanAllMutation,
   usePingAllDevicesMutation,
 } from '@/hooks/queries'
@@ -105,6 +106,10 @@ export function DevicesPage() {
     if (critical === 'false') return 'non-critical'
     return 'all'
   })
+  const [networkFilter, setNetworkFilter] = useState(() => {
+    const network = searchParams.get('network')
+    return network && network.trim() ? network : 'all'
+  })
   const [page, setPage] = useState(1)
   const [limit, setLimit] = useState(DEFAULT_LIMIT)
   const [sorting, setSorting] = useState<SortingState>([])
@@ -157,7 +162,7 @@ export function DevicesPage() {
 
   useEffect(() => {
     setPage(1)
-  }, [debouncedQuery, statusFilter, typeFilter, criticalFilter, limit])
+  }, [debouncedQuery, statusFilter, typeFilter, criticalFilter, networkFilter, limit])
 
   useEffect(() => {
     const q = searchParams.get('q')
@@ -170,6 +175,8 @@ export function DevicesPage() {
     const nextCritical =
       critical === 'true' ? 'critical' : critical === 'false' ? 'non-critical' : 'all'
     if (critical != null && nextCritical !== criticalFilter) setCriticalFilter(nextCritical)
+    const network = searchParams.get('network')
+    if (network != null && network !== networkFilter) setNetworkFilter(network || 'all')
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams])
 
@@ -189,7 +196,11 @@ export function DevicesPage() {
     deviceType: typeFilter !== 'all' ? typeFilter : undefined,
     critical:
       criticalFilter === 'critical' ? true : criticalFilter === 'non-critical' ? false : undefined,
+    network: networkFilter !== 'all' ? networkFilter : undefined,
   })
+
+  const networksQuery = useDeviceNetworksQuery()
+  const networks = networksQuery.data || []
 
   const devices = devicesQuery.data?.data ?? []
   const total = devicesQuery.data?.total ?? devicesQuery.data?.count ?? 0
@@ -642,6 +653,31 @@ export function DevicesPage() {
                     <SelectItem value="all">All devices</SelectItem>
                     <SelectItem value="critical">Critical only</SelectItem>
                     <SelectItem value="non-critical">Non-critical only</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">Network</label>
+                <Select
+                  value={networkFilter}
+                  onValueChange={(val) => {
+                    setNetworkFilter(val)
+                    const next = new URLSearchParams(searchParams)
+                    if (val === 'all') next.delete('network')
+                    else next.set('network', val)
+                    setSearchParams(next, { replace: true })
+                  }}
+                >
+                  <SelectTrigger className="w-[180px]">
+                    <SelectValue placeholder="Network" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All networks</SelectItem>
+                    {networks.map((net) => (
+                      <SelectItem key={net} value={net}>
+                        {net}.x
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>

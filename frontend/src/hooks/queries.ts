@@ -23,6 +23,7 @@ import {
   getDeviceStatusChart,
   getDeviceTypeChart,
   getDevices,
+  getDeviceNetworks,
   getEligibilityResults,
   getHealth,
   getHistory,
@@ -277,6 +278,13 @@ export function useDevicesQuery(params: PaginationParams) {
     queryFn: () => getDevices(params),
     refetchInterval: DEVICES_INTERVAL,
     placeholderData: (prev) => prev,
+  })
+}
+
+export function useDeviceNetworksQuery() {
+  return useQuery({
+    queryKey: ['devices', 'networks'],
+    queryFn: async () => (await getDeviceNetworks()).data,
   })
 }
 

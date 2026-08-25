@@ -85,6 +85,9 @@ function toQuery(params: PaginationParams = {}): string {
   if (params.safetyStatus && params.safetyStatus !== 'all') {
     search.set('status', params.safetyStatus)
   }
+  if ((params as any).network && (params as any).network !== 'all') {
+    search.set('network', (params as any).network)
+  }
 
   const query = search.toString()
   return query ? `?${query}` : ''
@@ -149,8 +152,11 @@ export const deleteUser = (id: string) =>
     method: 'DELETE',
   })
 
-export const getDevices = (params: PaginationParams = {}) =>
+export const getDevices = (params: PaginationParams & { network?: string } = {}) =>
   apiRequest<ApiListResponse<Device>>(`/api/devices${toQuery(params)}`)
+
+export const getDeviceNetworks = () =>
+  apiRequest<{ success: boolean; data: string[] }>('/api/devices/networks')
 
 export const getDevice = (id: string) =>
   apiRequest<ApiItemResponse<Device>>(`/api/devices/${id}`)

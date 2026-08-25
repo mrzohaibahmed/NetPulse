@@ -57,6 +57,12 @@ def build_device_filter():
     elif critical_raw in ("false", "0", "no"):
         query["critical"] = False
 
+    network = (request.args.get("network") or "").strip()
+    if network and network.lower() != "all":
+        pattern = re.compile(f"^{re.escape(network)}\.")
+        query["$and"] = query.get("$and", [])
+        query["$and"].append({"ipAddress": pattern})
+
     search = (request.args.get("q") or "").strip()
     if search:
         pattern = re.compile(re.escape(search), re.IGNORECASE)
@@ -309,6 +315,34 @@ def get_devices():
 
     except Exception as error:
         return internal_error_response(error, message="Failed to get devices")
+
+
+@device_bp.route("/devices/networks", methods=["GET"])
+@require_auth()
+def get_device_networks():
+    try:
+        ips = db.devices.distinct("ipAddress")
+        subnets = set()
+        for ip in ips:
+            parts = ip.split(".")
+            if len(parts) == 4:
+                subnets.add(f"{parts[0]}.{parts[1]}.{parts[2]}")
+        
+        import ipaddress
+        def subnet_sort_key(s):
+            try:
+                return int(ipaddress.IPv4Address(f"{s}.0"))
+            except Exception:
+                return 0
+                
+        sorted_subnets = sorted(list(subnets), key=subnet_sort_key)
+        
+        return jsonify({
+            "success": True,
+            "data": sorted_subnets
+        }), 200
+    except Exception as error:
+        return internal_error_response(error, message="Failed to get device networks")
 
 
 @device_bp.route("/devices/<device_id>", methods=["GET"])
