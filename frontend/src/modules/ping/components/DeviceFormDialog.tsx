@@ -37,8 +37,8 @@ const schema = z.object({
     message: 'Enter a valid IPv4/IPv6 address',
   }),
   deviceType: z.string().trim().min(1, 'Device type is required'),
-  vendor: z.string().trim().min(1, 'Vendor is required'),
-  username: z.string().trim().min(1, 'SSH username is required'),
+  vendor: z.string().trim(),
+  username: z.string().trim(),
   // SSH password is required for new devices; on edits it is optional.
   password: z.string(),
   critical: z.boolean(),
@@ -113,8 +113,14 @@ export function DeviceFormDialog({ open, onOpenChange, device }: DeviceFormDialo
 
   const onSubmit = form.handleSubmit(async (values) => {
     const nextPassword = values.password.trim()
+    const nextUsername = values.username.trim()
+
+    if (!device && !nextUsername) {
+      form.setError('username', { type: 'manual', message: 'SSH username is required for new devices' })
+      return
+    }
     if (!device && !nextPassword) {
-      form.setError('password', { type: 'manual', message: 'SSH password is required' })
+      form.setError('password', { type: 'manual', message: 'SSH password is required for new devices' })
       return
     }
 
