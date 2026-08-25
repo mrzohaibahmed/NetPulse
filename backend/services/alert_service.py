@@ -7,6 +7,7 @@ from services.email_service import (
     _recovery_duration_label,
     _risk_score_from_incident,
     send_critical_offline_alert,
+    send_high_risk_notification,
 )
 from services.mongo_retry import (
     assert_insert_acknowledged,
@@ -551,3 +552,78 @@ def create_storm_remitigation_blocked_alert(
         status="ESCALATED",
         email_sent=email_sent,
     )
+
+
+def maybe_send_high_risk_alert(
+    device_id,
+    interface: str,
+    risk_score: float,
+    hostname: str,
+    ip_address: str,
+) -> bool:
+    """Creates a high risk threshold alert if one does not already exist and sends an email."""
+    if risk_score < 60.0:
+        return False
+
+    existing = db.alerts.find_one(
+        {
+            "deviceId": device_id,
+            "interface": interface,
+            "alertType": "High Risk Threshold",
+            "resolved": {"$ne": True},
+            "dismissed": {"$ne": True},
+        },
+        {"_id": 1}
+    )
+
+    if existing:
+        return False
+        
+    email_sent = send_high_risk_notification(
+        device_id=device_id,
+        interface=interface,
+        risk_score=risk_score,
+        hostname=hostname,
+        ip_address=ip_address,
+    )
+    
+    now = utc_now()
+    doc = {
+        "deviceId": device_id,
+        "hostname": hostname,
+        "ipAddress": ip_address,
+        "deviceType": "Switch",
+        "deviceName": hostname,
+        "status": "ACTIVE",
+        "message": f"Device risk score reached {risk_score}%.",
+        "title": "High Risk Threshold Reached",
+        "scanType": CATEGORY_STORM,
+        "alertType": "High Risk Threshold",
+        "category": "Risk Management",
+        "severity": "CRITICAL",
+        "interface": interface,
+        "riskScore": risk_score,
+        "action": "NONE",
+        "generatedBy": GENERATED_BY_SYSTEM,
+        "emailSent": bool(email_sent),
+        "acknowledged": False,
+        "dismissed": False,
+        "resolved": False,
+        "acknowledgedAt": None,
+        "dismissedAt": None,
+        "resolvedAt": None,
+        "createdAt": now,
+    }
+    
+    result = db.alerts.insert_one(doc)
+    publish(
+        EVENT_ALERT_CREATED,
+        {
+            "deviceId": str(device_id) if device_id is not None else None,
+            "hostname": hostname,
+            "ipAddress": ip_address,
+            "status": "ACTIVE",
+            "alertId": str(result.inserted_id),
+        }
+    )
+    return True

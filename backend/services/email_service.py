@@ -845,3 +845,36 @@ def send_storm_remitigation_blocked_notification(
         operator=operator,
         setting_flag="failureEmails",
     )
+
+
+def send_high_risk_notification(
+    device_id,
+    interface: str,
+    risk_score: float,
+    hostname: str,
+    ip_address: str,
+) -> bool:
+    """Email when a device's risk score reaches the high threshold (>= 60%)."""
+    incident = {
+        "deviceId": device_id,
+        "interface": interface,
+        "hostname": hostname,
+        "ipAddress": ip_address,
+        "riskScore": risk_score,
+        "incidentId": "N/A"
+    }
+    return _dispatch_storm_email(
+        kind="high_risk_threshold",
+        subject=f"🚨 CRITICAL: High Risk Threshold Reached ({risk_score}%)",
+        incident=incident,
+        banner_color="#dc2626",
+        banner_label="CRITICAL",
+        event_type="High Risk Threshold Reached",
+        action_performed="NONE",
+        action_status="ACTIVE",
+        reason=f"Device risk score reached {risk_score}%.",
+        verification_result=None,
+        operator="SYSTEM",
+        suggested_action="Investigate the device immediately for potential storms.",
+        setting_flag="enabled",
+    )

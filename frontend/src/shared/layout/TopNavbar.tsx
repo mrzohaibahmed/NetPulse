@@ -9,7 +9,8 @@ import {
   Sun,
   User,
 } from 'lucide-react'
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useState, useRef, type FormEvent } from 'react'
+import { toast } from 'sonner'
 import { useAuth } from '@/shared/auth/AuthContext'
 import { useAlertsQuery, useHealthQuery } from '@/hooks/queries'
 import { useTheme } from '@/lib/theme'
@@ -56,6 +57,28 @@ export function TopNavbar({ lastUpdated, monitoringOk }: TopNavbarProps) {
     const q = params.get('q')
     if (q) setQuery(q)
   }, [])
+
+  const lastAlertIdRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    if (alerts.data?.data && alerts.data.data.length > 0) {
+      const latestAlert = alerts.data.data[0]
+      if (lastAlertIdRef.current && lastAlertIdRef.current !== latestAlert._id) {
+        if (latestAlert.severity === 'CRITICAL' || latestAlert.severity === 'WARNING') {
+          toast.error(latestAlert.title || 'New Alert', {
+            description: latestAlert.message,
+            duration: 10000,
+          })
+        } else {
+          toast.info(latestAlert.title || 'New Alert', {
+            description: latestAlert.message,
+            duration: 10000,
+          })
+        }
+      }
+      lastAlertIdRef.current = latestAlert._id
+    }
+  }, [alerts.data])
 
   const onSearch = (event: FormEvent) => {
     event.preventDefault()
