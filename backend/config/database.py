@@ -13,8 +13,8 @@ load_dotenv(BASE_DIR / ".env")
 SCAN_INTERVAL = int(os.getenv("SCAN_INTERVAL", 60))
 
 # ── Nmap Scanner configuration ─────────────────────────────────────────────────
-# How often (seconds) the background Nmap scheduler runs. Default: 1 hour.
-NMAP_SCAN_INTERVAL = int(os.getenv("NMAP_SCAN_INTERVAL", 3600))
+# How often (seconds) the background Nmap scheduler runs. Default: disabled (0).
+NMAP_SCAN_INTERVAL = int(os.getenv("NMAP_SCAN_INTERVAL", 0))
 
 # Deep / diagnostic Nmap profile (manual Scan Details).
 # -A covers OS detection (-O), version detection (-sV), script scanning (-sC),

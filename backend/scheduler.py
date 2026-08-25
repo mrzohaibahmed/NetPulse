@@ -332,7 +332,12 @@ def _start_nmap_job() -> None:
     log an error when the job first fires rather than crashing at startup.
     """
     try:
-        interval = max(int(NMAP_SCAN_INTERVAL), 60)  # enforce minimum 60 s
+        interval = int(NMAP_SCAN_INTERVAL)
+        if interval <= 0:
+            logger.info("Nmap scan job disabled (NMAP_SCAN_INTERVAL=%s)", interval)
+            return
+
+        interval = max(interval, 60)  # enforce minimum 60 s
 
         scheduler.add_job(
             func=_run_nmap_job,
