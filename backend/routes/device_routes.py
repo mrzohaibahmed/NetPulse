@@ -288,12 +288,17 @@ def get_devices():
         total = db.devices.count_documents(filters)
         page, skip, total_pages = clamp_page(page, total, limit)
 
-        devices = list(
-            db.devices.find(filters)
-            .sort("createdAt", -1)
-            .skip(skip)
-            .limit(limit)
-        )
+        import ipaddress
+
+        def ip_sort_key(doc):
+            try:
+                return int(ipaddress.IPv4Address(doc.get("ipAddress", "0.0.0.0")))
+            except Exception:
+                return 0
+
+        all_devices = list(db.devices.find(filters))
+        all_devices.sort(key=ip_sort_key)
+        devices = all_devices[skip : skip + limit]
 
         return jsonify({
             "success": True,
