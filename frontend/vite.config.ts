@@ -12,6 +12,8 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    // Allow access via the VM's DHCP LAN IP (do not hard-code an address).
+    allowedHosts: true,
     proxy: {
       '/api': {
         target: 'http://127.0.0.1:5000',
