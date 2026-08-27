@@ -57,6 +57,35 @@ def _db():
     return db
 
 
+def _notify_storm_confirmed(
+    device_id,
+    interface: str,
+    *,
+    risk_score: float,
+    hostname: Optional[str] = None,
+    ip_address: Optional[str] = None,
+    reason: Optional[str] = None,
+) -> None:
+    """Best-effort alert + email on first CONFIRMED transition. Never raises."""
+    try:
+        from services.alert_service import notify_storm_confirmed  # noqa: PLC0415
+
+        notify_storm_confirmed(
+            device_id,
+            interface,
+            risk_score=risk_score,
+            hostname=hostname,
+            ip_address=ip_address,
+            reason=reason,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "Storm confirmed notification failed | %s | %s",
+            interface,
+            exc,
+        )
+
+
 class ConfirmationEngine:
     """
     Stateful confirmation tracker driven by Risk history (SOLID).
@@ -309,6 +338,14 @@ class ConfirmationEngine:
                     name,
                     current,
                     consecutive,
+                )
+                _notify_storm_confirmed(
+                    device_id,
+                    name,
+                    risk_score=current,
+                    hostname=hostname,
+                    ip_address=ip_address,
+                    reason=reason,
                 )
             consecutive_out = required
         elif state == STATE_PENDING:

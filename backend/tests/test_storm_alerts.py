@@ -12,10 +12,12 @@ from bson import ObjectId
 
 from routes.alert_routes import serialize_alert
 from services.alert_service import (
+    create_storm_confirmed_alert,
     create_storm_recovery_alert,
     create_storm_recovery_failure_alert,
     create_storm_shutdown_alert,
     create_storm_shutdown_failure_alert,
+    notify_storm_confirmed,
 )
 
 
@@ -37,6 +39,78 @@ def _incident(**overrides):
 
 
 class StormAlertServiceTests(unittest.TestCase):
+    @patch("services.alert_service.log_audit")
+    @patch("services.alert_service.db")
+    def test_confirmed_creates_alert(self, mock_db, mock_audit):
+        mock_db.alerts.insert_one.return_value = MagicMock(
+            inserted_id=ObjectId("507f1f77bcf86cd799439099")
+        )
+        incident = _incident(
+            status="CONFIRMED",
+            reason="Risk exceeded threshold for 4 consecutive polling cycles.",
+            incidentId=None,
+        )
+
+        alert_id = create_storm_confirmed_alert(incident)
+
+        self.assertEqual(alert_id, "507f1f77bcf86cd799439099")
+        doc = mock_db.alerts.insert_one.call_args[0][0]
+        self.assertEqual(doc["title"], "Storm Confirmed")
+        self.assertEqual(doc["severity"], "CRITICAL")
+        self.assertEqual(doc["category"], "Storm Protection")
+        self.assertEqual(doc["alertType"], "Storm Protection")
+        self.assertEqual(doc["action"], "NONE")
+        self.assertEqual(doc["status"], "CONFIRMED")
+        self.assertIn("Risk exceeded threshold", doc["message"])
+        self.assertFalse(doc["emailSent"])
+        mock_audit.assert_called_once()
+
+    @patch("services.alert_service.mark_alert_email_sent")
+    @patch("services.alert_service.send_storm_confirmed_notification", return_value=True)
+    @patch("services.alert_service.create_storm_confirmed_alert", return_value="alert-1")
+    @patch("services.alert_service.db")
+    def test_notify_storm_confirmed_creates_alert_and_email(
+        self, mock_db, mock_create, mock_email, mock_mark
+    ):
+        mock_db.alerts.find_one.return_value = None
+        device_id = ObjectId("507f1f77bcf86cd799439011")
+
+        alert_id = notify_storm_confirmed(
+            device_id,
+            "Gi1/0/5",
+            risk_score=88.5,
+            hostname="sw1",
+            ip_address="10.0.0.1",
+            reason="Risk exceeded threshold for 4 consecutive polling cycles.",
+        )
+
+        self.assertEqual(alert_id, "alert-1")
+        mock_create.assert_called_once()
+        mock_email.assert_called_once()
+        mock_mark.assert_called_once_with("alert-1", True)
+
+    @patch("services.alert_service.mark_alert_email_sent")
+    @patch("services.alert_service.send_storm_confirmed_notification")
+    @patch("services.alert_service.create_storm_confirmed_alert")
+    @patch("services.alert_service.db")
+    def test_notify_storm_confirmed_skips_when_open_alert_exists(
+        self, mock_db, mock_create, mock_email, mock_mark
+    ):
+        mock_db.alerts.find_one.return_value = {"_id": ObjectId("507f1f77bcf86cd799439088")}
+
+        alert_id = notify_storm_confirmed(
+            ObjectId("507f1f77bcf86cd799439011"),
+            "Gi1/0/5",
+            risk_score=90.0,
+            hostname="sw1",
+            ip_address="10.0.0.1",
+        )
+
+        self.assertEqual(alert_id, "507f1f77bcf86cd799439088")
+        mock_create.assert_not_called()
+        mock_email.assert_not_called()
+        mock_mark.assert_not_called()
+
     @patch("services.alert_service.log_audit")
     @patch("services.alert_service.db")
     def test_shutdown_success_creates_alert(self, mock_db, mock_audit):

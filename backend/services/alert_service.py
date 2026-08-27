@@ -7,7 +7,7 @@ from services.email_service import (
     _recovery_duration_label,
     _risk_score_from_incident,
     send_critical_offline_alert,
-    send_high_risk_notification,
+    send_storm_confirmed_notification,
 )
 from services.mongo_retry import (
     assert_insert_acknowledged,
@@ -432,6 +432,117 @@ def mark_alert_email_sent(alert_id: Optional[str], email_sent: bool = True) -> N
         logger.warning("Failed to update alert emailSent | alertId=%s | %s", alert_id, exc)
 
 
+def create_storm_confirmed_alert(
+    incident: dict,
+    *,
+    device: Optional[dict] = None,
+    email_sent: bool = False,
+) -> Optional[str]:
+    """CRITICAL alert when storm is first confirmed on a switch port."""
+    interface = (incident or {}).get("interface") or "unknown"
+    reason = (incident or {}).get("reason") or (
+        f"Storm confirmed on interface {interface}."
+    )
+    return _insert_storm_alert(
+        incident=incident,
+        device=device,
+        title="Storm Confirmed",
+        message=str(reason),
+        severity="CRITICAL",
+        action="NONE",
+        status="CONFIRMED",
+        email_sent=email_sent,
+    )
+
+
+def notify_storm_confirmed(
+    device_id,
+    interface: str,
+    *,
+    risk_score: float,
+    hostname: Optional[str] = None,
+    ip_address: Optional[str] = None,
+    reason: Optional[str] = None,
+) -> Optional[str]:
+    """
+    Create a Storm Confirmed alert and send email (independent operations).
+
+    Dedupes while an open confirmed alert already exists for the same port.
+    Never raises.
+    """
+    name = str(interface or "").strip() or "unknown"
+    host = hostname or "unknown"
+    ip = ip_address or "unknown"
+    message = reason or (
+        f"Storm confirmed on interface {name}. "
+        f"Risk score {round(float(risk_score), 1)}."
+    )
+    incident = {
+        "deviceId": device_id,
+        "interface": name,
+        "hostname": host,
+        "ipAddress": ip,
+        "deviceType": "Switch",
+        "reason": message,
+        "risk": {"riskScore": risk_score},
+        "status": "CONFIRMED",
+    }
+
+    try:
+        existing = db.alerts.find_one(
+            {
+                "deviceId": device_id,
+                "interface": name,
+                "title": "Storm Confirmed",
+                "dismissed": {"$ne": True},
+                "resolved": {"$ne": True},
+            },
+            {"_id": 1},
+        )
+        if existing:
+            logger.info(
+                "Storm confirmed alert skipped (already open) | %s | %s",
+                host,
+                name,
+            )
+            return str(existing["_id"])
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "Storm confirmed alert dedupe lookup failed | %s | %s | %s",
+            host,
+            name,
+            exc,
+        )
+
+    alert_id = None
+    try:
+        alert_id = create_storm_confirmed_alert(incident)
+    except Exception as alert_exc:  # noqa: BLE001
+        logger.warning(
+            "Storm confirmed alert failed | %s | %s | %s",
+            host,
+            name,
+            alert_exc,
+        )
+
+    try:
+        email_sent = send_storm_confirmed_notification(
+            incident,
+            reason=message,
+        )
+        if alert_id:
+            mark_alert_email_sent(alert_id, bool(email_sent))
+    except Exception as email_exc:  # noqa: BLE001
+        logger.warning(
+            "Storm confirmed email failed | %s | %s | %s",
+            host,
+            name,
+            email_exc,
+        )
+
+    return alert_id
+
+
 def create_storm_shutdown_alert(
     incident: dict,
     *,
@@ -552,78 +663,3 @@ def create_storm_remitigation_blocked_alert(
         status="ESCALATED",
         email_sent=email_sent,
     )
-
-
-def maybe_send_high_risk_alert(
-    device_id,
-    interface: str,
-    risk_score: float,
-    hostname: str,
-    ip_address: str,
-) -> bool:
-    """Creates a high risk threshold alert if one does not already exist and sends an email."""
-    if risk_score < 60.0:
-        return False
-
-    existing = db.alerts.find_one(
-        {
-            "deviceId": device_id,
-            "interface": interface,
-            "alertType": "High Risk Threshold",
-            "resolved": {"$ne": True},
-            "dismissed": {"$ne": True},
-        },
-        {"_id": 1}
-    )
-
-    if existing:
-        return False
-        
-    email_sent = send_high_risk_notification(
-        device_id=device_id,
-        interface=interface,
-        risk_score=risk_score,
-        hostname=hostname,
-        ip_address=ip_address,
-    )
-    
-    now = utc_now()
-    doc = {
-        "deviceId": device_id,
-        "hostname": hostname,
-        "ipAddress": ip_address,
-        "deviceType": "Switch",
-        "deviceName": hostname,
-        "status": "ACTIVE",
-        "message": f"Device risk score reached {risk_score}%.",
-        "title": "High Risk Threshold Reached",
-        "scanType": CATEGORY_STORM,
-        "alertType": "High Risk Threshold",
-        "category": "Risk Management",
-        "severity": "CRITICAL",
-        "interface": interface,
-        "riskScore": risk_score,
-        "action": "NONE",
-        "generatedBy": GENERATED_BY_SYSTEM,
-        "emailSent": bool(email_sent),
-        "acknowledged": False,
-        "dismissed": False,
-        "resolved": False,
-        "acknowledgedAt": None,
-        "dismissedAt": None,
-        "resolvedAt": None,
-        "createdAt": now,
-    }
-    
-    result = db.alerts.insert_one(doc)
-    publish(
-        EVENT_ALERT_CREATED,
-        {
-            "deviceId": str(device_id) if device_id is not None else None,
-            "hostname": hostname,
-            "ipAddress": ip_address,
-            "status": "ACTIVE",
-            "alertId": str(result.inserted_id),
-        }
-    )
-    return True

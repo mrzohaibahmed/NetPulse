@@ -48,6 +48,12 @@ class ConfirmationEngineTests(unittest.TestCase):
             poll_stale_seconds=180,
         )
         self.engine = ConfirmationEngine(config=self.config)
+        # Avoid Mongo/SMTP side effects from confirmation notifications
+        self._notify_patch = patch(
+            "services.storm.confirmation._notify_storm_confirmed"
+        )
+        self.mock_notify = self._notify_patch.start()
+        self.addCleanup(self._notify_patch.stop)
         self._source_gate = patch(
             "services.storm.storm_source_selector.confirmation_allowed_for_source",
             return_value=(True, "", None),
@@ -220,6 +226,43 @@ class ConfirmationEngineTests(unittest.TestCase):
         result = self._eval([20, 15, 10])
         self.assertFalse(result.confirmed)
         self.assertEqual(result.state, STATE_NOT_CONFIRMED)
+
+    def test_notifies_on_first_confirmation_only(self):
+        rows = _risk_rows(90, 88)
+        first = self.engine.evaluate(
+            "dev1",
+            "Gi1/0/5",
+            eligible=True,
+            poll_failed=False,
+            previous_confirmation={},
+            risk_rows=rows,
+            current_risk=90,
+            hostname="sw1",
+            ip_address="10.0.0.1",
+            persist=False,
+        )
+        self.assertTrue(first.confirmed)
+        self.mock_notify.assert_called_once()
+        kwargs = self.mock_notify.call_args.kwargs
+        self.assertEqual(kwargs["hostname"], "sw1")
+        self.assertEqual(kwargs["ip_address"], "10.0.0.1")
+        self.assertGreaterEqual(kwargs["risk_score"], 75.0)
+
+        self.mock_notify.reset_mock()
+        again = self.engine.evaluate(
+            "dev1",
+            "Gi1/0/5",
+            eligible=True,
+            poll_failed=False,
+            previous_confirmation={"state": STATE_CONFIRMED, "consecutiveHighSamples": 2},
+            risk_rows=rows,
+            current_risk=90,
+            hostname="sw1",
+            ip_address="10.0.0.1",
+            persist=False,
+        )
+        self.assertTrue(again.confirmed)
+        self.mock_notify.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -559,18 +559,8 @@ def calculate_all_risks(*, cycle_id: Optional[str] = None) -> dict[str, Any]:
                 )
                 if eligible:
                     scored += 1
-                    try:
-                        from services.alert_service import maybe_send_high_risk_alert
-                        if result.risk_score >= 60.0:
-                            maybe_send_high_risk_alert(
-                                device_id=oid,
-                                interface=name,
-                                risk_score=result.risk_score,
-                                hostname=iface.get("hostname") or "Unknown",
-                                ip_address=iface.get("ipAddress") or "Unknown"
-                            )
-                    except Exception as err:
-                        logger.warning("[RISK] Failed to evaluate high risk alert: %s", err)
+                    # High risk is an internal signal for confirmation only —
+                    # it does not independently create operator alerts or emails.
                 else:
                     skipped += 1
             except Exception as exc:  # noqa: BLE001

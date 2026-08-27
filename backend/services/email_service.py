@@ -41,6 +41,7 @@ PROVIDER_PRESETS: dict[str, dict] = {
 }
 
 # Subjects (exact product copy)
+SUBJECT_CONFIRMED = "🚨 CRITICAL: Storm Confirmed on Switch Port"
 SUBJECT_SHUTDOWN = "🚨 CRITICAL: Storm Detected - Port Automatically Shut Down"
 SUBJECT_RECOVERY = "✅ INFO: Port Automatically Restored"
 SUBJECT_MITIGATION_FAILURE = "❌ WARNING: Automatic Port Shutdown Failed"
@@ -714,6 +715,33 @@ def _dispatch_storm_email(
         return False
 
 
+def send_storm_confirmed_notification(
+    incident: dict,
+    *,
+    reason: str = "Storm confirmed on switch port",
+    operator: str = "SYSTEM",
+) -> bool:
+    """Email when storm confirmation first reaches CONFIRMED for a port."""
+    return _dispatch_storm_email(
+        kind="confirmed",
+        subject=SUBJECT_CONFIRMED,
+        incident=incident,
+        banner_color="#b91c1c",
+        banner_label="CRITICAL",
+        event_type="Storm Confirmed",
+        action_performed="NONE",
+        action_status="CONFIRMED",
+        reason=reason,
+        verification_result=None,
+        operator=operator,
+        suggested_action=(
+            "Investigate the switch port for broadcast/multicast storms or loops. "
+            "Automatic mitigation may follow if safety checks pass."
+        ),
+        setting_flag="enabled",
+    )
+
+
 def send_storm_shutdown_notification(
     incident: dict,
     *,
@@ -844,37 +872,4 @@ def send_storm_remitigation_blocked_notification(
         verification_result={"success": False, "failedRule": failed_rule},
         operator=operator,
         setting_flag="failureEmails",
-    )
-
-
-def send_high_risk_notification(
-    device_id,
-    interface: str,
-    risk_score: float,
-    hostname: str,
-    ip_address: str,
-) -> bool:
-    """Email when a device's risk score reaches the high threshold (>= 60%)."""
-    incident = {
-        "deviceId": device_id,
-        "interface": interface,
-        "hostname": hostname,
-        "ipAddress": ip_address,
-        "riskScore": risk_score,
-        "incidentId": "N/A"
-    }
-    return _dispatch_storm_email(
-        kind="high_risk_threshold",
-        subject=f"🚨 CRITICAL: High Risk Threshold Reached ({risk_score}%)",
-        incident=incident,
-        banner_color="#dc2626",
-        banner_label="CRITICAL",
-        event_type="High Risk Threshold Reached",
-        action_performed="NONE",
-        action_status="ACTIVE",
-        reason=f"Device risk score reached {risk_score}%.",
-        verification_result=None,
-        operator="SYSTEM",
-        suggested_action="Investigate the device immediately for potential storms.",
-        setting_flag="enabled",
     )

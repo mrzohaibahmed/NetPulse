@@ -9,10 +9,12 @@ from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 from services.email_service import (
+    SUBJECT_CONFIRMED,
     SUBJECT_MITIGATION_FAILURE,
     SUBJECT_RECOVERY,
     SUBJECT_RECOVERY_FAILURE,
     SUBJECT_SHUTDOWN,
+    send_storm_confirmed_notification,
     send_storm_mitigation_failure,
     send_storm_recovery_failure,
     send_storm_recovery_notification,
@@ -69,6 +71,27 @@ def _settings(*, storm=None, smtp=None):
 
 
 class StormEmailNotificationTests(unittest.TestCase):
+    @patch("services.audit_service.log_audit")
+    @patch("services.email_service.send_email", return_value=True)
+    @patch("services.email_service.get_settings")
+    def test_confirmed_email(self, mock_settings, mock_send, mock_audit):
+        mock_settings.return_value = _settings()
+        incident = _incident(
+            status="CONFIRMED",
+            incidentId=None,
+            reason="Risk exceeded threshold for 4 consecutive polling cycles.",
+        )
+
+        ok = send_storm_confirmed_notification(incident)
+        self.assertTrue(ok)
+        mock_send.assert_called_once()
+        args, kwargs = mock_send.call_args
+        self.assertEqual(args[0], SUBJECT_CONFIRMED)
+        self.assertIn("Gi1/0/5", args[1])
+        self.assertIn("CONFIRMED", args[1])
+        self.assertEqual(kwargs.get("to_address"), "storm@example.com")
+        mock_audit.assert_called_once()
+
     @patch("services.audit_service.log_audit")
     @patch("services.email_service.send_email", return_value=True)
     @patch("services.email_service.get_settings")
