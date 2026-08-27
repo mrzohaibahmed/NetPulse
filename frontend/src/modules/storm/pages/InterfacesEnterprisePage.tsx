@@ -743,7 +743,15 @@ export function InterfacesEnterprisePage() {
                     collapsed={collapsedDeviceIds.has(device.deviceId)}
                     isAdmin={isAdmin}
                     collectPending={mutations.collectDevice.isPending}
+                    discoverPending={
+                      mutations.discoverAll.isPending || mutations.discoverDevice.isPending
+                    }
+                    discoveringThis={
+                      mutations.discoverDevice.isPending &&
+                      mutations.discoverDevice.variables === device.deviceId
+                    }
                     onToggle={() => toggleDevice(device.deviceId)}
+                    onDiscover={() => mutations.discoverDevice.mutate(device.deviceId)}
                     onCollect={() => mutations.collectDevice.mutate(device.deviceId)}
                     onExport={() => exportDeviceInterfaces(device)}
                     onOpenRow={(path) => navigate(path)}
@@ -763,7 +771,10 @@ function DeviceInventorySection({
   collapsed,
   isAdmin,
   collectPending,
+  discoverPending,
+  discoveringThis,
   onToggle,
+  onDiscover,
   onCollect,
   onExport,
   onOpenRow,
@@ -772,7 +783,10 @@ function DeviceInventorySection({
   collapsed: boolean
   isAdmin: boolean
   collectPending: boolean
+  discoverPending: boolean
+  discoveringThis: boolean
   onToggle: () => void
+  onDiscover: () => void
   onCollect: () => void
   onExport: () => void
   onOpenRow: (path: string) => void
@@ -806,6 +820,18 @@ function DeviceInventorySection({
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
+              {isAdmin ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  disabled={discoverPending}
+                  onClick={onDiscover}
+                >
+                  <Radar className="h-3.5 w-3.5" />
+                  {discoveringThis ? 'Discovering…' : 'Discover interfaces'}
+                </Button>
+              ) : null}
               <Button
                 type="button"
                 size="sm"
@@ -851,7 +877,7 @@ function DeviceInventorySection({
             <div className="px-4 py-8 text-center text-sm text-muted-foreground">
               No interfaces discovered for this switch yet.
               {isAdmin
-                ? ' Use Discover all or refresh this switch after SSH credentials are configured.'
+                ? ' Use Discover interfaces on this switch (or Discover all) after SSH credentials are configured.'
                 : ''}
             </div>
           ) : (
