@@ -881,12 +881,16 @@ export const deleteNetwork = (id: string) =>
 export const scanNetworks = (payload: {
   networkIds?: string[]
   scanAllEnabled?: boolean
-  scanId?: string
 }) =>
-  apiRequest<DiscoveryResult>('/api/discovery/scan-networks', {
+  apiRequest<{
+    success: boolean
+    scanId: string
+    status: string
+    message: string
+  }>('/api/discovery/scan-networks', {
     method: 'POST',
     body: payload,
-    timeoutMs: 300000,
+    timeoutMs: 30000,
   })
 
 export const discoverDevice = (ipAddress: string) =>
@@ -908,8 +912,17 @@ export const getDiscoveryScanProgress = (scanId: string) =>
       newlySaved: number
       elapsedSeconds: number
       percent: number
+      error?: string | null
+      summary?: {
+        totalScanned: number
+        online: number
+        offline: number
+        newlySaved: number
+      }
     }
-  }>(`/api/discovery/scan-progress/${scanId}`)
+  }>(`/api/discovery/scan-progress/${scanId}`, {
+    timeoutMs: 15000,
+  })
 
 export const getDiscoveryEnrichmentStatus = (ipAddresses: string[]) =>
   apiRequest<{

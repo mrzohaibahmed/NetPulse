@@ -1,8 +1,10 @@
+import atexit
 import ipaddress
 import re
 import socket
 import threading
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from config.database import db
@@ -15,8 +17,20 @@ _SCAN_ID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
 _SCAN_PROGRESS_TTL_SECONDS = 1800
+_ACTIVE_SCAN_STATUSES = frozenset({"pending", "running"})
 _scan_progress_lock = threading.Lock()
 _scan_progress: dict[str, dict] = {}
+_active_network_scan_id: str | None = None
+_network_scan_executor: ThreadPoolExecutor | None = None
+_network_scan_executor_lock = threading.Lock()
+
+
+class ActiveNetworkScanError(Exception):
+    """Raised when a network discovery scan is already in progress."""
+
+    def __init__(self, scan_id: str):
+        self.scan_id = scan_id
+        super().__init__(f"Network scan already in progress: {scan_id}")
 
 
 def is_valid_scan_id(scan_id) -> bool:
@@ -38,16 +52,20 @@ def begin_scan_progress(scan_id: str | None, total: int) -> None:
     if not is_valid_scan_id(scan_id):
         return
     now = time.monotonic()
+    key = str(scan_id).strip()
     with _scan_progress_lock:
         _prune_scan_progress(now)
-        _scan_progress[str(scan_id).strip()] = {
+        prior = _scan_progress.get(key) or {}
+        _scan_progress[key] = {
             "status": "running",
             "total": int(total),
             "completed": 0,
             "online": 0,
             "newlySaved": 0,
-            "startedMonotonic": now,
+            "startedMonotonic": float(prior.get("startedMonotonic") or now),
             "elapsedSeconds": 0.0,
+            "error": None,
+            "summary": prior.get("summary"),
         }
 
 
@@ -83,6 +101,46 @@ def finish_scan_progress(scan_id: str | None, *, status: str = "complete") -> No
             state["completed"] = int(state.get("total") or state.get("completed") or 0)
 
 
+def _set_scan_summary(scan_id: str, summary: dict) -> None:
+    if not is_valid_scan_id(scan_id):
+        return
+    key = str(scan_id).strip()
+    with _scan_progress_lock:
+        state = _scan_progress.get(key)
+        if not state:
+            return
+        state["summary"] = {
+            "totalScanned": int(summary.get("totalScanned") or 0),
+            "online": int(summary.get("online") or 0),
+            "offline": int(summary.get("offline") or 0),
+            "newlySaved": int(summary.get("newlySaved") or 0),
+        }
+        state["error"] = None
+
+
+def _set_scan_error(scan_id: str, message: str) -> None:
+    if not is_valid_scan_id(scan_id):
+        return
+    key = str(scan_id).strip()
+    with _scan_progress_lock:
+        state = _scan_progress.get(key)
+        if not state:
+            _scan_progress[key] = {
+                "status": "failed",
+                "total": 0,
+                "completed": 0,
+                "online": 0,
+                "newlySaved": 0,
+                "startedMonotonic": time.monotonic(),
+                "elapsedSeconds": 0.0,
+                "error": message,
+                "summary": None,
+            }
+            return
+        state["status"] = "failed"
+        state["error"] = message
+
+
 def get_scan_progress(scan_id: str | None) -> dict | None:
     if not is_valid_scan_id(scan_id):
         return None
@@ -96,7 +154,7 @@ def get_scan_progress(scan_id: str | None) -> dict | None:
         total = max(int(state.get("total") or 0), 0)
         completed = min(int(state.get("completed") or 0), total) if total else int(state.get("completed") or 0)
         percent = 0 if total <= 0 else min(100, int((completed / total) * 100))
-        return {
+        payload = {
             "scanId": key,
             "status": state.get("status") or "running",
             "total": total,
@@ -105,7 +163,123 @@ def get_scan_progress(scan_id: str | None) -> dict | None:
             "newlySaved": int(state.get("newlySaved") or 0),
             "elapsedSeconds": elapsed,
             "percent": percent,
+            "error": state.get("error"),
         }
+        summary = state.get("summary")
+        if isinstance(summary, dict):
+            payload["summary"] = summary
+        return payload
+
+
+def get_active_network_scan_id() -> str | None:
+    """Return the in-flight network scan id, if any."""
+    with _scan_progress_lock:
+        sid = _active_network_scan_id
+        if not sid:
+            return None
+        state = _scan_progress.get(sid)
+        if state and state.get("status") in _ACTIVE_SCAN_STATUSES:
+            return sid
+        return None
+
+
+def _release_active_network_scan(scan_id: str) -> None:
+    global _active_network_scan_id
+    key = str(scan_id).strip()
+    with _scan_progress_lock:
+        if _active_network_scan_id == key:
+            _active_network_scan_id = None
+
+
+def _get_network_scan_executor() -> ThreadPoolExecutor:
+    global _network_scan_executor
+    with _network_scan_executor_lock:
+        if _network_scan_executor is None:
+            _network_scan_executor = ThreadPoolExecutor(
+                max_workers=1,
+                thread_name_prefix="discovery-network-scan",
+            )
+        return _network_scan_executor
+
+
+def shutdown_network_scan_executor() -> None:
+    global _network_scan_executor
+    with _network_scan_executor_lock:
+        if _network_scan_executor is not None:
+            _network_scan_executor.shutdown(wait=False, cancel_futures=True)
+            _network_scan_executor = None
+
+
+atexit.register(shutdown_network_scan_executor)
+
+
+def _run_network_scan_job(ip_addresses: list[str], scan_id: str) -> None:
+    """Background wrapper — calls existing discover_ips; always releases the active-scan guard."""
+    try:
+        results = discover_ips(ip_addresses, scan_id=scan_id)
+        online = sum(1 for device in results if device.get("status") == "Online")
+        offline = sum(1 for device in results if device.get("status") == "Offline")
+        newly_saved = sum(1 for device in results if device.get("saved"))
+        _set_scan_summary(
+            scan_id,
+            {
+                "totalScanned": len(results),
+                "online": online,
+                "offline": offline,
+                "newlySaved": newly_saved,
+            },
+        )
+    except Exception:
+        logger.exception(
+            "[DISCOVERY] Background network scan failed | scanId=%s",
+            scan_id,
+        )
+        finish_scan_progress(scan_id, status="failed")
+        _set_scan_error(
+            scan_id,
+            "Network scan failed. Check server logs for details.",
+        )
+    finally:
+        _release_active_network_scan(scan_id)
+
+
+def start_network_scan_job(ip_addresses: list[str]) -> str:
+    """
+    Start discover_ips in a background worker and return the scanId immediately.
+
+    Raises ActiveNetworkScanError when another network scan is still pending/running.
+    """
+    global _active_network_scan_id
+
+    if not ip_addresses:
+        raise ValueError("No IP addresses resolved from the selected scan targets")
+
+    now = time.monotonic()
+    with _scan_progress_lock:
+        _prune_scan_progress(now)
+        existing_id = _active_network_scan_id
+        if existing_id:
+            existing_state = _scan_progress.get(existing_id)
+            if existing_state and existing_state.get("status") in _ACTIVE_SCAN_STATUSES:
+                raise ActiveNetworkScanError(existing_id)
+            _active_network_scan_id = None
+
+        scan_id = str(uuid.uuid4())
+        _active_network_scan_id = scan_id
+        _scan_progress[scan_id] = {
+            "status": "pending",
+            "total": len(ip_addresses),
+            "completed": 0,
+            "online": 0,
+            "newlySaved": 0,
+            "startedMonotonic": now,
+            "elapsedSeconds": 0.0,
+            "error": None,
+            "summary": None,
+        }
+
+    _get_network_scan_executor().submit(_run_network_scan_job, list(ip_addresses), scan_id)
+    return scan_id
 
 
 def get_hostname(ip_address, timeout=1.0):

@@ -5,7 +5,11 @@ from flask import Blueprint, jsonify, request
 from bson import ObjectId
 
 from config.database import db
-from services.discovery_service import discover_ips, get_local_network_hint
+from services.discovery_service import (
+    ActiveNetworkScanError,
+    get_local_network_hint,
+    start_network_scan_job,
+)
 from utils.auth import require_auth
 from utils.secret_crypto import encrypt_secret
 from utils.serializers import format_datetime
@@ -475,6 +479,7 @@ def scan_progress(scan_id):
 @discovery_bp.route("/discovery/scan-networks", methods=["POST"])
 @require_auth(roles=["admin"])
 def scan_networks():
+    """Start a background network scan and return immediately (HTTP 202)."""
     try:
         data = request.get_json() or {}
         network_ids = data.get("networkIds")
@@ -517,23 +522,29 @@ def scan_networks():
                 "message": "No IP addresses resolved from the selected scan targets",
             }), 400
 
-        scan_id = data.get("scanId")
-        devices = discover_ips(resolved_ips, scan_id=scan_id)
+        if len(resolved_ips) > 1024:
+            return jsonify({
+                "success": False,
+                "message": "Scan target list is too large. Maximum 1024 addresses per scan.",
+            }), 400
 
-        online = sum(1 for device in devices if device["status"] == "Online")
-        offline = sum(1 for device in devices if device["status"] == "Offline")
-        newly_saved = sum(1 for device in devices if device["saved"])
+        try:
+            scan_id = start_network_scan_job(resolved_ips)
+        except ActiveNetworkScanError as conflict:
+            return jsonify({
+                "success": False,
+                "code": "scan_in_progress",
+                "scanId": conflict.scan_id,
+                "status": "running",
+                "message": "A network scan is already in progress",
+            }), 409
 
         return jsonify({
             "success": True,
-            "summary": {
-                "totalScanned": len(devices),
-                "online": online,
-                "offline": offline,
-                "newlySaved": newly_saved,
-            },
-            "devices": devices,
-        }), 200
+            "scanId": scan_id,
+            "status": "running",
+            "message": "Network scan started",
+        }), 202
 
     except Exception as error:
         return internal_error_response(error, message="Failed to scan networks")

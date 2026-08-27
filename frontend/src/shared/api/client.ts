@@ -3,11 +3,13 @@ const TOKEN_KEY = 'netpulse_token'
 
 export class ApiRequestError extends Error {
   status: number
+  payload: unknown
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, payload?: unknown) {
     super(message)
     this.name = 'ApiRequestError'
     this.status = status
+    this.payload = payload ?? null
   }
 }
 
@@ -89,7 +91,7 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
         typeof (payload as { message: unknown }).message === 'string'
           ? (payload as { message: string }).message
           : `Request failed (${response.status})`
-      throw new ApiRequestError(message, response.status)
+      throw new ApiRequestError(message, response.status, payload)
     }
 
     return payload as T

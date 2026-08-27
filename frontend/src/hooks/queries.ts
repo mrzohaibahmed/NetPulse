@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { ApiRequestError } from '@/shared/api/client'
 import {
   acknowledgeAlert,
   collectAllInterfaceStats,
@@ -1225,15 +1226,13 @@ export function useNetworkMutation() {
 }
 
 export function useScanNetworksMutation() {
-  const qc = useQueryClient()
   return useMutation({
-    mutationFn: (payload: { networkIds?: string[]; scanAllEnabled?: boolean; scanId?: string }) =>
+    mutationFn: (payload: { networkIds?: string[]; scanAllEnabled?: boolean }) =>
       scanNetworks(payload),
-    onSuccess: async () => {
-      await qc.invalidateQueries({ queryKey: ['devices'] })
-      await qc.invalidateQueries({ queryKey: ['networks'] })
-      await qc.invalidateQueries({ queryKey: queryKeys.dashboard.all })
+    onError: (err: Error) => {
+      // 409 conflict is handled by DiscoveryPage (resume existing scan).
+      if (err instanceof ApiRequestError && err.status === 409) return
+      toast.error(err.message)
     },
-    onError: (err: Error) => toast.error(err.message),
   })
 }

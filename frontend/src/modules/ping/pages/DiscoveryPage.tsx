@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { Navigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import {
@@ -24,9 +24,12 @@ import {
   useNetworkMutation,
   useScanNetworksMutation,
 } from '@/hooks/queries'
-import { getDiscoveryEnrichmentStatus, getDiscoveryScanProgress } from '@/api'
+import { queryKeys } from '@/hooks/queryKeys'
+import { useQueryClient } from '@tanstack/react-query'
+import { getDevices, getDiscoveryEnrichmentStatus, getDiscoveryScanProgress } from '@/api'
+import { ApiRequestError } from '@/shared/api/client'
 import { formatMs } from '@/utils/format'
-import type { DiscoveryDevice, DiscoverySummary, NetworkProfile } from '@/types'
+import type { Device, DiscoveryDevice, DiscoverySummary, NetworkProfile } from '@/types'
 import { displayDeviceType } from '@/modules/ping/constants/devices'
 import { EmptyState } from '@/shared/components/EmptyState'
 import { KpiCard } from '@/shared/components/KpiCard'
@@ -93,9 +96,36 @@ function isIpInCidr(ip: string, cidr: string): boolean {
   }
 }
 
+function mapInventoryToDiscoveryDevices(
+  inventory: Device[],
+  enrichmentByIp: Map<
+    string,
+    Awaited<ReturnType<typeof getDiscoveryEnrichmentStatus>>['devices'][number]
+  >,
+): DiscoveryDevice[] {
+  return inventory.map((device) => {
+    const enrichment = enrichmentByIp.get(device.ipAddress)
+    return {
+      hostname: device.hostname ?? null,
+      ipAddress: device.ipAddress,
+      status: device.status === 'Online' ? 'Online' : 'Offline',
+      responseTime: device.responseTime,
+      saved: true,
+      deviceType: device.deviceType,
+      vendor: device.vendor,
+      operatingSystem: device.operatingSystem,
+      classificationConfidence: device.classificationConfidence,
+      classificationMethod: device.classificationMethod,
+      discoveryStatus: enrichment?.discoveryStatus ?? null,
+      nmapError: enrichment?.discoveryEnrichmentError ?? null,
+    }
+  })
+}
+
 export function DiscoveryPage() {
   const { isAdmin } = useAuth()
-  
+  const queryClient = useQueryClient()
+
   // Queries & Mutations
   const networksQuery = useNetworksQuery()
   const networkMutation = useNetworkMutation()
@@ -103,7 +133,7 @@ export function DiscoveryPage() {
 
   // Selection states
   const [selectedIds, setSelectedIds] = useState<string[]>([])
-  
+
   // Dialog state
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [editingNetwork, setEditingNetwork] = useState<NetworkProfile | null>(null)
@@ -134,7 +164,9 @@ export function DiscoveryPage() {
     online: number
     newlySaved: number
     status: string
+    error?: string | null
   } | null>(null)
+  const scanCompletionHandledRef = useRef<string | null>(null)
 
   // Filter Discovered Devices by Network
   const [filterNetworkId, setFilterNetworkId] = useState<string>('all')
@@ -316,7 +348,7 @@ export function DiscoveryPage() {
     reset()
   }, [showOnlineOnly, filterNetworkId, devices, reset])
 
-  const scanning = scanMutation.isPending
+  const scanning = Boolean(scanId)
 
   useEffect(() => {
     if (!scanning || scanStartedAt == null) {
@@ -330,11 +362,97 @@ export function DiscoveryPage() {
   }, [scanning, scanStartedAt])
 
   useEffect(() => {
-    if (!scanning || !scanId) {
+    if (!scanId) {
       return
     }
 
     let cancelled = false
+    let timer: number | undefined
+
+    const finishScan = async (
+      progress: Awaited<ReturnType<typeof getDiscoveryScanProgress>>['progress'],
+    ) => {
+      if (scanCompletionHandledRef.current === progress.scanId) {
+        return
+      }
+      scanCompletionHandledRef.current = progress.scanId
+
+      if (progress.status === 'failed') {
+        toast.error(progress.error || 'Network scan failed')
+        setScanId(null)
+        setScanStartedAt(null)
+        return
+      }
+
+      const baseSummary = progress.summary ?? {
+        totalScanned: progress.total,
+        online: progress.online,
+        offline: Math.max(0, progress.total - progress.online),
+        newlySaved: progress.newlySaved,
+      }
+
+      try {
+        const inventory = await getDevices({ limit: 500 })
+        const inventoryRows = inventory.data ?? []
+        const ips = inventoryRows.map((row) => row.ipAddress).filter(Boolean)
+        const enrichmentByIp = new Map<
+          string,
+          Awaited<ReturnType<typeof getDiscoveryEnrichmentStatus>>['devices'][number]
+        >()
+        if (ips.length > 0) {
+          try {
+            const enrichment = await getDiscoveryEnrichmentStatus(ips)
+            for (const row of enrichment.devices) {
+              enrichmentByIp.set(row.ipAddress, row)
+            }
+          } catch {
+            // Non-fatal — enrichment polling can still catch up.
+          }
+        }
+        if (cancelled) return
+
+        const mapped = mapInventoryToDiscoveryDevices(inventoryRows, enrichmentByIp)
+        const enriching = mapped.filter(
+          (d) => d.discoveryStatus === 'pending' || d.discoveryStatus === 'enriching',
+        ).length
+        setDevices(mapped)
+        setSummary({ ...baseSummary, enriching })
+        setScanProgress({
+          percent: 100,
+          completed: baseSummary.totalScanned,
+          total: baseSummary.totalScanned,
+          online: baseSummary.online,
+          newlySaved: baseSummary.newlySaved ?? 0,
+          status: 'complete',
+          error: null,
+        })
+
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: ['devices'] }),
+          queryClient.invalidateQueries({ queryKey: ['networks'] }),
+          queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.all }),
+        ])
+
+        if (baseSummary.online === 0) {
+          toast.message('No online hosts found in the scanned targets.')
+        } else if ((baseSummary.newlySaved ?? 0) === 0) {
+          toast.success('Scan complete. All online hosts were already monitored.')
+        } else if (enriching > 0) {
+          toast.success(
+            `Saved ${baseSummary.newlySaved} new device(s). ${enriching} still enriching in background.`,
+          )
+        } else {
+          toast.success(`Scan complete. Saved ${baseSummary.newlySaved} new device(s).`)
+        }
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Failed to refresh devices after scan')
+      } finally {
+        if (!cancelled) {
+          setScanId(null)
+          setScanStartedAt(null)
+        }
+      }
+    }
 
     const poll = async () => {
       try {
@@ -348,22 +466,32 @@ export function DiscoveryPage() {
           online: progress.online,
           newlySaved: progress.newlySaved,
           status: progress.status,
+          error: progress.error,
         })
+        if (progress.status === 'complete' || progress.status === 'failed') {
+          if (timer !== undefined) {
+            window.clearInterval(timer)
+            timer = undefined
+          }
+          await finishScan(progress)
+        }
       } catch {
-        // Non-fatal — scan POST is still the source of truth.
+        // Transient poll errors are non-fatal; keep polling while scanId is set.
       }
     }
 
     void poll()
-    const timer = window.setInterval(() => {
+    timer = window.setInterval(() => {
       void poll()
-    }, 750)
+    }, 1500)
 
     return () => {
       cancelled = true
-      window.clearInterval(timer)
+      if (timer !== undefined) {
+        window.clearInterval(timer)
+      }
     }
-  }, [scanning, scanId])
+  }, [scanId, queryClient])
 
   if (!isAdmin) return <Navigate to="/" replace />
 
@@ -436,10 +564,8 @@ export function DiscoveryPage() {
     )
   }
 
-  const runScan = async (payload: { networkIds?: string[]; scanAllEnabled?: boolean }) => {
-    const nextScanId = crypto.randomUUID()
-    setSummary(null)
-    setDevices([])
+  const beginTrackingScan = (nextScanId: string) => {
+    scanCompletionHandledRef.current = null
     setScanId(nextScanId)
     setScanStartedAt(Date.now())
     setElapsedSeconds(0)
@@ -450,39 +576,47 @@ export function DiscoveryPage() {
       online: 0,
       newlySaved: 0,
       status: 'pending',
+      error: null,
+    })
+  }
+
+  const runScan = async (payload: { networkIds?: string[]; scanAllEnabled?: boolean }) => {
+    if (scanId || scanMutation.isPending) {
+      return
+    }
+    // Keep prior devices/summary visible while the new scan runs.
+    setScanStartedAt(Date.now())
+    setElapsedSeconds(0)
+    setScanProgress({
+      percent: 0,
+      completed: 0,
+      total: 0,
+      online: 0,
+      newlySaved: 0,
+      status: 'pending',
+      error: null,
     })
     try {
-      const result = await scanMutation.mutateAsync({ ...payload, scanId: nextScanId })
-      const enriching = result.devices.filter(
-        (d) => d.discoveryStatus === 'pending' || d.discoveryStatus === 'enriching',
-      ).length
-      setSummary({ ...result.summary, enriching })
-      setDevices(result.devices)
-      setScanProgress({
-        percent: 100,
-        completed: result.summary.totalScanned,
-        total: result.summary.totalScanned,
-        online: result.summary.online,
-        newlySaved: result.summary.newlySaved ?? 0,
-        status: 'complete',
-      })
-
-      if (result.summary.online === 0) {
-        toast.message('No online hosts found in the scanned targets.')
-      } else if ((result.summary.newlySaved ?? 0) === 0) {
-        toast.success('Scan complete. All online hosts were already monitored.')
-      } else if (enriching > 0) {
-        toast.success(
-          `Saved ${result.summary.newlySaved} new device(s). ${enriching} still enriching in background.`,
-        )
-      } else {
-        toast.success(`Scan complete. Saved ${result.summary.newlySaved} new device(s).`)
+      const result = await scanMutation.mutateAsync(payload)
+      beginTrackingScan(result.scanId)
+    } catch (err) {
+      if (err instanceof ApiRequestError && err.status === 409) {
+        const payloadObj =
+          typeof err.payload === 'object' && err.payload !== null
+            ? (err.payload as { scanId?: unknown })
+            : null
+        const existingId =
+          typeof payloadObj?.scanId === 'string' && payloadObj.scanId.trim()
+            ? payloadObj.scanId.trim()
+            : null
+        if (existingId) {
+          toast.message('A network scan is already in progress — showing live progress.')
+          beginTrackingScan(existingId)
+          return
+        }
       }
-    } catch {
-      // error handled in mutation
-    } finally {
-      setScanId(null)
       setScanStartedAt(null)
+      setScanProgress(null)
     }
   }
 
@@ -493,13 +627,14 @@ export function DiscoveryPage() {
   }
 
   const handleScanSelected = () => {
-    if (selectedIds.length === 0) return
-    runScan({ networkIds: selectedIds })
+    if (selectedIds.length === 0 || scanning) return
+    void runScan({ networkIds: selectedIds })
     scrollToProgress()
   }
 
   const handleScanAllEnabled = () => {
-    runScan({ scanAllEnabled: true })
+    if (scanning) return
+    void runScan({ scanAllEnabled: true })
     scrollToProgress()
   }
 
@@ -663,11 +798,11 @@ export function DiscoveryPage() {
                   <Radar className="h-8 w-8" />
                 </motion.div>
                 <div className="min-w-0 flex-1 space-y-1">
-                  <p className="text-lg font-semibold tracking-tight">Scanning network</p>
+                  <p className="text-lg font-semibold tracking-tight">Network scan in progress…</p>
                   <p className="text-sm text-muted-foreground">
                     {scanProgress && scanProgress.total > 0
                       ? `Pinged ${scanProgress.completed} of ${scanProgress.total} hosts. New devices are saved immediately; Nmap enrichment continues in the background.`
-                      : 'Resolving scan targets, then pinging hosts in parallel.'}
+                      : 'Scan job started. Waiting for host progress…'}
                   </p>
                 </div>
                 <div className="text-center sm:text-right">
