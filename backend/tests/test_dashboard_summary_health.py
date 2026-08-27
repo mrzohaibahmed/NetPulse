@@ -37,7 +37,7 @@ class DashboardSummaryContractTests(unittest.TestCase):
     def test_summary_exposes_numeric_health_fields(self, mock_db):
         mock_db.devices.aggregate.return_value = iter([
             {
-                "total": [{"n": 200}],
+                "total": [{"n": 250}],
                 "online": [{"n": 180}],
                 "notReachable": [{"n": 20}],
                 "offlineCritical": [{"n": 0}],
@@ -63,16 +63,50 @@ class DashboardSummaryContractTests(unittest.TestCase):
         self.assertTrue(payload["success"])
         summary = payload["summary"]
 
-        self.assertEqual(summary["totalDevices"], 200)
+        self.assertEqual(summary["totalDevices"], 250)
+        self.assertEqual(summary["monitoredDevices"], 200)
         self.assertEqual(summary["onlineDevices"], 180)
         self.assertEqual(summary["notReachableDevices"], 20)
         self.assertEqual(summary["criticalOfflineDevices"], 0)
+        # Percentages are relative to monitored devices, not full inventory
         self.assertEqual(summary["onlinePercentage"], 90.0)
         self.assertEqual(summary["notReachablePercentage"], 10.0)
         self.assertEqual(summary["criticalOfflinePercentage"], 0.0)
         self.assertIsInstance(summary["onlinePercentage"], float)
         self.assertIsInstance(summary["totalDevices"], int)
         self.assertIsInstance(summary["onlineDevices"], int)
+
+    @patch("routes.dashboard_routes.db")
+    def test_summary_percentages_use_monitored_denominator(self, mock_db):
+        mock_db.devices.aggregate.return_value = iter([
+            {
+                "total": [{"n": 100}],
+                "online": [{"n": 40}],
+                "notReachable": [{"n": 10}],
+                "offlineCritical": [{"n": 0}],
+                "legacyOffline": [{"n": 0}],
+                "unknown": [{"n": 0}],
+                "criticalFlag": [{"n": 0}],
+                "monitored": [{"n": 50}],
+            }
+        ])
+
+        from routes.dashboard_routes import dashboard_summary
+
+        view = dashboard_summary
+        while hasattr(view, "__wrapped__"):
+            view = view.__wrapped__
+
+        app = Flask(__name__)
+        with app.app_context():
+            response, status = view()
+
+        self.assertEqual(status, 200)
+        summary = response.get_json()["summary"]
+        self.assertEqual(summary["totalDevices"], 100)
+        self.assertEqual(summary["monitoredDevices"], 50)
+        self.assertEqual(summary["onlinePercentage"], 80.0)
+        self.assertEqual(summary["notReachablePercentage"], 20.0)
 
 
 if __name__ == "__main__":

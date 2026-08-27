@@ -17,17 +17,22 @@ function toFiniteNumber(value: unknown): number | null {
 }
 
 /**
- * Network Health Score = share of devices currently Online.
- * Uses device counts when present; falls back to onlinePercentage.
- * Does not double-penalize offline/unreachable devices (that previously
- * drove legitimate low-online fleets to a false 0%).
+ * Network Health Score = share of monitored devices currently Online.
+ * Denominator prefers monitoredDevices (live ping fleet); falls back to
+ * totalDevices for older payloads. Uses counts when present; otherwise
+ * onlinePercentage. Does not double-penalize offline/unreachable devices.
  */
 export function computeNetworkHealth(summary: DashboardSummary | null | undefined): NetworkHealth {
   if (!summary) {
     return { score: 100, label: 'Excellent' }
   }
 
-  const total = toFiniteNumber(summary.totalDevices)
+  const monitored = toFiniteNumber(summary.monitoredDevices)
+  const inventory = toFiniteNumber(summary.totalDevices)
+  // Prefer monitored fleet; if the field is absent, fall back to inventory.
+  const total =
+    monitored !== null ? monitored : inventory !== null ? inventory : null
+
   if (total === null || total === 0) {
     return { score: 100, label: 'Excellent' }
   }

@@ -341,7 +341,7 @@ export function DashboardPage() {
       <motion.section variants={fadeUp} className="space-y-4" aria-label="Network health">
         <SectionHeading
           title="Overall Network Health"
-          description="Platform posture derived from live monitoring data."
+          description="Share of monitored devices currently online."
         />
         <div className="grid gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
           <HealthGauge summary={dash.summary} />

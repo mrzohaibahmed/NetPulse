@@ -1,4 +1,3 @@
-from utils.api_errors import internal_error_response
 from flask import Blueprint, jsonify
 
 from config.database import db
@@ -17,25 +16,38 @@ dashboard_bp = Blueprint("dashboard", __name__)
 @require_auth()
 def dashboard_summary():
     try:
+        # Status / health KPIs are scoped to monitored devices only.
+        # Unmonitored inventory still contributes to totalDevices.
+        monitored_match = {"monitor": True}
         pipeline = [
             {
                 "$facet": {
                     "total": [{"$count": "n"}],
+                    "monitored": [
+                        {"$match": monitored_match},
+                        {"$count": "n"},
+                    ],
                     "online": [
-                        {"$match": {"status": STATUS_ONLINE}},
+                        {"$match": {**monitored_match, "status": STATUS_ONLINE}},
                         {"$count": "n"},
                     ],
                     "notReachable": [
-                        {"$match": {"status": STATUS_NOT_REACHABLE}},
+                        {
+                            "$match": {
+                                **monitored_match,
+                                "status": STATUS_NOT_REACHABLE,
+                            }
+                        },
                         {"$count": "n"},
                     ],
                     "offlineCritical": [
                         {
                             "$match": {
+                                **monitored_match,
                                 "$or": [
                                     {"status": STATUS_OFFLINE_CRITICAL},
                                     {"status": "Offline", "critical": True},
-                                ]
+                                ],
                             }
                         },
                         {"$count": "n"},
@@ -43,6 +55,7 @@ def dashboard_summary():
                     "legacyOffline": [
                         {
                             "$match": {
+                                **monitored_match,
                                 "status": "Offline",
                                 "critical": {"$ne": True},
                             }
@@ -50,15 +63,11 @@ def dashboard_summary():
                         {"$count": "n"},
                     ],
                     "unknown": [
-                        {"$match": {"status": "Unknown"}},
+                        {"$match": {**monitored_match, "status": "Unknown"}},
                         {"$count": "n"},
                     ],
                     "criticalFlag": [
-                        {"$match": {"critical": True}},
-                        {"$count": "n"},
-                    ],
-                    "monitored": [
-                        {"$match": {"monitor": True}},
+                        {"$match": {**monitored_match, "critical": True}},
                         {"$count": "n"},
                     ],
                 }
@@ -79,11 +88,12 @@ def dashboard_summary():
             )
         }
         total = counts["total"]
+        monitored = counts["monitored"]
         not_reachable = counts["notReachable"] + counts["legacyOffline"]
         offline_critical = counts["offlineCritical"]
 
         def pct(count):
-            return round((count / total) * 100, 2) if total else 0
+            return round((count / monitored) * 100, 2) if monitored else 0
 
         return jsonify({
             "success": True,
@@ -94,7 +104,7 @@ def dashboard_summary():
                 "criticalOfflineDevices": offline_critical,
                 "unknownDevices": counts["unknown"],
                 "criticalDevices": counts["criticalFlag"],
-                "monitoredDevices": counts["monitored"],
+                "monitoredDevices": monitored,
                 "onlinePercentage": pct(counts["online"]),
                 "notReachablePercentage": pct(not_reachable),
                 "criticalOfflinePercentage": pct(offline_critical),
@@ -104,7 +114,11 @@ def dashboard_summary():
         }), 200
 
     except Exception as error:
-        return internal_error_response(error, message="Failed to get dashboard summary")
+        return jsonify({
+            "success": False,
+            "message": "Failed to get dashboard summary",
+            "error": str(error),
+        }), 500
 
 
 @dashboard_bp.route("/dashboard/ops-metrics", methods=["GET"])
@@ -119,7 +133,12 @@ def dashboard_ops_metrics():
             "metrics": ops_metrics_snapshot(),
         }), 200
     except Exception as error:
-        return internal_error_response(error, message="Failed to collect operational metrics")
+        return jsonify({
+            "success": False,
+            "message": "Failed to collect operational metrics",
+            "error": str(error),
+        }), 500
+
 
 
 @dashboard_bp.route("/dashboard/recent-history", methods=["GET"])
@@ -146,7 +165,11 @@ def recent_history():
         }), 200
 
     except Exception as error:
-        return internal_error_response(error, message="Failed to get recent history")
+        return jsonify({
+            "success": False,
+            "message": "Failed to get recent history",
+            "error": str(error),
+        }), 500
 
 
 @dashboard_bp.route("/dashboard/device-status", methods=["GET"])
@@ -175,7 +198,11 @@ def device_status():
         }), 200
 
     except Exception as error:
-        return internal_error_response(error, message="Failed to get device status")
+        return jsonify({
+            "success": False,
+            "message": "Failed to get device status",
+            "error": str(error),
+        }), 500
 
 
 @dashboard_bp.route("/dashboard/statistics", methods=["GET"])
@@ -229,7 +256,11 @@ def dashboard_statistics():
         }), 200
 
     except Exception as error:
-        return internal_error_response(error, message="Failed to get dashboard statistics")
+        return jsonify({
+            "success": False,
+            "message": "Failed to get dashboard statistics",
+            "error": str(error),
+        }), 500
 
 
 @dashboard_bp.route("/dashboard/charts/device-status", methods=["GET"])
@@ -262,7 +293,11 @@ def device_status_chart():
         }), 200
 
     except Exception as error:
-        return internal_error_response(error, message="Failed to get device status chart")
+        return jsonify({
+            "success": False,
+            "message": "Failed to get device status chart",
+            "error": str(error),
+        }), 500
 
 
 @dashboard_bp.route("/dashboard/charts/device-type", methods=["GET"])
@@ -289,7 +324,11 @@ def device_type_chart():
         return jsonify({"success": True, "chart": chart}), 200
 
     except Exception as error:
-        return internal_error_response(error, message="Failed to get device type chart")
+        return jsonify({
+            "success": False,
+            "message": "Failed to get device type chart",
+            "error": str(error),
+        }), 500
 
 
 @dashboard_bp.route("/dashboard/charts/response-time", methods=["GET"])
@@ -318,7 +357,11 @@ def response_time_chart():
         return jsonify({"success": True, "chart": chart}), 200
 
     except Exception as error:
-        return internal_error_response(error, message="Failed to get response time chart")
+        return jsonify({
+            "success": False,
+            "message": "Failed to get response time chart",
+            "error": str(error),
+        }), 500
 
 
 @dashboard_bp.route("/dashboard/charts/scan-activity", methods=["GET"])
@@ -348,4 +391,8 @@ def scan_activity_chart():
         return jsonify({"success": True, "chart": chart}), 200
 
     except Exception as error:
-        return internal_error_response(error, message="Failed to get scan activity chart")
+        return jsonify({
+            "success": False,
+            "message": "Failed to get scan activity chart",
+            "error": str(error),
+        }), 500

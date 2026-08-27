@@ -56,6 +56,7 @@ describe('computeNetworkHealth', () => {
         notReachableDevices: 25,
         criticalOfflineDevices: 10,
         unknownDevices: 5,
+        monitoredDevices: 40,
         onlinePercentage: 0,
         notReachablePercentage: 62.5,
         criticalOfflinePercentage: 25,
@@ -77,6 +78,30 @@ describe('computeNetworkHealth', () => {
         }),
       ),
     ).toEqual({ score: 100, label: 'Excellent' })
+    // Unmonitored inventory must not drag health down
+    expect(
+      computeNetworkHealth(
+        summary({
+          totalDevices: 40,
+          onlineDevices: 0,
+          monitoredDevices: 0,
+          onlinePercentage: 0,
+        }),
+      ),
+    ).toEqual({ score: 100, label: 'Excellent' })
+  })
+
+  it('scores against monitoredDevices, not full inventory', () => {
+    const result = computeNetworkHealth(
+      summary({
+        totalDevices: 200,
+        monitoredDevices: 50,
+        onlineDevices: 45,
+        onlinePercentage: 90,
+      }),
+    )
+    expect(result.score).toBe(90)
+    expect(result.label).toBe('Excellent')
   })
 
   it('handles mixed NetPulse status vocabulary without double-penalizing', () => {
@@ -102,6 +127,7 @@ describe('computeNetworkHealth', () => {
     const result = computeNetworkHealth(
       summary({
         totalDevices: 200,
+        monitoredDevices: 200,
         onlineDevices: 180,
         // Intentionally wrong/stale percentage — counts win
         onlinePercentage: 0,
@@ -115,6 +141,7 @@ describe('computeNetworkHealth', () => {
     const result = computeNetworkHealth(
       summary({
         totalDevices: 10 as unknown as number,
+        monitoredDevices: 10 as unknown as number,
         onlineDevices: undefined as unknown as number,
         onlinePercentage: '80' as unknown as number,
       }),
@@ -127,6 +154,7 @@ describe('computeNetworkHealth', () => {
     const result = computeNetworkHealth(
       summary({
         totalDevices: 12,
+        monitoredDevices: 12,
         onlineDevices: undefined as unknown as number,
         onlinePercentage: undefined as unknown as number,
       }),
@@ -138,11 +166,25 @@ describe('computeNetworkHealth', () => {
     const result = computeNetworkHealth(
       summary({
         totalDevices: 100,
+        monitoredDevices: 100,
         onlineDevices: undefined as unknown as number,
         onlinePercentage: 73.2,
       }),
     )
     expect(result.score).toBe(73)
+    expect(result.label).toBe('Good')
+  })
+
+  it('falls back to totalDevices when monitoredDevices is absent', () => {
+    const result = computeNetworkHealth(
+      summary({
+        totalDevices: 100,
+        monitoredDevices: undefined as unknown as number,
+        onlineDevices: 80,
+        onlinePercentage: 80,
+      }),
+    )
+    expect(result.score).toBe(80)
     expect(result.label).toBe('Good')
   })
 })
