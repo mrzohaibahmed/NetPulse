@@ -16,16 +16,24 @@ import {
 import type { Node, Edge, NodeProps, EdgeProps, ReactFlowInstance } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import dagre from 'dagre'
-import { Network, Server, Share2 } from 'lucide-react'
+import { Network, Server, Share2, Loader2, Save } from 'lucide-react'
 
 import { PageHeader } from '@/shared/components/PageHeader'
 import { LoadingState } from '@/shared/components/LoadingState'
 import { ErrorState } from '@/shared/components/ErrorState'
-import { useTopologySwitches, useLevel1Topology, useFullTopology } from '@/hooks/useTopologyData'
+import {
+  useTopologySwitches,
+  useLevel1Topology,
+  useFullTopology,
+  useTopologyLayout,
+  useSaveTopologyLayoutMutation,
+} from '@/hooks/useTopologyData'
 import { Card, CardContent, CardHeader, CardTitle } from '@/shared/ui/card'
+import { Button } from '@/shared/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip'
 import { cn } from '@/lib/utils'
 import type { TopologyEdge as ApiTopologyEdge, TopologyNodeDetails } from '@/api/topologyService'
+import { toast } from 'sonner'
 
 type NodeHandleSpec = {
   id: string
@@ -64,7 +72,19 @@ const NODE_HEIGHT = 96
 const EDGE_COLOR = '#3b82f6'
 const TRUNK_EDGE_COLOR = '#f59e0b'
 const STALE_EDGE_COLOR = '#94a3b8'
-const POSITIONS_STORAGE_PREFIX = 'netpulse-topology-pos-'
+
+type LayoutSaveStatus = 'idle' | 'saved' | 'unsaved' | 'saving' | 'error'
+
+function layoutPositionsFromSaved(
+  layout: { nodes?: Array<{ id: string; position: { x: number; y: number } }> } | null | undefined,
+): Record<string, { x: number; y: number }> {
+  const map: Record<string, { x: number; y: number }> = {}
+  for (const node of layout?.nodes ?? []) {
+    if (!node?.id || !node.position) continue
+    map[node.id] = { x: node.position.x, y: node.position.y }
+  }
+  return map
+}
 
 function isSwitchType(type: string) {
   return type.toLowerCase().includes('switch')
@@ -153,21 +173,6 @@ function computeHandleAssignments(apiEdges: ApiTopologyEdge[]) {
   }
 
   return { edgeHandles, nodeHandles }
-}
-
-function loadSavedPositions(viewKey: string) {
-  try {
-    const raw = localStorage.getItem(`${POSITIONS_STORAGE_PREFIX}${viewKey}`)
-    if (!raw) return {}
-    return JSON.parse(raw) as Record<string, { x: number; y: number }>
-  } catch {
-    return {}
-  }
-}
-
-function savePositions(viewKey: string, nodes: Node[]) {
-  const payload = Object.fromEntries(nodes.map((node) => [node.id, node.position]))
-  localStorage.setItem(`${POSITIONS_STORAGE_PREFIX}${viewKey}`, JSON.stringify(payload))
 }
 
 function getLayoutedElements(nodes: Node[], edges: Edge[], direction = 'TB') {
@@ -464,7 +469,8 @@ export function TopologyPage() {
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
   const [canvasSize, setCanvasSize] = useState({ width: 960, height: 560 })
   const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null)
-  
+  const [saveStatus, setSaveStatus] = useState<LayoutSaveStatus>('idle')
+
   const [hoveredEdge, setHoveredEdge] = useState<{
     x: number
     y: number
@@ -493,6 +499,8 @@ export function TopologyPage() {
   const viewKey = selectedSwitchId ?? 'full'
   const shouldFitViewRef = useRef(true)
   const prevViewKeyRef = useRef(viewKey)
+  /** Live session positions per view — survives discovery polling without auto-persisting. */
+  const sessionPositionsRef = useRef<Record<string, Record<string, { x: number; y: number }>>>({})
 
   const {
     data: switchesData,
@@ -502,17 +510,33 @@ export function TopologyPage() {
   } = useTopologySwitches()
   const { data: level1Data, isLoading: isLoadingLevel1 } = useLevel1Topology(selectedSwitchId)
   const { data: fullData, isLoading: isLoadingFull } = useFullTopology(selectedSwitchId === null)
+  const layoutQuery = useTopologyLayout(viewKey)
+  const saveLayoutMutation = useSaveTopologyLayoutMutation()
 
   const activeData = selectedSwitchId ? level1Data : fullData
   const isLoadingActive = selectedSwitchId ? isLoadingLevel1 : isLoadingFull
   const switches = useMemo(() => switchesData || [], [switchesData])
+  const savedPositions = useMemo(
+    () => layoutPositionsFromSaved(layoutQuery.data),
+    [layoutQuery.data],
+  )
 
   useEffect(() => {
     if (prevViewKeyRef.current !== viewKey) {
       prevViewKeyRef.current = viewKey
       shouldFitViewRef.current = true
+      setSaveStatus(layoutQuery.data ? 'saved' : 'idle')
     }
-  }, [viewKey])
+  }, [viewKey, layoutQuery.data])
+
+  useEffect(() => {
+    if (layoutQuery.isLoading) return
+    if (layoutQuery.data) {
+      setSaveStatus((prev) => (prev === 'unsaved' || prev === 'saving' || prev === 'error' ? prev : 'saved'))
+    } else {
+      setSaveStatus((prev) => (prev === 'unsaved' || prev === 'saving' || prev === 'error' ? prev : 'idle'))
+    }
+  }, [layoutQuery.data, layoutQuery.isLoading, viewKey])
 
   useEffect(() => {
     if (!activeData?.nodes || !activeData?.edges) {
@@ -521,16 +545,25 @@ export function TopologyPage() {
       return
     }
 
+    // Wait for saved layout fetch so first paint can apply server positions.
+    if (layoutQuery.isLoading) {
+      return
+    }
+
     // Show all edges in both Level 1 and Level 2
     const visibleEdges = activeData.edges
 
     const { edgeHandles, nodeHandles } = computeHandleAssignments(visibleEdges)
-    const savedPositions = loadSavedPositions(viewKey)
+    const sessionPositions = sessionPositionsRef.current[viewKey] ?? {}
+    const positionMap: Record<string, { x: number; y: number }> = {
+      ...savedPositions,
+      ...sessionPositions,
+    }
 
     const flowNodes: Node[] = activeData.nodes.map((n) => ({
       id: n.id,
       type: 'topologyDevice',
-      position: savedPositions[n.id] ?? { x: 0, y: 0 },
+      position: positionMap[n.id] ?? { x: 0, y: 0 },
       draggable: true,
       data: {
         hostname: n.hostname,
@@ -593,14 +626,14 @@ export function TopologyPage() {
       }
     })
 
-    const needsLayout = flowNodes.some((node) => !savedPositions[node.id])
+    const needsLayout = flowNodes.some((node) => !positionMap[node.id])
     let nextNodes = flowNodes
 
     if (needsLayout) {
       const { nodes: layoutedNodes, bounds } = getLayoutedElements(flowNodes, flowEdges, 'TB')
       nextNodes = layoutedNodes.map((node) => ({
         ...node,
-        position: savedPositions[node.id] ?? node.position,
+        position: positionMap[node.id] ?? node.position,
       }))
       setCanvasSize({ width: bounds.width, height: bounds.height })
     } else {
@@ -620,9 +653,22 @@ export function TopologyPage() {
       })
     }
 
+    // Keep session positions for existing nodes after rebuild (incl. dagre for new nodes).
+    sessionPositionsRef.current[viewKey] = Object.fromEntries(
+      nextNodes.map((node) => [node.id, node.position]),
+    )
+
     setNodes(nextNodes)
     setEdges(flowEdges)
-  }, [activeData, selectedSwitchId, viewKey, setNodes, setEdges])
+  }, [
+    activeData,
+    selectedSwitchId,
+    viewKey,
+    savedPositions,
+    layoutQuery.isLoading,
+    setNodes,
+    setEdges,
+  ])
 
   useEffect(() => {
     if (!rfInstance || nodes.length === 0 || !shouldFitViewRef.current) return
@@ -632,11 +678,57 @@ export function TopologyPage() {
     })
   }, [rfInstance, nodes, viewKey])
 
+  const captureSessionPositions = useCallback(
+    (nextNodes: Node[]) => {
+      sessionPositionsRef.current[viewKey] = Object.fromEntries(
+        nextNodes.map((node) => [node.id, node.position]),
+      )
+    },
+    [viewKey],
+  )
+
   const onNodeDragStop = useCallback(() => {
     const currentNodes = rfInstance?.getNodes() ?? nodes
-    savePositions(viewKey, currentNodes)
-  }, [nodes, rfInstance, viewKey])
+    captureSessionPositions(currentNodes)
+    setSaveStatus('unsaved')
+  }, [captureSessionPositions, nodes, rfInstance])
 
+  const handleSaveTopology = useCallback(async () => {
+    const currentNodes = rfInstance?.getNodes() ?? nodes
+    const currentEdges = rfInstance?.getEdges() ?? edges
+    captureSessionPositions(currentNodes)
+    setSaveStatus('saving')
+    try {
+      await saveLayoutMutation.mutateAsync({
+        viewKey,
+        nodes: currentNodes.map((node) => ({
+          id: node.id,
+          position: { x: node.position.x, y: node.position.y },
+        })),
+        edges: currentEdges.map((edge) => ({
+          id: edge.id,
+          source: edge.source,
+          target: edge.target,
+        })),
+      })
+      setSaveStatus('saved')
+      toast.success('Topology layout saved')
+    } catch (err) {
+      setSaveStatus('error')
+      toast.error(err instanceof Error ? err.message : 'Failed to save topology layout')
+    }
+  }, [captureSessionPositions, edges, nodes, rfInstance, saveLayoutMutation, viewKey])
+
+  const saveStatusLabel =
+    saveStatus === 'saving'
+      ? 'Saving…'
+      : saveStatus === 'unsaved'
+        ? 'Unsaved changes'
+        : saveStatus === 'error'
+          ? 'Save failed'
+          : saveStatus === 'saved'
+            ? 'Saved'
+            : 'Not saved yet'
   if (isLoadingSwitches) {
     return (
       <div className="np-page">
@@ -720,7 +812,7 @@ export function TopologyPage() {
         </div>
 
         <div className="relative max-h-[calc(100vh-15rem)] min-h-[420px] overflow-auto rounded-xl border border-border/70 bg-card/40">
-          {isLoadingActive ? (
+          {isLoadingActive || layoutQuery.isLoading ? (
             <div className="absolute inset-0 z-10 flex items-center justify-center bg-card/50 backdrop-blur-sm">
               <LoadingState label="Drawing topology…" />
             </div>
@@ -764,9 +856,38 @@ export function TopologyPage() {
                 <Controls className="border-border bg-card fill-foreground" />
                 <Panel
                   position="top-right"
-                  className="rounded-lg border border-border/70 bg-card/90 px-2.5 py-1.5 text-xs font-medium text-foreground shadow-sm backdrop-blur-md"
+                  className="flex flex-wrap items-center gap-2 rounded-lg border border-border/70 bg-card/90 px-2.5 py-1.5 text-xs font-medium text-foreground shadow-sm backdrop-blur-md"
                 >
-                  {selectedSwitchId === null ? 'Level 2 · Full Topology' : 'Level 1 · Switch Neighbors'}
+                  <span className="text-muted-foreground">
+                    {selectedSwitchId === null ? 'Level 2 · Full Topology' : 'Level 1 · Switch Neighbors'}
+                  </span>
+                  <span
+                    className={cn(
+                      'rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
+                      saveStatus === 'unsaved' && 'bg-amber-500/15 text-amber-700 dark:text-amber-300',
+                      saveStatus === 'saved' && 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300',
+                      saveStatus === 'saving' && 'bg-primary/10 text-primary',
+                      saveStatus === 'error' && 'bg-destructive/15 text-destructive',
+                      saveStatus === 'idle' && 'bg-muted text-muted-foreground',
+                    )}
+                  >
+                    {saveStatusLabel}
+                  </span>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    className="h-7 gap-1.5 px-2 text-xs"
+                    disabled={nodes.length === 0 || saveStatus === 'saving' || saveLayoutMutation.isPending}
+                    onClick={() => void handleSaveTopology()}
+                  >
+                    {saveStatus === 'saving' || saveLayoutMutation.isPending ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Save className="h-3.5 w-3.5" />
+                    )}
+                    {saveStatus === 'saving' || saveLayoutMutation.isPending ? 'Saving…' : 'Save Topology'}
+                  </Button>
                 </Panel>
               </ReactFlow>
             </div>

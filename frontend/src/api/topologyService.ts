@@ -66,3 +66,39 @@ export const getLevel1Topology = (deviceId: string) => {
 export const getFullTopology = () => {
   return apiRequest<ApiItemResponse<TopologyData>>('/api/topology/full')
 }
+
+export interface TopologyLayoutNode {
+  id: string
+  position: { x: number; y: number }
+}
+
+export interface TopologyLayoutEdge {
+  id: string
+  source: string
+  target: string
+}
+
+export interface TopologyLayout {
+  viewKey: string
+  nodes: TopologyLayoutNode[]
+  edges: TopologyLayoutEdge[]
+  updatedAt?: string | null
+}
+
+export const getTopologyLayout = (viewKey: string) =>
+  apiRequest<{ success: boolean; layout: TopologyLayout | null }>(
+    `/api/topology/layout?view=${encodeURIComponent(viewKey)}`,
+  )
+
+export const saveTopologyLayout = (payload: {
+  viewKey: string
+  nodes: TopologyLayoutNode[]
+  edges: TopologyLayoutEdge[]
+}) =>
+  apiRequest<{ success: boolean; message: string; layout: TopologyLayout }>(
+    '/api/topology/layout',
+    {
+      method: 'PUT',
+      body: payload,
+    },
+  )

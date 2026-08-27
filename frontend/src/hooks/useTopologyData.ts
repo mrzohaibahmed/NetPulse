@@ -1,5 +1,12 @@
-import { useQuery } from '@tanstack/react-query'
-import { getTopologySwitches, getLevel1Topology, getFullTopology } from '@/api/topologyService'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+  getTopologySwitches,
+  getLevel1Topology,
+  getFullTopology,
+  getTopologyLayout,
+  saveTopologyLayout,
+  type TopologyLayout,
+} from '@/api/topologyService'
 
 export function useTopologySwitches() {
   return useQuery({
@@ -34,5 +41,32 @@ export function useFullTopology(enabled: boolean) {
     },
     enabled,
     refetchInterval: 30000,
+  })
+}
+
+export function useTopologyLayout(viewKey: string) {
+  return useQuery({
+    queryKey: ['topology', 'layout', viewKey],
+    queryFn: async () => {
+      const res = await getTopologyLayout(viewKey)
+      return res.layout
+    },
+  })
+}
+
+export function useSaveTopologyLayoutMutation() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: {
+      viewKey: string
+      nodes: TopologyLayout['nodes']
+      edges: TopologyLayout['edges']
+    }) => saveTopologyLayout(payload),
+    onSuccess: (res) => {
+      const key = res.layout?.viewKey
+      if (key) {
+        void qc.setQueryData(['topology', 'layout', key], res.layout)
+      }
+    },
   })
 }
