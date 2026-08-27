@@ -28,6 +28,23 @@ logger = get_monitor_logger("alert")
 ALERT_TYPE_STORM = "Storm Protection"
 CATEGORY_STORM = "Storm Protection"
 GENERATED_BY_SYSTEM = "SYSTEM"
+STORM_CONFIRMED_TITLE = "Storm Confirmed"
+
+
+def _normalize_alert_device_id(device_id):
+    """Prefer ObjectId so unique partial indexes on deviceId can apply."""
+    if device_id is None:
+        return None
+    try:
+        from bson import ObjectId  # noqa: PLC0415
+
+        if isinstance(device_id, ObjectId):
+            return device_id
+        if isinstance(device_id, str) and ObjectId.is_valid(device_id):
+            return ObjectId(device_id)
+    except Exception:  # noqa: BLE001
+        pass
+    return device_id
 
 
 def _active_critical_offline_filter(device_id) -> dict:
@@ -368,8 +385,10 @@ def _insert_storm_alert(
             "emailSent": bool(email_sent),
             "acknowledged": False,
             "dismissed": False,
+            "resolved": False,
             "acknowledgedAt": None,
             "dismissedAt": None,
+            "resolvedAt": None,
             "createdAt": now,
         }
         if recovery_duration is not None:
@@ -446,13 +465,180 @@ def create_storm_confirmed_alert(
     return _insert_storm_alert(
         incident=incident,
         device=device,
-        title="Storm Confirmed",
+        title=STORM_CONFIRMED_TITLE,
         message=str(reason),
         severity="CRITICAL",
         action="NONE",
         status="CONFIRMED",
         email_sent=email_sent,
     )
+
+
+def claim_storm_confirmed_alert(
+    device_id,
+    interface: str,
+    *,
+    risk_score: float,
+    hostname: Optional[str] = None,
+    ip_address: Optional[str] = None,
+    reason: Optional[str] = None,
+) -> tuple[Optional[str], bool]:
+    """
+    Atomically create the active Storm Confirmed alert for a port.
+
+    Returns ``(alert_id, created)``.
+    ``created=True`` only when this invocation inserted the document.
+    On unique-index conflict, returns the existing alert id (if found) and
+    ``created=False`` — callers must not send email.
+    """
+    from pymongo.errors import DuplicateKeyError  # noqa: PLC0415
+
+    name = str(interface or "").strip() or "unknown"
+    host = hostname or "unknown"
+    ip = ip_address or "unknown"
+    oid = _normalize_alert_device_id(device_id)
+    message = reason or (
+        f"Storm confirmed on interface {name}. "
+        f"Risk score {round(float(risk_score), 1)}."
+    )
+    incident = {
+        "deviceId": oid,
+        "interface": name,
+        "hostname": host,
+        "ipAddress": ip,
+        "deviceType": "Switch",
+        "reason": message,
+        "risk": {"riskScore": risk_score},
+        "status": "CONFIRMED",
+    }
+
+    # Fast path — avoid insert noise when an active alert is already visible.
+    try:
+        existing = db.alerts.find_one(
+            {
+                "deviceId": oid,
+                "interface": name,
+                "title": STORM_CONFIRMED_TITLE,
+                "resolved": False,
+                "dismissed": False,
+            },
+            {"_id": 1},
+        )
+        if existing:
+            logger.info(
+                "Storm confirmed alert already active — skip create/email | %s | %s | alertId=%s",
+                host,
+                name,
+                existing.get("_id"),
+            )
+            return str(existing["_id"]), False
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "Storm confirmed alert pre-check failed | %s | %s | %s",
+            host,
+            name,
+            exc,
+        )
+
+    # Atomic create: unique partial index is the authority under races.
+    alert_id = None
+    try:
+        # Build via shared inserter fields, but catch DuplicateKeyError here
+        # (_insert_storm_alert swallows all errors and would hide ownership).
+        now = utc_now()
+        fields = _storm_device_fields(incident)
+        doc: dict[str, Any] = {
+            "deviceId": fields["deviceId"],
+            "hostname": fields["hostname"],
+            "ipAddress": fields["ipAddress"],
+            "deviceType": fields.get("deviceType"),
+            "deviceName": fields["deviceName"],
+            "status": "CONFIRMED",
+            "message": message,
+            "title": STORM_CONFIRMED_TITLE,
+            "scanType": CATEGORY_STORM,
+            "alertType": ALERT_TYPE_STORM,
+            "category": CATEGORY_STORM,
+            "severity": "CRITICAL",
+            "interface": fields["interface"],
+            "incidentId": fields.get("incidentId"),
+            "riskScore": fields.get("riskScore"),
+            "action": "NONE",
+            "generatedBy": GENERATED_BY_SYSTEM,
+            "emailSent": False,
+            "acknowledged": False,
+            "dismissed": False,
+            "resolved": False,
+            "acknowledgedAt": None,
+            "dismissedAt": None,
+            "resolvedAt": None,
+            "createdAt": now,
+        }
+        result = db.alerts.insert_one(doc)
+        alert_id = str(result.inserted_id)
+        try:
+            log_audit(
+                action="storm_protection_alert",
+                entity_type="alert",
+                entity_id=alert_id,
+                details={
+                    "action": "NONE",
+                    "device": fields["hostname"],
+                    "deviceName": fields["deviceName"],
+                    "deviceIp": fields["ipAddress"],
+                    "interface": fields["interface"],
+                    "incident": fields.get("incidentId"),
+                    "timestamp": now.isoformat().replace("+00:00", "Z"),
+                    "alertId": alert_id,
+                    "title": STORM_CONFIRMED_TITLE,
+                    "severity": "CRITICAL",
+                    "status": "CONFIRMED",
+                },
+            )
+        except Exception as audit_exc:  # noqa: BLE001
+            logger.warning("Storm confirmed alert audit failed | %s", audit_exc)
+        logger.info(
+            "Storm confirmed alert created — email notification allowed | %s | %s | alertId=%s",
+            host,
+            name,
+            alert_id,
+        )
+        return alert_id, True
+    except DuplicateKeyError:
+        logger.info(
+            "Storm confirmed alert duplicate prevented — email skipped | %s | %s",
+            host,
+            name,
+        )
+        try:
+            existing = db.alerts.find_one(
+                {
+                    "deviceId": oid,
+                    "interface": name,
+                    "title": STORM_CONFIRMED_TITLE,
+                    "resolved": False,
+                    "dismissed": False,
+                },
+                {"_id": 1},
+            )
+            if existing:
+                return str(existing["_id"]), False
+        except Exception as lookup_exc:  # noqa: BLE001
+            logger.warning(
+                "Storm confirmed duplicate lookup failed | %s | %s | %s",
+                host,
+                name,
+                lookup_exc,
+            )
+        return None, False
+    except Exception as alert_exc:  # noqa: BLE001
+        logger.warning(
+            "Storm confirmed alert failed | %s | %s | %s",
+            host,
+            name,
+            alert_exc,
+        )
+        return None, False
 
 
 def notify_storm_confirmed(
@@ -465,20 +651,33 @@ def notify_storm_confirmed(
     reason: Optional[str] = None,
 ) -> Optional[str]:
     """
-    Create a Storm Confirmed alert and send email (independent operations).
+    Create a Storm Confirmed alert and send email only if this caller created it.
 
-    Dedupes while an open confirmed alert already exists for the same port.
-    Never raises.
+    Unique partial index + DuplicateKey handling guarantee at most one active
+    alert and one initial email under concurrent callers. Never raises.
     """
     name = str(interface or "").strip() or "unknown"
-    host = hostname or "unknown"
-    ip = ip_address or "unknown"
     message = reason or (
         f"Storm confirmed on interface {name}. "
         f"Risk score {round(float(risk_score), 1)}."
     )
+    host = hostname or "unknown"
+    ip = ip_address or "unknown"
+    oid = _normalize_alert_device_id(device_id)
+
+    alert_id, created = claim_storm_confirmed_alert(
+        oid,
+        name,
+        risk_score=risk_score,
+        hostname=host,
+        ip_address=ip,
+        reason=message,
+    )
+    if not created:
+        return alert_id
+
     incident = {
-        "deviceId": device_id,
+        "deviceId": oid,
         "interface": name,
         "hostname": host,
         "ipAddress": ip,
@@ -487,51 +686,12 @@ def notify_storm_confirmed(
         "risk": {"riskScore": risk_score},
         "status": "CONFIRMED",
     }
-
-    try:
-        existing = db.alerts.find_one(
-            {
-                "deviceId": device_id,
-                "interface": name,
-                "title": "Storm Confirmed",
-                "dismissed": {"$ne": True},
-                "resolved": {"$ne": True},
-            },
-            {"_id": 1},
-        )
-        if existing:
-            logger.info(
-                "Storm confirmed alert skipped (already open) | %s | %s",
-                host,
-                name,
-            )
-            return str(existing["_id"])
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "Storm confirmed alert dedupe lookup failed | %s | %s | %s",
-            host,
-            name,
-            exc,
-        )
-
-    alert_id = None
-    try:
-        alert_id = create_storm_confirmed_alert(incident)
-    except Exception as alert_exc:  # noqa: BLE001
-        logger.warning(
-            "Storm confirmed alert failed | %s | %s | %s",
-            host,
-            name,
-            alert_exc,
-        )
-
     try:
         email_sent = send_storm_confirmed_notification(
             incident,
             reason=message,
         )
-        if alert_id:
-            mark_alert_email_sent(alert_id, bool(email_sent))
+        mark_alert_email_sent(alert_id, bool(email_sent))
     except Exception as email_exc:  # noqa: BLE001
         logger.warning(
             "Storm confirmed email failed | %s | %s | %s",
