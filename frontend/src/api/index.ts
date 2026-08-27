@@ -918,7 +918,9 @@ export const getDiscoveryScanProgress = (scanId: string) =>
         online: number
         offline: number
         newlySaved: number
+        newlySavedIps?: string[]
       }
+      devices?: DiscoveryDevice[]
     }
   }>(`/api/discovery/scan-progress/${scanId}`, {
     timeoutMs: 15000,

@@ -95,7 +95,11 @@ class StartNetworkScanJobTests(unittest.TestCase):
             self.assertEqual(progress["status"], "complete")
             self.assertEqual(progress["summary"]["online"], 1)
             self.assertEqual(progress["summary"]["newlySaved"], 1)
-            self.assertNotIn("devices", progress)
+            self.assertEqual(progress["summary"]["newlySavedIps"], ["10.0.0.1"])
+            self.assertIn("devices", progress)
+            self.assertEqual(len(progress["devices"]), 1)
+            self.assertEqual(progress["devices"][0]["ipAddress"], "10.0.0.1")
+            self.assertTrue(progress["devices"][0]["saved"])
             self.assertIsNone(ds.get_active_network_scan_id())
 
     def test_duplicate_active_scan_raises_conflict(self) -> None:

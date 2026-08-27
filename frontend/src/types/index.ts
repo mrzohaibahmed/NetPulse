@@ -571,6 +571,7 @@ export interface DiscoverySummary {
   online: number
   offline: number
   newlySaved?: number
+  newlySavedIps?: string[]
   enriching?: number
 }
 

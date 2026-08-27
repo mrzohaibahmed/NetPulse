@@ -26,10 +26,10 @@ import {
 } from '@/hooks/queries'
 import { queryKeys } from '@/hooks/queryKeys'
 import { useQueryClient } from '@tanstack/react-query'
-import { getDevices, getDiscoveryEnrichmentStatus, getDiscoveryScanProgress } from '@/api'
+import { getDiscoveryEnrichmentStatus, getDiscoveryScanProgress } from '@/api'
 import { ApiRequestError } from '@/shared/api/client'
 import { formatMs } from '@/utils/format'
-import type { Device, DiscoveryDevice, DiscoverySummary, NetworkProfile } from '@/types'
+import type { DiscoveryDevice, DiscoverySummary, NetworkProfile } from '@/types'
 import { displayDeviceType } from '@/modules/ping/constants/devices'
 import { EmptyState } from '@/shared/components/EmptyState'
 import { KpiCard } from '@/shared/components/KpiCard'
@@ -94,32 +94,6 @@ function isIpInCidr(ip: string, cidr: string): boolean {
   } catch {
     return false
   }
-}
-
-function mapInventoryToDiscoveryDevices(
-  inventory: Device[],
-  enrichmentByIp: Map<
-    string,
-    Awaited<ReturnType<typeof getDiscoveryEnrichmentStatus>>['devices'][number]
-  >,
-): DiscoveryDevice[] {
-  return inventory.map((device) => {
-    const enrichment = enrichmentByIp.get(device.ipAddress)
-    return {
-      hostname: device.hostname ?? null,
-      ipAddress: device.ipAddress,
-      status: device.status === 'Online' ? 'Online' : 'Offline',
-      responseTime: device.responseTime,
-      saved: true,
-      deviceType: device.deviceType,
-      vendor: device.vendor,
-      operatingSystem: device.operatingSystem,
-      classificationConfidence: device.classificationConfidence,
-      classificationMethod: device.classificationMethod,
-      discoveryStatus: enrichment?.discoveryStatus ?? null,
-      nmapError: enrichment?.discoveryEnrichmentError ?? null,
-    }
-  })
 }
 
 export function DiscoveryPage() {
@@ -392,30 +366,13 @@ export function DiscoveryPage() {
       }
 
       try {
-        const inventory = await getDevices({ limit: 500 })
-        const inventoryRows = inventory.data ?? []
-        const ips = inventoryRows.map((row) => row.ipAddress).filter(Boolean)
-        const enrichmentByIp = new Map<
-          string,
-          Awaited<ReturnType<typeof getDiscoveryEnrichmentStatus>>['devices'][number]
-        >()
-        if (ips.length > 0) {
-          try {
-            const enrichment = await getDiscoveryEnrichmentStatus(ips)
-            for (const row of enrichment.devices) {
-              enrichmentByIp.set(row.ipAddress, row)
-            }
-          } catch {
-            // Non-fatal — enrichment polling can still catch up.
-          }
-        }
+        const scanDevices = Array.isArray(progress.devices) ? progress.devices : []
         if (cancelled) return
 
-        const mapped = mapInventoryToDiscoveryDevices(inventoryRows, enrichmentByIp)
-        const enriching = mapped.filter(
+        const enriching = scanDevices.filter(
           (d) => d.discoveryStatus === 'pending' || d.discoveryStatus === 'enriching',
         ).length
-        setDevices(mapped)
+        setDevices(scanDevices)
         setSummary({ ...baseSummary, enriching })
         setScanProgress({
           percent: 100,
@@ -445,7 +402,7 @@ export function DiscoveryPage() {
           toast.success(`Scan complete. Saved ${baseSummary.newlySaved} new device(s).`)
         }
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : 'Failed to refresh devices after scan')
+        toast.error(err instanceof Error ? err.message : 'Failed to apply scan results')
       } finally {
         if (!cancelled) {
           setScanId(null)
@@ -469,6 +426,10 @@ export function DiscoveryPage() {
           error: progress.error,
         })
         if (progress.status === 'complete' || progress.status === 'failed') {
+          // Wait until scan rows are attached (brief gap after status=complete).
+          if (progress.status === 'complete' && !Array.isArray(progress.devices)) {
+            return
+          }
           if (timer !== undefined) {
             window.clearInterval(timer)
             timer = undefined

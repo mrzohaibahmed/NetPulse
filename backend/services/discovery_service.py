@@ -101,10 +101,17 @@ def finish_scan_progress(scan_id: str | None, *, status: str = "complete") -> No
             state["completed"] = int(state.get("total") or state.get("completed") or 0)
 
 
-def _set_scan_summary(scan_id: str, summary: dict) -> None:
+def _set_scan_summary(scan_id: str, summary: dict, devices: list | None = None) -> None:
     if not is_valid_scan_id(scan_id):
         return
     key = str(scan_id).strip()
+    newly_saved_ips: list[str] = []
+    raw_ips = summary.get("newlySavedIps") or []
+    if isinstance(raw_ips, list):
+        for item in raw_ips:
+            ip = str(item or "").strip()
+            if ip and ip not in newly_saved_ips:
+                newly_saved_ips.append(ip)
     with _scan_progress_lock:
         state = _scan_progress.get(key)
         if not state:
@@ -114,7 +121,11 @@ def _set_scan_summary(scan_id: str, summary: dict) -> None:
             "online": int(summary.get("online") or 0),
             "offline": int(summary.get("offline") or 0),
             "newlySaved": int(summary.get("newlySaved") or 0),
+            "newlySavedIps": newly_saved_ips,
         }
+        # Full scan rows for the Discovery table (capped by discover_ips max 1024).
+        if devices is not None:
+            state["devices"] = list(devices)
         state["error"] = None
 
 
@@ -168,6 +179,9 @@ def get_scan_progress(scan_id: str | None) -> dict | None:
         summary = state.get("summary")
         if isinstance(summary, dict):
             payload["summary"] = summary
+        devices = state.get("devices")
+        if isinstance(devices, list) and state.get("status") == "complete":
+            payload["devices"] = devices
         return payload
 
 
@@ -219,7 +233,12 @@ def _run_network_scan_job(ip_addresses: list[str], scan_id: str) -> None:
         results = discover_ips(ip_addresses, scan_id=scan_id)
         online = sum(1 for device in results if device.get("status") == "Online")
         offline = sum(1 for device in results if device.get("status") == "Offline")
-        newly_saved = sum(1 for device in results if device.get("saved"))
+        newly_saved_ips = [
+            str(device.get("ipAddress")).strip()
+            for device in results
+            if device.get("saved") and device.get("ipAddress")
+        ]
+        newly_saved = len(newly_saved_ips)
         _set_scan_summary(
             scan_id,
             {
@@ -227,7 +246,9 @@ def _run_network_scan_job(ip_addresses: list[str], scan_id: str) -> None:
                 "online": online,
                 "offline": offline,
                 "newlySaved": newly_saved,
+                "newlySavedIps": newly_saved_ips,
             },
+            devices=results,
         )
     except Exception:
         logger.exception(
