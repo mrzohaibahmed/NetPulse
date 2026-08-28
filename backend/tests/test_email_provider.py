@@ -615,6 +615,7 @@ class TestPasswordNotExposed(unittest.TestCase):
             "pingRetries": 3,
             "pingFailureConfirmationScans": 2,
             "pingConcurrency": 40,
+            "pingHistoryRetentionDays": 7,
             "dataRetentionDays": 90,
             "incidentRetentionDays": 365,
             "mitigationMode": "manual",

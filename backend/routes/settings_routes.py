@@ -64,6 +64,7 @@ def update_settings_route():
                 "maximumRecoveryAttempts": updated.get("maximumRecoveryAttempts"),
                 "reMitigationThreshold": updated.get("reMitigationThreshold"),
                 "requiredConfirmations": updated.get("requiredConfirmations"),
+                "pingHistoryRetentionDays": updated.get("pingHistoryRetentionDays"),
                 "dataRetentionDays": updated.get("dataRetentionDays"),
                 "incidentRetentionDays": updated.get("incidentRetentionDays"),
             },

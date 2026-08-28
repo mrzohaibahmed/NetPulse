@@ -157,6 +157,9 @@ def get_public_settings():
                 DEFAULT_SETTINGS["requiredConfirmations"],
             )
         ),
+        "pingHistoryRetentionDays": int(
+            settings.get("pingHistoryRetentionDays", DEFAULT_SETTINGS["pingHistoryRetentionDays"])
+        ),
         "dataRetentionDays": int(settings.get("dataRetentionDays", 90)),
         "incidentRetentionDays": int(settings.get("incidentRetentionDays", 365)),
         "stormNotifications": _public_storm_notifications(settings),
