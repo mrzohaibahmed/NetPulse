@@ -3,7 +3,7 @@ import { Navigate } from 'react-router-dom'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { Mail, Save, Timer, Activity, Send, CheckCircle2, AlertCircle, Shield } from 'lucide-react'
+import { Mail, Save, Timer, Activity, Send, CheckCircle2, AlertCircle, Shield, Database } from 'lucide-react'
 import { useAuth } from '@/shared/auth/AuthContext'
 import { useSettingsMutation, useSettingsQuery } from '@/hooks/queries'
 import { IspSettingsSection } from '@/modules/ping/components/IspSettingsSection'
@@ -56,6 +56,7 @@ const schema = z.object({
   maximumRecoveryAttempts: z.number().min(1),
   reMitigationThreshold: z.number().min(1).max(100),
   requiredConfirmations: z.number().min(1).max(20),
+  pingHistoryRetentionDays: z.number().min(7).max(3650),
   dataRetentionDays: z.number().min(7).max(3650),
   incidentRetentionDays: z.number().min(30).max(3650),
   stormNotificationsEnabled: z.boolean(),
@@ -96,6 +97,7 @@ export function SettingsPage() {
       maximumRecoveryAttempts: 3,
       reMitigationThreshold: 60,
       requiredConfirmations: 4,
+      pingHistoryRetentionDays: 7,
       dataRetentionDays: 90,
       incidentRetentionDays: 365,
       stormNotificationsEnabled: true,
@@ -128,6 +130,7 @@ export function SettingsPage() {
       maximumRecoveryAttempts: data.maximumRecoveryAttempts ?? 3,
       reMitigationThreshold: data.reMitigationThreshold ?? 60,
       requiredConfirmations: data.requiredConfirmations ?? 4,
+      pingHistoryRetentionDays: data.pingHistoryRetentionDays ?? 7,
       dataRetentionDays: data.dataRetentionDays ?? 90,
       incidentRetentionDays: data.incidentRetentionDays ?? 365,
       stormNotificationsEnabled: data.stormNotifications?.enabled ?? true,
@@ -206,6 +209,7 @@ export function SettingsPage() {
       maximumRecoveryAttempts: values.maximumRecoveryAttempts,
       reMitigationThreshold: values.reMitigationThreshold,
       requiredConfirmations: values.requiredConfirmations,
+      pingHistoryRetentionDays: values.pingHistoryRetentionDays,
       dataRetentionDays: values.dataRetentionDays,
       incidentRetentionDays: values.incidentRetentionDays,
       stormNotifications: {
@@ -518,7 +522,7 @@ export function SettingsPage() {
               Adjust validation thresholds, recovery limits, and stabilization timing for port automatic recovery.
             </CardDescription>
           </CardHeader>
-          <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <div className="space-y-1.5">
               <Label htmlFor="cooldownMinutes">Cooldown (minutes)</Label>
               <Input
@@ -546,8 +550,35 @@ export function SettingsPage() {
                 {...form.register('maximumRecoveryAttempts', { valueAsNumber: true })}
               />
             </div>
+          </CardContent>
+        </Card>
+
+        <Card className="glass">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Database className="h-5 w-5 text-primary" />
+              Data retention
+            </CardTitle>
+            <CardDescription>
+              How long historical records are kept before MongoDB TTL indexes remove them automatically.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <div className="space-y-1.5">
-              <Label htmlFor="dataRetentionDays">Data retention (days)</Label>
+              <Label htmlFor="pingHistoryRetentionDays">Ping history (days)</Label>
+              <Input
+                id="pingHistoryRetentionDays"
+                type="number"
+                min={7}
+                max={3650}
+                {...form.register('pingHistoryRetentionDays', { valueAsNumber: true })}
+              />
+              <p className="text-xs text-muted-foreground">
+                Manual and automatic ping results in pingHistory.
+              </p>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="dataRetentionDays">Telemetry &amp; storm evaluation (days)</Label>
               <Input
                 id="dataRetentionDays"
                 type="number"
@@ -556,11 +587,11 @@ export function SettingsPage() {
                 {...form.register('dataRetentionDays', { valueAsNumber: true })}
               />
               <p className="text-xs text-muted-foreground">
-                Ping/stats and storm evaluation history older than this are removed via TTL.
+                Interface stats and storm eligibility, risk, confirmation, and safety history.
               </p>
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="incidentRetentionDays">Incident action retention (days)</Label>
+              <Label htmlFor="incidentRetentionDays">Incident actions (days)</Label>
               <Input
                 id="incidentRetentionDays"
                 type="number"
@@ -570,7 +601,6 @@ export function SettingsPage() {
               />
               <p className="text-xs text-muted-foreground">
                 Mitigation/recovery attempt logs and closed (RESOLVED) storm incidents.
-                Daily purge uses this window so incidents stay consistent with action history.
               </p>
             </div>
           </CardContent>

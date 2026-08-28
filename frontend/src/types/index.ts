@@ -262,6 +262,7 @@ export interface AppSettings {
   maximumRecoveryAttempts?: number
   reMitigationThreshold?: number
   requiredConfirmations?: number
+  pingHistoryRetentionDays?: number
   dataRetentionDays?: number
   incidentRetentionDays?: number
   stormNotifications?: {
