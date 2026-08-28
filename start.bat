@@ -22,47 +22,44 @@ if not exist "backend\.env" (
     echo.
 )
 
-REM --- Frontend checks ---
-where npm >nul 2>&1
-if errorlevel 1 (
-    echo [ERROR] npm not found. Install Node.js 18+ and ensure it is on PATH.
+REM --- Frontend production build check ---
+if not exist "frontend\dist\index.html" (
+    echo [ERROR] Frontend production build not found.
+    echo.
+    echo Run:
+    echo.
+    echo     cd frontend
+    echo     npm install
+    echo     npm run build
+    echo.
+    echo Then run start.bat again.
+    echo.
     pause
     exit /b 1
 )
 
-if not exist "frontend\node_modules\" (
-    echo [INFO] frontend\node_modules missing - running npm install...
-    pushd frontend
-    call npm install
-    if errorlevel 1 (
-        echo [ERROR] npm install failed.
-        popd
-        pause
-        exit /b 1
-    )
-    popd
-    echo.
-)
-
-echo [1/2] Starting backend  (http://127.0.0.1:5000^)
+echo [1/1] Starting backend / production UI
+echo       http://0.0.0.0:5000
+echo.
 start "NetPulse Backend" cmd /k "cd /d "%~dp0backend" && call venv\Scripts\activate.bat && python app.py"
 
-REM Give Flask a moment before Vite proxies to it
-timeout /t 2 /nobreak >nul
-
-echo [2/2] Starting frontend (http://127.0.0.1:5173^)
-start "NetPulse Frontend" cmd /k "cd /d "%~dp0frontend" && npm run dev"
-
-timeout /t 8 /nobreak >nul
-start "" "http://127.0.0.1:5173"
+REM Give Flask a moment to bind before opening the browser
+timeout /t 5 /nobreak >nul
+start "" "http://127.0.0.1:5000"
 
 echo.
-echo Backend  window: NetPulse Backend
-echo Frontend window: NetPulse Frontend
-echo UI:  http://127.0.0.1:5173
-echo API: http://127.0.0.1:5000
+echo Backend window: NetPulse Backend
 echo.
-echo Close those windows to stop the services.
+echo Backend: http://127.0.0.1:5000
+echo LAN UI:  http://^<HOST-LAN-IP^>:5000
+echo.
+echo Frontend:
+echo React production build served by Flask
+echo.
+echo Development frontend:
+echo Run "npm run dev" manually from frontend\
+echo.
+echo Close the backend window to stop NetPulse.
 echo.
 pause
 endlocal
