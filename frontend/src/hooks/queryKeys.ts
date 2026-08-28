@@ -3,12 +3,7 @@ export const queryKeys = {
   dashboard: {
     all: ['dashboard'] as const,
     summary: ['dashboard', 'summary'] as const,
-    statistics: ['dashboard', 'statistics'] as const,
-    statusChart: ['dashboard', 'status-chart'] as const,
-    typeChart: ['dashboard', 'type-chart'] as const,
-    responseTime: ['dashboard', 'response-time'] as const,
-    scanActivity: ['dashboard', 'scan-activity'] as const,
-    deviceStatus: ['dashboard', 'device-status'] as const,
+    deviceMetrics: ['dashboard', 'device-metrics'] as const,
     recentHistory: ['dashboard', 'recent-history'] as const,
   },
   alerts: (status?: string) => ['alerts', status ?? 'all'] as const,

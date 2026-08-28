@@ -146,13 +146,8 @@ export function DashboardPage() {
       .map((a) => a.riskScore)
       .filter((n): n is number => typeof n === 'number' && !Number.isNaN(n))
     const peakRisk = riskScores.length ? Math.max(...riskScores) : null
-    const managedSwitches = dash.devices.filter(
-      (d) => (d.deviceType || '').trim().toLowerCase().includes('switch'),
-    ).length
-    const monitoredSwitches = dash.devices.filter(
-      (d) =>
-        (d.deviceType || '').trim().toLowerCase().includes('switch') && d.monitor,
-    ).length
+    const managedSwitches = dash.deviceMetrics?.managedSwitches ?? 0
+    const monitoredSwitches = dash.deviceMetrics?.monitoredSwitches ?? 0
 
     return {
       activeIncidents: incidentIds.size || stormAlerts.filter((a) => Boolean(a.incidentId)).length,
@@ -161,7 +156,7 @@ export function DashboardPage() {
       managedSwitches,
       monitoredSwitches,
     }
-  }, [dash.alerts, dash.devices])
+  }, [dash.alerts, dash.deviceMetrics])
 
   const recentActivity = useMemo(
     () => buildRecentActivity(dash.history, dash.alerts),

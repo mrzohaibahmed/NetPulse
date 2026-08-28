@@ -1,3 +1,5 @@
+import time
+
 from flask import Blueprint, jsonify
 
 from config.database import db
@@ -10,6 +12,53 @@ from utils.auth import require_auth
 from utils.serializers import format_datetime, get_device_type
 
 dashboard_bp = Blueprint("dashboard", __name__)
+
+# Short-lived cache for dashboard averageResponseTime (same semantics as statistics).
+_avg_response_value: float | None = None
+_avg_response_expires_at: float = 0.0
+_AVG_RESPONSE_CACHE_TTL_SECONDS = 14.0
+
+_SWITCH_TYPE_MATCH = {
+    "$expr": {
+        "$regexMatch": {
+            "input": {
+                "$toLower": {
+                    "$ifNull": ["$deviceType", {"$ifNull": ["$type", ""]}],
+                }
+            },
+            "regex": "switch",
+        }
+    }
+}
+
+
+def _ping_history_average_response_time() -> float | None:
+    """
+    Mean of all non-null pingHistory.responseTime samples.
+
+    Matches ``dashboard_statistics`` / legacy dashboard average semantics.
+    """
+    global _avg_response_value, _avg_response_expires_at
+
+    now = time.monotonic()
+    if now < _avg_response_expires_at:
+        return _avg_response_value
+
+    pipeline = [
+        {"$match": {"responseTime": {"$ne": None}}},
+        {"$group": {"_id": None, "average": {"$avg": "$responseTime"}}},
+    ]
+    avg_result = list(db.pingHistory.aggregate(pipeline))
+    average_response = (
+        round(avg_result[0]["average"], 2) if avg_result else None
+    )
+    _avg_response_value = average_response
+    _avg_response_expires_at = now + _AVG_RESPONSE_CACHE_TTL_SECONDS
+    return average_response
+
+
+def _facet_count(facet: dict, key: str) -> int:
+    return int((facet.get(key) or [{}])[0].get("n") or 0)
 
 
 @dashboard_bp.route("/dashboard/summary", methods=["GET"])
@@ -172,6 +221,56 @@ def recent_history():
         }), 500
 
 
+@dashboard_bp.route("/dashboard/device-metrics", methods=["GET"])
+@require_auth()
+def dashboard_device_metrics():
+    """
+    Lightweight dashboard metrics: switch counts + average response time.
+
+    Replaces polling full device inventory and the statistics endpoint on
+    the Dashboard refresh path while preserving displayed metric semantics.
+    """
+    try:
+        facet = next(
+            db.devices.aggregate([
+                {
+                    "$facet": {
+                        "managedSwitches": [
+                            {"$match": _SWITCH_TYPE_MATCH},
+                            {"$count": "n"},
+                        ],
+                        "monitoredSwitches": [
+                            {
+                                "$match": {
+                                    **_SWITCH_TYPE_MATCH,
+                                    "monitor": True,
+                                }
+                            },
+                            {"$count": "n"},
+                        ],
+                    }
+                }
+            ]),
+            {},
+        )
+
+        return jsonify({
+            "success": True,
+            "metrics": {
+                "managedSwitches": _facet_count(facet, "managedSwitches"),
+                "monitoredSwitches": _facet_count(facet, "monitoredSwitches"),
+                "averageResponseTime": _ping_history_average_response_time(),
+            },
+        }), 200
+
+    except Exception as error:
+        return jsonify({
+            "success": False,
+            "message": "Failed to get dashboard device metrics",
+            "error": str(error),
+        }), 500
+
+
 @dashboard_bp.route("/dashboard/device-status", methods=["GET"])
 @require_auth()
 def device_status():
@@ -229,13 +328,7 @@ def dashboard_statistics():
             "status": STATUS_ONLINE,
         })
         total_scans = db.pingHistory.count_documents({})
-
-        pipeline = [
-            {"$match": {"responseTime": {"$ne": None}}},
-            {"$group": {"_id": None, "average": {"$avg": "$responseTime"}}},
-        ]
-        avg_result = list(db.pingHistory.aggregate(pipeline))
-        average_response = round(avg_result[0]["average"], 2) if avg_result else None
+        average_response = _ping_history_average_response_time()
 
         def pct(count):
             return round((count / total_devices) * 100, 2) if total_devices else 0

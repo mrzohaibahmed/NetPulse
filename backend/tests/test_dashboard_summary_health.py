@@ -109,5 +109,38 @@ class DashboardSummaryContractTests(unittest.TestCase):
         self.assertEqual(summary["notReachablePercentage"], 20.0)
 
 
+class DashboardDeviceMetricsTests(unittest.TestCase):
+    @patch("routes.dashboard_routes._ping_history_average_response_time", return_value=18.42)
+    @patch("routes.dashboard_routes.db")
+    def test_device_metrics_returns_switch_counts_and_average(
+        self, mock_db, mock_avg
+    ):
+        mock_db.devices.aggregate.return_value = iter([
+            {
+                "managedSwitches": [{"n": 4}],
+                "monitoredSwitches": [{"n": 3}],
+            }
+        ])
+
+        from routes.dashboard_routes import dashboard_device_metrics
+
+        view = dashboard_device_metrics
+        while hasattr(view, "__wrapped__"):
+            view = view.__wrapped__
+
+        app = Flask(__name__)
+        with app.app_context():
+            response, status = view()
+
+        self.assertEqual(status, 200)
+        payload = response.get_json()
+        self.assertTrue(payload["success"])
+        metrics = payload["metrics"]
+        self.assertEqual(metrics["managedSwitches"], 4)
+        self.assertEqual(metrics["monitoredSwitches"], 3)
+        self.assertEqual(metrics["averageResponseTime"], 18.42)
+        mock_avg.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()

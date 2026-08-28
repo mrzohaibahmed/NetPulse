@@ -15,14 +15,11 @@ import {
   evaluateAllSafety,
   getAlerts,
   getConfirmationResults,
-  getDashboardStatistics,
+  getDashboardDeviceMetrics,
   getDashboardSummary,
   getDeviceHistory,
   getDeviceInterfaceStats,
   getDeviceInterfaces,
-  getDeviceStatus,
-  getDeviceStatusChart,
-  getDeviceTypeChart,
   getDevices,
   getDeviceNetworks,
   getEligibilityResults,
@@ -34,10 +31,8 @@ import {
   getInterfaces,
   getNetworkHint,
   getRecentHistory,
-  getResponseTimeChart,
   getRiskResults,
   getSafetyResults,
-  getScanActivityChart,
   getSettings,
   getStormConfig,
   getStormIncidents,
@@ -99,6 +94,8 @@ import type {
 import { toast } from 'sonner'
 
 const DASHBOARD_INTERVAL = 15_000
+/** Shared active-alert poll limit for Dashboard + TopNavbar cache deduplication. */
+export const DASHBOARD_ACTIVE_ALERTS_LIMIT = 10
 const DEVICES_INTERVAL = 20_000
 const HISTORY_INTERVAL = 25_000
 const HEALTH_INTERVAL = 30_000
@@ -168,34 +165,9 @@ export function useDashboardQuery() {
     queryFn: async () => (await getDashboardSummary()).summary,
     refetchInterval: DASHBOARD_INTERVAL,
   })
-  const statistics = useQuery({
-    queryKey: queryKeys.dashboard.statistics,
-    queryFn: async () => (await getDashboardStatistics()).statistics,
-    refetchInterval: DASHBOARD_INTERVAL,
-  })
-  const statusChart = useQuery({
-    queryKey: queryKeys.dashboard.statusChart,
-    queryFn: async () => (await getDeviceStatusChart()).chart,
-    refetchInterval: DASHBOARD_INTERVAL,
-  })
-  const typeChart = useQuery({
-    queryKey: queryKeys.dashboard.typeChart,
-    queryFn: async () => (await getDeviceTypeChart()).chart,
-    refetchInterval: DASHBOARD_INTERVAL,
-  })
-  const responseTime = useQuery({
-    queryKey: queryKeys.dashboard.responseTime,
-    queryFn: async () => (await getResponseTimeChart()).chart,
-    refetchInterval: DASHBOARD_INTERVAL,
-  })
-  const scanActivity = useQuery({
-    queryKey: queryKeys.dashboard.scanActivity,
-    queryFn: async () => (await getScanActivityChart()).chart,
-    refetchInterval: DASHBOARD_INTERVAL,
-  })
-  const devices = useQuery({
-    queryKey: queryKeys.dashboard.deviceStatus,
-    queryFn: async () => (await getDeviceStatus()).devices,
+  const deviceMetrics = useQuery({
+    queryKey: queryKeys.dashboard.deviceMetrics,
+    queryFn: async () => (await getDashboardDeviceMetrics()).metrics,
     refetchInterval: DASHBOARD_INTERVAL,
   })
   const history = useQuery({
@@ -203,61 +175,49 @@ export function useDashboardQuery() {
     queryFn: async () => (await getRecentHistory()).history,
     refetchInterval: DASHBOARD_INTERVAL,
   })
-  const alerts = useQuery({
-    queryKey: queryKeys.alerts('active'),
-    queryFn: async () => (await getAlerts({ status: 'active', limit: 10 })).data,
-    refetchInterval: DASHBOARD_INTERVAL,
-  })
+  const alertsQuery = useAlertsQuery('active', DASHBOARD_ACTIVE_ALERTS_LIMIT)
 
   const isLoading =
     summary.isLoading ||
-    statistics.isLoading ||
-    statusChart.isLoading ||
-    typeChart.isLoading ||
-    devices.isLoading
+    deviceMetrics.isLoading ||
+    history.isLoading ||
+    alertsQuery.isLoading
 
   const error =
     summary.error ||
-    statistics.error ||
-    statusChart.error ||
-    typeChart.error ||
-    responseTime.error ||
-    scanActivity.error ||
-    devices.error ||
+    deviceMetrics.error ||
     history.error ||
-    alerts.error
+    alertsQuery.error
 
   const refetchAll = async () => {
     await Promise.all([
       summary.refetch(),
-      statistics.refetch(),
-      statusChart.refetch(),
-      typeChart.refetch(),
-      responseTime.refetch(),
-      scanActivity.refetch(),
-      devices.refetch(),
+      deviceMetrics.refetch(),
       history.refetch(),
-      alerts.refetch(),
+      alertsQuery.refetch(),
     ])
   }
 
   const dataUpdatedAt = Math.max(
     summary.dataUpdatedAt,
-    statistics.dataUpdatedAt,
-    devices.dataUpdatedAt,
-    alerts.dataUpdatedAt,
+    deviceMetrics.dataUpdatedAt,
+    history.dataUpdatedAt,
+    alertsQuery.dataUpdatedAt,
   )
+
+  const metrics = deviceMetrics.data ?? null
 
   return {
     summary: summary.data ?? null,
-    statistics: statistics.data ?? null,
-    statusChart: statusChart.data ?? [],
-    typeChart: typeChart.data ?? [],
-    responseTime: responseTime.data ?? [],
-    scanActivity: scanActivity.data ?? [],
-    devices: devices.data ?? [],
+    statistics: metrics
+      ? {
+          averageResponseTime: metrics.averageResponseTime,
+          onlinePercentage: summary.data?.onlinePercentage ?? 0,
+        }
+      : null,
+    deviceMetrics: metrics,
     history: history.data ?? [],
-    alerts: alerts.data ?? [],
+    alerts: alertsQuery.data?.data ?? [],
     isLoading,
     error: error instanceof Error ? error.message : error ? String(error) : null,
     refetchAll,

@@ -5,6 +5,7 @@ import type {
   ApiListResponse,
   AppSettings,
   ChartSlice,
+  DashboardDeviceMetrics,
   DashboardStatistics,
   DashboardSummary,
   Device,
@@ -263,6 +264,11 @@ export const discoverRange = (startIP: string, endIP: string) =>
 
 export const getDashboardSummary = () =>
   apiRequest<{ success: boolean; summary: DashboardSummary }>('/api/dashboard/summary')
+
+export const getDashboardDeviceMetrics = () =>
+  apiRequest<{ success: boolean; metrics: DashboardDeviceMetrics }>(
+    '/api/dashboard/device-metrics',
+  )
 
 export const getDashboardStatistics = () =>
   apiRequest<{ success: boolean; statistics: DashboardStatistics }>('/api/dashboard/statistics')

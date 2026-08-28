@@ -12,7 +12,7 @@ import {
 import { useEffect, useState, useRef, type FormEvent } from 'react'
 import { toast } from 'sonner'
 import { useAuth } from '@/shared/auth/AuthContext'
-import { useAlertsQuery, useHealthQuery } from '@/hooks/queries'
+import { useAlertsQuery, useHealthQuery, DASHBOARD_ACTIVE_ALERTS_LIMIT } from '@/hooks/queries'
 import { useTheme } from '@/lib/theme'
 import { formatRelative } from '@/utils/format'
 import { Avatar, AvatarFallback } from '@/shared/ui/avatar'
@@ -40,7 +40,7 @@ export function TopNavbar({ lastUpdated, monitoringOk }: TopNavbarProps) {
   const { user, logout } = useAuth()
   const { theme, toggleTheme } = useTheme()
   const health = useHealthQuery()
-  const alerts = useAlertsQuery('active', 1)
+  const alerts = useAlertsQuery('active', DASHBOARD_ACTIVE_ALERTS_LIMIT)
   const [query, setQuery] = useState('')
   const [refreshing, setRefreshing] = useState(false)
 

@@ -177,6 +177,12 @@ export interface DashboardStatistics {
   criticalOffline: number
 }
 
+export interface DashboardDeviceMetrics {
+  managedSwitches: number
+  monitoredSwitches: number
+  averageResponseTime: number | null
+}
+
 export interface DeviceStatusRow {
   _id: string
   hostname: string
