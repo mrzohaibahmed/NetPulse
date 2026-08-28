@@ -161,3 +161,4 @@ python -m unittest discover -s tests -p "test_*.py" -q
 - ICMP and aggressive Nmap often need elevation on Windows.
 - Prefer per-device SSH credentials over `SSH_DEFAULT_*`.
 - Build the frontend (`npm run build` in `frontend/`) to serve the UI from Flask.
+- **LAN access:** use Flask on port **5000** with `FLASK_RUN_HOST=0.0.0.0` (or `GUNICORN_BIND=0.0.0.0:5000`). Do not point LAN users at Vite `:5173`.

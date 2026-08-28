@@ -10,23 +10,34 @@ Enterprise NOC dashboard for NetPulse Network Monitor — device reachability, s
 - Framer Motion + Recharts
 - React Hook Form + Zod + Sonner
 
-## Develop
+## Develop (localhost only)
 
 ```bash
 npm install
 npm run dev
 ```
 
-Proxies `/api` and `/health` to `http://127.0.0.1:5000`.
+UI: `http://127.0.0.1:5173` — proxies `/api` and `/health` to `http://127.0.0.1:5000`.
 
-## Build
+**Do not use port 5173 for LAN access.** Other computers load hundreds of unbundled dev modules over the network and the UI feels slow.
+
+## Build (LAN / production)
 
 ```bash
 npm run build
-npm run preview
 ```
 
-Flask serves `dist/` automatically when you run the backend after a build.
+Output: `frontend/dist/` (`index.html` + `assets/*`). Flask serves this at the backend port (default **5000**). API calls use same-origin `/api/...` (no Vite proxy required).
+
+```bash
+cd ../backend
+# LAN: FLASK_RUN_HOST=0.0.0.0 python app.py
+python app.py
+```
+
+Access from other machines: `http://<HOST-LAN-IP>:5000`
+
+`npm run preview` is optional for checking the build locally without Flask.
 
 ## Pages
 

@@ -63,11 +63,9 @@ BASE_DIR = Path(__file__).resolve().parent
 FRONTEND_DIST = (BASE_DIR.parent / "frontend" / "dist").resolve()
 HAS_FRONTEND_DIST = FRONTEND_DIST.exists()
 
-app = Flask(
-    __name__,
-    static_folder=str(FRONTEND_DIST) if HAS_FRONTEND_DIST else None,
-    static_url_path="" if HAS_FRONTEND_DIST else None,
-)
+# Do not set static_url_path="" — that registers a catch-all static route and breaks
+# React Router deep links (/dashboard, etc.) with 404 before spa_fallback runs.
+app = Flask(__name__)
 
 # Bound request bodies (CSV import + JSON APIs). Override via MAX_CONTENT_LENGTH bytes.
 _max_content = int(os.getenv("MAX_CONTENT_LENGTH", str(2 * 1024 * 1024)))
@@ -106,24 +104,40 @@ app.register_blueprint(topology_bp, url_prefix="/api/topology")
 @app.route("/")
 def home():
     if HAS_FRONTEND_DIST:
-        return send_from_directory(app.static_folder, "index.html")
+        return send_from_directory(FRONTEND_DIST, "index.html")
     return jsonify({
         "message": "Network Monitor API is running",
         "status": "Connected",
     })
 
 
+@app.route("/assets/<path:filename>")
+def frontend_assets(filename: str):
+    """Production JS/CSS chunks from Vite build output."""
+    if not HAS_FRONTEND_DIST:
+        return jsonify({"success": False, "message": "Frontend build not found"}), 404
+    return send_from_directory(FRONTEND_DIST / "assets", filename)
+
+
+def _is_api_path(path: str) -> bool:
+    """True when the path belongs to the REST API (never SPA fallback)."""
+    return path == "api" or path.startswith("api/")
+
+
 @app.route("/<path:path>")
 def spa_fallback(path: str):
     """Serve frontend routes (React Router) when built assets exist."""
+    if _is_api_path(path):
+        return jsonify({"success": False, "message": "Not found"}), 404
+
     if not HAS_FRONTEND_DIST:
         return jsonify({"success": False, "message": "Frontend build not found"}), 404
 
     full_path = FRONTEND_DIST / path
     if full_path.exists() and full_path.is_file():
-        return send_from_directory(app.static_folder, path)
+        return send_from_directory(FRONTEND_DIST, path)
 
-    return send_from_directory(app.static_folder, "index.html")
+    return send_from_directory(FRONTEND_DIST, "index.html")
 
 
 @app.route("/health/live")

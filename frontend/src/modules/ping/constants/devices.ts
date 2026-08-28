@@ -29,7 +29,7 @@ export const DEFAULT_DEVICE_TYPE: DeviceTypeOption = 'Server'
 /** Display helper: low-confidence auto classifications show as Unknown Device. */
 export function displayDeviceType(
   deviceType: string | null | undefined,
-  confidence?: number | null,
+  _confidence?: number | null,
 ): string {
   return (deviceType || 'Unknown Device').trim() || 'Unknown Device'
 }

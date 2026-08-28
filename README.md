@@ -592,7 +592,47 @@ npm run dev
 
 UI: `http://127.0.0.1:5173` (proxies `/api` to Flask)
 
-### 3. Single-process UI (optional)
+### 3. LAN / production UI (recommended for other computers on the network)
+
+Use the **production React build** served by Flask. Do **not** point LAN users at the Vite dev server.
+
+| Port | Purpose |
+|------|---------|
+| **5173** | Frontend development only (`npm run dev`) |
+| **5000** | Flask API + production UI (`npm run build` then start backend) |
+
+```powershell
+cd frontend
+npm install
+npm run build
+
+cd ..\backend
+.\venv\Scripts\activate
+# LAN access: bind all interfaces (omit FLASK_RUN_HOST for localhost-only)
+$env:FLASK_RUN_HOST = "0.0.0.0"
+python app.py
+```
+
+Open from any computer on the LAN:
+
+```text
+http://<HOST-LAN-IP>:5000
+```
+
+Replace `<HOST-LAN-IP>` with the host machine's address (e.g. `192.168.1.50`). The API is same-origin at `/api/*` — clients never call `localhost:5000` from remote browsers.
+
+With Gunicorn instead of `python app.py`:
+
+```powershell
+$env:GUNICORN_BIND = "0.0.0.0:5000"
+gunicorn -c gunicorn.conf.py "app:app"
+```
+
+**Validate on a LAN client:** DevTools → Network should show a few `assets/*.js` / `assets/*.css` files, not hundreds of `/src/*.tsx` modules.
+
+### 4. Single-process UI on localhost (optional)
+
+Same build as above, but bind to localhost only (default):
 
 ```powershell
 cd frontend
@@ -603,7 +643,7 @@ python app.py
 
 Flask serves `frontend/dist` at `http://127.0.0.1:5000`.
 
-### 4. Tests
+### 5. Tests
 
 ```powershell
 cd backend

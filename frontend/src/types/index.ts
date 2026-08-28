@@ -622,6 +622,7 @@ export interface PaginationParams {
   severity?: string
   state?: string
   safetyStatus?: string
+  network?: string
 }
 
 export interface InterfaceNeighbor {
