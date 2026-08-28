@@ -82,6 +82,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "maximumRecoveryAttempts": int(os.getenv("STORM_RECOVERY_MAX_ATTEMPTS", "3")),
     "reMitigationThreshold": int(os.getenv("STORM_RE_MITIGATION_THRESHOLD", "60")),
     "requiredConfirmations": int(os.getenv("STORM_REQUIRED_CONFIRMATIONS", "4")),
+    "pingHistoryRetentionDays": int(os.getenv("PING_HISTORY_RETENTION_DAYS", "7")),
     "dataRetentionDays": int(os.getenv("DATA_RETENTION_DAYS", "90")),
     "incidentRetentionDays": int(os.getenv("INCIDENT_RETENTION_DAYS", "365")),
     "stormNotifications": {
@@ -266,6 +267,16 @@ def update_settings(payload: dict):
             raise ValueError("requiredConfirmations must be between 1 and 20")
         update["requiredConfirmations"] = val
 
+    if (
+        "pingHistoryRetentionDays" in payload
+        and payload["pingHistoryRetentionDays"] is not None
+    ):
+        from services.retention_service import clamp_ping_history_retention_days  # noqa: PLC0415
+
+        update["pingHistoryRetentionDays"] = clamp_ping_history_retention_days(
+            payload["pingHistoryRetentionDays"]
+        )
+
     if "dataRetentionDays" in payload and payload["dataRetentionDays"] is not None:
         from services.retention_service import clamp_retention_days  # noqa: PLC0415
 
@@ -308,11 +319,18 @@ def update_settings(payload: dict):
         except Exception:
             pass
 
-    if "dataRetentionDays" in update or "incidentRetentionDays" in update:
+    if (
+        "pingHistoryRetentionDays" in update
+        or "dataRetentionDays" in update
+        or "incidentRetentionDays" in update
+    ):
         try:
             from services.retention_service import ensure_retention_ttl_indexes  # noqa: PLC0415
 
             ensure_retention_ttl_indexes(
+                ping_history_retention_days=int(
+                    updated_doc.get("pingHistoryRetentionDays", 7)
+                ),
                 retention_days=int(updated_doc.get("dataRetentionDays", 90)),
                 incident_retention_days=int(
                     updated_doc.get("incidentRetentionDays", 365)

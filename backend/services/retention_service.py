@@ -2,8 +2,9 @@
 Data retention: MongoDB TTL indexes for high-volume history, plus a daily
 purge of closed storm incidents (native TTL must not delete active incidents).
 
-Two TTL windows:
-- dataRetentionDays (default 90): telemetry + storm evaluation history
+Three TTL windows:
+- pingHistoryRetentionDays (default 7): pingHistory only
+- dataRetentionDays (default 90): interface/storm evaluation telemetry
 - incidentRetentionDays (default 365): mitigation/recovery attempt logs AND
   RESOLVED storm_incidents purge (same window so incidents stay consistent
   with their action history)
@@ -22,6 +23,10 @@ from utils.monitor_logger import get_monitor_logger
 
 logger = get_monitor_logger("retention")
 
+DEFAULT_PING_HISTORY_RETENTION_DAYS = 7
+MIN_PING_HISTORY_RETENTION_DAYS = 7
+MAX_PING_HISTORY_RETENTION_DAYS = 3650
+
 DEFAULT_RETENTION_DAYS = 90
 MIN_RETENTION_DAYS = 7
 MAX_RETENTION_DAYS = 3650
@@ -30,11 +35,15 @@ DEFAULT_INCIDENT_RETENTION_DAYS = 365
 MIN_INCIDENT_RETENTION_DAYS = 30
 MAX_INCIDENT_RETENTION_DAYS = 3650
 
+# Ping history — shortest window (pingHistoryRetentionDays).
+PING_HISTORY_TTL_TARGETS: tuple[tuple[str, str, str], ...] = (
+    ("pingHistory", "timestamp", "idx_pingHistory_timestamp_ttl"),
+)
+
 # Telemetry / evaluation history — shorter window (dataRetentionDays).
 # Do NOT include storm_incidents, lock collections, or mitigation/recovery audits.
 DATA_TTL_TARGETS: tuple[tuple[str, str, str], ...] = (
     # collection, date_field, index_name
-    ("pingHistory", "timestamp", "idx_pingHistory_timestamp_ttl"),
     ("interface_stats", "timestamp", "idx_interface_stats_timestamp_ttl"),
     ("eligibility_results", "timestamp", "idx_eligibility_timestamp_ttl"),
     ("storm_risk_history", "timestamp", "idx_storm_risk_timestamp_ttl"),
@@ -54,6 +63,19 @@ TTL_TARGETS = DATA_TTL_TARGETS
 # Only terminal incidents are age-purged by the daily job.
 # Filter is temporary: RESOLVED only — MITIGATION_FAILED terminal-status decision pending.
 CLOSED_INCIDENT_STATUSES: tuple[str, ...] = ("RESOLVED",)
+
+
+def clamp_ping_history_retention_days(value: Any) -> int:
+    days = int(value)
+    if days < MIN_PING_HISTORY_RETENTION_DAYS:
+        raise ValueError(
+            f"pingHistoryRetentionDays must be at least {MIN_PING_HISTORY_RETENTION_DAYS}"
+        )
+    if days > MAX_PING_HISTORY_RETENTION_DAYS:
+        raise ValueError(
+            f"pingHistoryRetentionDays must be at most {MAX_PING_HISTORY_RETENTION_DAYS}"
+        )
+    return days
 
 
 def clamp_retention_days(value: Any) -> int:
@@ -76,6 +98,19 @@ def clamp_incident_retention_days(value: Any) -> int:
             f"incidentRetentionDays must be at most {MAX_INCIDENT_RETENTION_DAYS}"
         )
     return days
+
+
+def get_ping_history_retention_days(settings: dict | None = None) -> int:
+    if settings is None:
+        from services.settings_service import get_settings  # noqa: PLC0415
+
+        settings = get_settings() or {}
+    try:
+        return clamp_ping_history_retention_days(
+            settings.get("pingHistoryRetentionDays", DEFAULT_PING_HISTORY_RETENTION_DAYS)
+        )
+    except (TypeError, ValueError):
+        return DEFAULT_PING_HISTORY_RETENTION_DAYS
 
 
 def get_retention_days(settings: dict | None = None) -> int:
@@ -180,13 +215,19 @@ def _ensure_ttl_group(
 def ensure_retention_ttl_indexes(
     retention_days: int | None = None,
     incident_retention_days: int | None = None,
+    ping_history_retention_days: int | None = None,
 ) -> dict[str, Any]:
     """
-    Ensure TTL indexes for both retention windows.
+    Ensure TTL indexes for all retention windows.
 
     If an existing TTL index has a different expireAfterSeconds, it is dropped
     and recreated (MongoDB does not allow in-place TTL value changes on all versions).
     """
+    ping_history_days = (
+        clamp_ping_history_retention_days(ping_history_retention_days)
+        if ping_history_retention_days is not None
+        else get_ping_history_retention_days()
+    )
     data_days = (
         clamp_retention_days(retention_days)
         if retention_days is not None
@@ -199,10 +240,12 @@ def ensure_retention_ttl_indexes(
     )
 
     results: dict[str, Any] = {
+        "pingHistoryRetentionDays": ping_history_days,
         "dataRetentionDays": data_days,
         "incidentRetentionDays": incident_days,
         "indexes": {},
     }
+    _ensure_ttl_group(PING_HISTORY_TTL_TARGETS, ping_history_days, results)
     _ensure_ttl_group(DATA_TTL_TARGETS, data_days, results)
     _ensure_ttl_group(INCIDENT_TTL_TARGETS, incident_days, results)
     return results
