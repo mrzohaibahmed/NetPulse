@@ -324,9 +324,9 @@ else:
 
 if __name__ == "__main__":
     DEBUG = os.getenv("FLASK_DEBUG", "false").lower() in ("1", "true", "yes")
-    # Prefer localhost bind; override with FLASK_RUN_HOST when intentionally LAN-exposed
-    # behind a reverse proxy is NOT used (not recommended for production).
-    default_host = "127.0.0.1"
+    # Default: all interfaces for LAN access (localhost still works on the host).
+    # Override with FLASK_RUN_HOST=127.0.0.1 for localhost-only binding.
+    default_host = "0.0.0.0"
     run_host = (os.getenv("FLASK_RUN_HOST") or default_host).strip() or default_host
     if DEBUG:
         run_host = "127.0.0.1"
@@ -338,7 +338,7 @@ if __name__ == "__main__":
     elif run_host in ("0.0.0.0", "::"):
         print(
             "WARNING: Binding to all interfaces without a reverse proxy exposes "
-            "HTTP plaintext. Prefer FLASK_RUN_HOST=127.0.0.1 behind HTTPS.",
+            "HTTP plaintext. Use FLASK_RUN_HOST=127.0.0.1 behind HTTPS if needed.",
             flush=True,
         )
     app.run(

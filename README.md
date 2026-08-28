@@ -608,8 +608,6 @@ npm run build
 
 cd ..\backend
 .\venv\Scripts\activate
-# LAN access: bind all interfaces (omit FLASK_RUN_HOST for localhost-only)
-$env:FLASK_RUN_HOST = "0.0.0.0"
 python app.py
 ```
 
@@ -619,7 +617,7 @@ Open from any computer on the LAN:
 http://<HOST-LAN-IP>:5000
 ```
 
-Replace `<HOST-LAN-IP>` with the host machine's address (e.g. `192.168.1.50`). The API is same-origin at `/api/*` — clients never call `localhost:5000` from remote browsers.
+`python app.py` binds to `0.0.0.0:5000` by default (localhost still works on the host). Set `FLASK_RUN_HOST=127.0.0.1` in `backend/.env` for localhost-only.
 
 With Gunicorn instead of `python app.py`:
 

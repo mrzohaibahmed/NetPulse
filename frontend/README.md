@@ -31,11 +31,10 @@ Output: `frontend/dist/` (`index.html` + `assets/*`). Flask serves this at the b
 
 ```bash
 cd ../backend
-# LAN: FLASK_RUN_HOST=0.0.0.0 python app.py
 python app.py
 ```
 
-Access from other machines: `http://<HOST-LAN-IP>:5000`
+Access from other machines: `http://<HOST-LAN-IP>:5000` (Flask binds `0.0.0.0:5000` by default).
 
 `npm run preview` is optional for checking the build locally without Flask.
 
