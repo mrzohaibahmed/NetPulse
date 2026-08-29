@@ -69,7 +69,38 @@ export function buildSwitchGraph(
   return layoutSwitchGraph(nodes, flowEdges)
 }
 
+function layoutSwitchGrid(nodes: Node[]) {
+  const cols = Math.max(1, Math.ceil(Math.sqrt(nodes.length)))
+  const gapX = 220
+  const gapY = 120
+  const padding = 96
+
+  const layoutedNodes = nodes.map((node, index) => ({
+    ...node,
+    position: {
+      x: padding + (index % cols) * gapX,
+      y: padding + Math.floor(index / cols) * gapY,
+    },
+    targetPosition: Position.Top,
+    sourcePosition: Position.Bottom,
+  }))
+
+  const rows = Math.ceil(nodes.length / cols)
+  return {
+    nodes: layoutedNodes,
+    bounds: {
+      width: Math.max(cols * gapX + padding * 2, 960),
+      height: Math.max(rows * gapY + padding * 2, 420),
+    },
+  }
+}
+
 function layoutSwitchGraph(nodes: Node[], edges: Edge[]) {
+  if (edges.length === 0) {
+    const grid = layoutSwitchGrid(nodes)
+    return { nodes: grid.nodes, edges, bounds: grid.bounds }
+  }
+
   const graph = new dagre.graphlib.Graph()
   graph.setDefaultEdgeLabel(() => ({}))
   graph.setGraph({ rankdir: 'TB', nodesep: 80, ranksep: 100, marginx: 48, marginy: 48 })
@@ -91,8 +122,8 @@ function layoutSwitchGraph(nodes: Node[], edges: Edge[]) {
 
   const layoutedNodes = nodes.map((node) => {
     const pos = graph.node(node.id)
-    const x = pos.x - SWITCH_NODE_WIDTH / 2
-    const y = pos.y - SWITCH_NODE_HEIGHT / 2
+    const x = (pos?.x ?? 0) - SWITCH_NODE_WIDTH / 2
+    const y = (pos?.y ?? 0) - SWITCH_NODE_HEIGHT / 2
     minX = Math.min(minX, x)
     minY = Math.min(minY, y)
     maxX = Math.max(maxX, x + SWITCH_NODE_WIDTH)

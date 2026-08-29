@@ -35,15 +35,12 @@ export function SwitchesPage() {
     })
   }, [switches, search])
 
-  const isLoading = switchesQuery.isLoading || topologyQuery.isLoading
-  const isError = switchesQuery.isError || topologyQuery.isError
-
   const retry = () => {
     void switchesQuery.refetch()
     void topologyQuery.refetch()
   }
 
-  if (isLoading && switches.length === 0) {
+  if (switchesQuery.isLoading && switches.length === 0) {
     return (
       <div className="np-page">
         <PageHeader
@@ -55,7 +52,7 @@ export function SwitchesPage() {
     )
   }
 
-  if (isError) {
+  if (switchesQuery.isError) {
     return (
       <div className="np-page">
         <PageHeader
@@ -101,11 +98,11 @@ export function SwitchesPage() {
               No switches found.
             </div>
           ) : (
-            <div className="relative min-h-[480px]">
-              {isLoading ? (
-                <div className="absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-background/60 backdrop-blur-[1px]">
-                  <LoadingState label="Loading switches..." />
-                </div>
+            <div className="space-y-3">
+              {topologyQuery.isError ? (
+                <p className="text-sm text-muted-foreground">
+                  Switch links could not be loaded. Showing switches without connections.
+                </p>
               ) : null}
               <SwitchTopology switches={filteredSwitches} edges={topologyEdges} />
             </div>
