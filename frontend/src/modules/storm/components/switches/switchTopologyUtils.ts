@@ -6,6 +6,42 @@ import type { SwitchNodeData } from './SwitchNode'
 
 export const SWITCH_NODE_WIDTH = 180
 export const SWITCH_NODE_HEIGHT = 72
+export const SWITCHES_LAYOUT_VIEW_KEY = 'switches'
+
+export function layoutPositionsFromSaved(
+  layout: { nodes?: Array<{ id: string; position: { x: number; y: number } }> } | null | undefined,
+): Record<string, { x: number; y: number }> {
+  const map: Record<string, { x: number; y: number }> = {}
+  for (const node of layout?.nodes ?? []) {
+    if (!node?.id || !node.position) continue
+    map[node.id] = { x: node.position.x, y: node.position.y }
+  }
+  return map
+}
+
+export function computeBoundsFromNodes(nodes: Node[]) {
+  if (nodes.length === 0) {
+    return { width: 960, height: 420 }
+  }
+
+  let minX = Infinity
+  let minY = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+
+  for (const node of nodes) {
+    minX = Math.min(minX, node.position.x)
+    minY = Math.min(minY, node.position.y)
+    maxX = Math.max(maxX, node.position.x + SWITCH_NODE_WIDTH)
+    maxY = Math.max(maxY, node.position.y + SWITCH_NODE_HEIGHT)
+  }
+
+  const padding = 96
+  return {
+    width: Math.max(maxX - minX + padding * 2, 960),
+    height: Math.max(maxY - minY + padding * 2, 420),
+  }
+}
 
 export function dedupeSwitchEdges(edges: TopologyEdge[], switchIds: Set<string>): TopologyEdge[] {
   const seen = new Set<string>()
@@ -27,6 +63,7 @@ export function dedupeSwitchEdges(edges: TopologyEdge[], switchIds: Set<string>)
 export function buildSwitchGraph(
   switches: TopologyNode[],
   edges: TopologyEdge[],
+  positionOverrides?: Record<string, { x: number; y: number }>,
 ): { nodes: Node[]; edges: Edge[]; bounds: { width: number; height: number } } {
   if (switches.length === 0) {
     return {
@@ -42,7 +79,8 @@ export function buildSwitchGraph(
   const nodes: Node[] = switches.map((sw) => ({
     id: sw.id,
     type: 'switchNode',
-    position: { x: 0, y: 0 },
+    position: positionOverrides?.[sw.id] ?? { x: 0, y: 0 },
+    draggable: true,
     data: {
       hostname: sw.hostname || sw.label || 'Unknown',
       ip: sw.ip || sw.managementAddress || '',
@@ -66,7 +104,19 @@ export function buildSwitchGraph(
     },
   }))
 
-  return layoutSwitchGraph(nodes, flowEdges)
+  const needsLayout = nodes.some((node) => !positionOverrides?.[node.id])
+  const laidOut = layoutSwitchGraph(nodes, flowEdges)
+  const finalNodes = laidOut.nodes.map((node) => ({
+    ...node,
+    position: positionOverrides?.[node.id] ?? node.position,
+    draggable: true,
+  }))
+
+  return {
+    nodes: finalNodes,
+    edges: laidOut.edges,
+    bounds: needsLayout ? laidOut.bounds : computeBoundsFromNodes(finalNodes),
+  }
 }
 
 function layoutSwitchGrid(nodes: Node[]) {
