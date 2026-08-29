@@ -41,6 +41,7 @@ const schema = z.object({
   username: z.string().trim(),
   // SSH password is required for new devices; on edits it is optional.
   password: z.string(),
+  enableSecret: z.string(),
   critical: z.boolean(),
   monitor: z.boolean(),
   pingInterval: z.number().min(5).nullable().optional(),
@@ -59,6 +60,7 @@ interface DeviceFormDialogProps {
 export function DeviceFormDialog({ open, onOpenChange, device }: DeviceFormDialogProps) {
   const { create, update } = useDeviceMutations()
   const [showPassword, setShowPassword] = useState(false)
+  const [showEnableSecret, setShowEnableSecret] = useState(false)
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
     defaultValues: {
@@ -68,6 +70,7 @@ export function DeviceFormDialog({ open, onOpenChange, device }: DeviceFormDialo
       vendor: '',
       username: '',
       password: '',
+      enableSecret: '',
       critical: false,
       monitor: true,
       pingInterval: null,
@@ -86,6 +89,7 @@ export function DeviceFormDialog({ open, onOpenChange, device }: DeviceFormDialo
         vendor: device.credentials?.sshVendor ?? '',
         username: device.credentials?.sshUsername ?? '',
         password: '',
+        enableSecret: '',
         critical: device.critical,
         monitor: device.monitor,
         pingInterval: device.pingInterval ?? null,
@@ -100,6 +104,7 @@ export function DeviceFormDialog({ open, onOpenChange, device }: DeviceFormDialo
         vendor: '',
         username: '',
         password: '',
+        enableSecret: '',
         critical: false,
         monitor: true,
         pingInterval: null,
@@ -108,11 +113,13 @@ export function DeviceFormDialog({ open, onOpenChange, device }: DeviceFormDialo
       })
     }
     setShowPassword(false)
+    setShowEnableSecret(false)
     form.clearErrors()
   }, [device, open, form])
 
   const onSubmit = form.handleSubmit(async (values) => {
     const nextPassword = values.password.trim()
+    const nextEnableSecret = values.enableSecret.trim()
     const nextUsername = values.username.trim()
 
     if (!device && !nextUsername) {
@@ -128,6 +135,7 @@ export function DeviceFormDialog({ open, onOpenChange, device }: DeviceFormDialo
       sshUsername: values.username.trim(),
       sshVendor: values.vendor.trim(),
       ...(nextPassword ? { sshPassword: nextPassword } : {}),
+      ...(nextEnableSecret ? { sshSecret: nextEnableSecret } : {}),
     }
 
     const payload: DevicePayload = {
@@ -283,6 +291,37 @@ export function DeviceFormDialog({ open, onOpenChange, device }: DeviceFormDialo
               {form.formState.errors.password ? (
                 <p className="text-xs text-danger">{form.formState.errors.password.message}</p>
               ) : null}
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between gap-4">
+                <Label htmlFor="ssh-enable-secret">Enable Password</Label>
+                {device?.credentials?.sshSecretConfigured ? (
+                  <p className="text-xs text-muted-foreground">Enable Password Configured</p>
+                ) : null}
+              </div>
+              <div className="relative">
+                <Input
+                  id="ssh-enable-secret"
+                  type={showEnableSecret ? 'text' : 'password'}
+                  autoComplete="new-password"
+                  {...form.register('enableSecret')}
+                  placeholder={
+                    device ? 'Leave blank to keep current enable password' : 'Optional enable password'
+                  }
+                  className="pr-10"
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="absolute right-0 top-1/2 -translate-y-1/2"
+                  aria-label={showEnableSecret ? 'Hide enable password' : 'Show enable password'}
+                  onClick={() => setShowEnableSecret((s) => !s)}
+                >
+                  {showEnableSecret ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </Button>
+              </div>
             </div>
           </fieldset>
 

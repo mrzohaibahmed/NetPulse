@@ -5,9 +5,12 @@ from unittest.mock import MagicMock, patch
 
 from bson import ObjectId
 
-from app import app
+from services.interface_collection.ssh_collector import SSHInterfaceCollector
+from tests.app_bootstrap import load_test_app
 from services.storm.mitigation.strategy import ShutdownInterfaceStrategy
 from utils.auth import create_access_token
+
+app = load_test_app()
 
 
 class ManualInterfaceControlRouteTests(unittest.TestCase):
@@ -116,7 +119,7 @@ class ManualInterfaceControlRouteTests(unittest.TestCase):
         fake_db.devices.find_one.return_value = self.device_doc
         mock_db_fn.return_value = fake_db
 
-        mock_collector = MagicMock()
+        mock_collector = MagicMock(spec=SSHInterfaceCollector)
         mock_ssh.return_value = mock_collector
         mock_collector.run_command.side_effect = lambda cmd, wait=0.4: (
             f"interface {self.interface}\n shutdown\n" if "show" in cmd else "OK"
@@ -176,7 +179,7 @@ class ManualInterfaceControlRouteTests(unittest.TestCase):
         fake_db.devices.find_one.return_value = self.device_doc
         mock_db_fn.return_value = fake_db
 
-        mock_collector = MagicMock()
+        mock_collector = MagicMock(spec=SSHInterfaceCollector)
         mock_ssh.return_value = mock_collector
         mock_collector.connect.side_effect = RuntimeError("SSH Timeout")
 

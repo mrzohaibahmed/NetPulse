@@ -3,21 +3,16 @@ import { MarkerType, Position } from '@xyflow/react'
 import type { Edge, Node } from '@xyflow/react'
 import type { TopologyEdge, TopologyNode } from '@/api/topologyService'
 import type { SwitchNodeData } from './SwitchNode'
+import {
+  layoutPositionsFromSaved,
+  mergeLayoutPositions,
+  hasSavedLayout,
+} from '@/modules/storm/utils/topologyLayout'
 
+export { layoutPositionsFromSaved, mergeLayoutPositions, hasSavedLayout }
 export const SWITCH_NODE_WIDTH = 180
 export const SWITCH_NODE_HEIGHT = 72
 export const SWITCHES_LAYOUT_VIEW_KEY = 'switches'
-
-export function layoutPositionsFromSaved(
-  layout: { nodes?: Array<{ id: string; position: { x: number; y: number } }> } | null | undefined,
-): Record<string, { x: number; y: number }> {
-  const map: Record<string, { x: number; y: number }> = {}
-  for (const node of layout?.nodes ?? []) {
-    if (!node?.id || !node.position) continue
-    map[node.id] = { x: node.position.x, y: node.position.y }
-  }
-  return map
-}
 
 export function computeBoundsFromNodes(nodes: Node[]) {
   if (nodes.length === 0) {
@@ -105,6 +100,20 @@ export function buildSwitchGraph(
   }))
 
   const needsLayout = nodes.some((node) => !positionOverrides?.[node.id])
+
+  if (!needsLayout) {
+    const positionedNodes = nodes.map((node) => ({
+      ...node,
+      targetPosition: Position.Top,
+      sourcePosition: Position.Bottom,
+    }))
+    return {
+      nodes: positionedNodes,
+      edges: flowEdges,
+      bounds: computeBoundsFromNodes(positionedNodes),
+    }
+  }
+
   const laidOut = layoutSwitchGraph(nodes, flowEdges)
   const finalNodes = laidOut.nodes.map((node) => ({
     ...node,
@@ -115,7 +124,7 @@ export function buildSwitchGraph(
   return {
     nodes: finalNodes,
     edges: laidOut.edges,
-    bounds: needsLayout ? laidOut.bounds : computeBoundsFromNodes(finalNodes),
+    bounds: laidOut.bounds,
   }
 }
 

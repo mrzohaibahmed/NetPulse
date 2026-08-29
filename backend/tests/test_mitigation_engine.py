@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 
 from bson import ObjectId
 
+from services.interface_collection.ssh_collector import SSHInterfaceCollector
 from services.storm.mitigation.engine import execute_mitigation, rollback_mitigation
 from services.storm.mitigation.ssh_executor import (
     assert_safe_mitigation_command,
@@ -104,7 +105,7 @@ class MitigationEngineTests(unittest.TestCase):
             return_value=("device:lock", "interface:lock"),
         ):
             # Mock SSH commands output
-            mock_collector = MagicMock()
+            mock_collector = MagicMock(spec=SSHInterfaceCollector)
             mock_ssh.return_value = mock_collector
             # Mock verification command output (show running-config interface)
             mock_collector.run_command.side_effect = lambda cmd, wait=0.4: (
@@ -139,7 +140,7 @@ class MitigationEngineTests(unittest.TestCase):
             return_value=("device:lock", "interface:lock"),
         ):
             # Mock SSH commands output
-            mock_collector = MagicMock()
+            mock_collector = MagicMock(spec=SSHInterfaceCollector)
             mock_ssh.return_value = mock_collector
             # Verification output fails (returns running-config without 'shutdown')
             mock_collector.run_command.side_effect = lambda cmd, wait=0.4: (
@@ -194,7 +195,7 @@ class MitigationEngineTests(unittest.TestCase):
         mock_db_fn.return_value = fake_db
 
         # Collector connect raises error
-        mock_collector = MagicMock()
+        mock_collector = MagicMock(spec=SSHInterfaceCollector)
         mock_ssh.return_value = mock_collector
         mock_collector.connect.side_effect = RuntimeError("SSH Timeout")
 
@@ -224,7 +225,7 @@ class MitigationEngineTests(unittest.TestCase):
         mock_db_fn.return_value = fake_db
 
         # Execute fails
-        mock_collector = MagicMock()
+        mock_collector = MagicMock(spec=SSHInterfaceCollector)
         mock_ssh.return_value = mock_collector
         mock_collector.run_command.side_effect = RuntimeError("Interrupted")
 
@@ -254,7 +255,7 @@ class MitigationEngineTests(unittest.TestCase):
         fake_db.devices.find_one.return_value = self.device_doc
         mock_db_fn.return_value = fake_db
 
-        mock_collector = MagicMock()
+        mock_collector = MagicMock(spec=SSHInterfaceCollector)
         mock_ssh.return_value = mock_collector
 
         # Simulate history lookup returns applied strategy SHUTDOWN

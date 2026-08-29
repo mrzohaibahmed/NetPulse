@@ -32,6 +32,11 @@ import { Button } from '@/shared/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip'
 import { cn } from '@/lib/utils'
 import type { TopologyEdge as ApiTopologyEdge, TopologyNodeDetails } from '@/api/topologyService'
+import {
+  layoutPositionsFromSaved,
+  mergeLayoutPositions,
+  hasSavedLayout,
+} from '@/modules/storm/utils/topologyLayout'
 import { toast } from 'sonner'
 
 type NodeHandleSpec = {
@@ -73,17 +78,6 @@ const TRUNK_EDGE_COLOR = '#f59e0b'
 const STALE_EDGE_COLOR = '#94a3b8'
 
 type LayoutSaveStatus = 'idle' | 'saved' | 'unsaved' | 'saving' | 'error'
-
-function layoutPositionsFromSaved(
-  layout: { nodes?: Array<{ id: string; position: { x: number; y: number } }> } | null | undefined,
-): Record<string, { x: number; y: number }> {
-  const map: Record<string, { x: number; y: number }> = {}
-  for (const node of layout?.nodes ?? []) {
-    if (!node?.id || !node.position) continue
-    map[node.id] = { x: node.position.x, y: node.position.y }
-  }
-  return map
-}
 
 function isSwitchType(type: string) {
   return type.toLowerCase().includes('switch')
@@ -496,7 +490,9 @@ export function TopologyPage() {
   }, [])
 
   const viewKey = selectedSwitchId ?? 'full'
-  const shouldFitViewRef = useRef(true)
+  const initialViewportAppliedRef = useRef(false)
+  const layoutInitializedRef = useRef(false)
+  const prevStructureKeyRef = useRef('')
   const prevViewKeyRef = useRef(viewKey)
   /** Live session positions per view — survives discovery polling without auto-persisting. */
   const sessionPositionsRef = useRef<Record<string, Record<string, { x: number; y: number }>>>({})
@@ -519,11 +515,21 @@ export function TopologyPage() {
     () => layoutPositionsFromSaved(layoutQuery.data),
     [layoutQuery.data],
   )
+  const savedLayoutExists = hasSavedLayout(savedPositions)
+
+  const topologyStructureKey = useMemo(() => {
+    if (!activeData?.nodes) return ''
+    const nodeIds = activeData.nodes.map((node) => node.id).sort().join('|')
+    const edgeIds = activeData.edges.map((edge) => edge.id).sort().join('|')
+    return `${nodeIds}::${edgeIds}`
+  }, [activeData])
 
   useEffect(() => {
     if (prevViewKeyRef.current !== viewKey) {
       prevViewKeyRef.current = viewKey
-      shouldFitViewRef.current = true
+      prevStructureKeyRef.current = ''
+      layoutInitializedRef.current = false
+      initialViewportAppliedRef.current = false
       setSaveStatus(layoutQuery.data ? 'saved' : 'idle')
     }
   }, [viewKey, layoutQuery.data])
@@ -538,6 +544,14 @@ export function TopologyPage() {
   }, [layoutQuery.data, layoutQuery.isLoading, viewKey])
 
   useEffect(() => {
+    if (layoutQuery.isLoading || layoutInitializedRef.current) return
+    layoutInitializedRef.current = true
+    if (savedLayoutExists) {
+      sessionPositionsRef.current[viewKey] = { ...savedPositions }
+    }
+  }, [layoutQuery.isLoading, savedLayoutExists, savedPositions, viewKey])
+
+  useEffect(() => {
     if (!activeData?.nodes || !activeData?.edges) {
       setNodes([])
       setEdges([])
@@ -549,14 +563,45 @@ export function TopologyPage() {
       return
     }
 
+    const structureChanged = prevStructureKeyRef.current !== topologyStructureKey
+    prevStructureKeyRef.current = topologyStructureKey
+
     // Show all edges in both Level 1 and Level 2
     const visibleEdges = activeData.edges
 
     const { edgeHandles, nodeHandles } = computeHandleAssignments(visibleEdges)
     const sessionPositions = sessionPositionsRef.current[viewKey] ?? {}
-    const positionMap: Record<string, { x: number; y: number }> = {
-      ...savedPositions,
-      ...sessionPositions,
+    const positionMap = mergeLayoutPositions(
+      savedPositions,
+      sessionPositions,
+      saveStatus === 'unsaved',
+    )
+
+    if (!structureChanged && nodes.length > 0) {
+      setNodes((current) =>
+        current.map((node) => {
+          const source = activeData.nodes.find((item) => item.id === node.id)
+          if (!source) return node
+          const nodeData = node.data as TopologyNodeData
+          return {
+            ...node,
+            data: {
+              ...nodeData,
+              hostname: source.hostname,
+              label: source.label,
+              ip: source.ip,
+              mac: source.mac,
+              type: source.type,
+              status: source.status,
+              isKnownDevice: source.isKnownDevice,
+              isCentral: selectedSwitchId != null && source.id === selectedSwitchId,
+              details: source.details,
+              handles: nodeHandles.get(source.id) ?? nodeData.handles,
+            } satisfies TopologyNodeData,
+          }
+        }),
+      )
+      return
     }
 
     const flowNodes: Node[] = activeData.nodes.map((n) => ({
@@ -659,23 +704,31 @@ export function TopologyPage() {
 
     setNodes(nextNodes)
     setEdges(flowEdges)
+    initialViewportAppliedRef.current = false
   }, [
     activeData,
     selectedSwitchId,
     viewKey,
+    topologyStructureKey,
     savedPositions,
     layoutQuery.isLoading,
+    saveStatus,
+    nodes.length,
     setNodes,
     setEdges,
   ])
 
   useEffect(() => {
-    if (!rfInstance || nodes.length === 0 || !shouldFitViewRef.current) return
+    if (!rfInstance || nodes.length === 0 || initialViewportAppliedRef.current) return
+    if (savedLayoutExists) {
+      initialViewportAppliedRef.current = true
+      return
+    }
     requestAnimationFrame(() => {
       rfInstance.fitView({ padding: 0.18, duration: 250 })
-      shouldFitViewRef.current = false
+      initialViewportAppliedRef.current = true
     })
-  }, [rfInstance, nodes, viewKey])
+  }, [rfInstance, nodes.length, viewKey, savedLayoutExists])
 
   const captureSessionPositions = useCallback(
     (nextNodes: Node[]) => {

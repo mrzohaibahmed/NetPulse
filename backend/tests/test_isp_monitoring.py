@@ -9,11 +9,12 @@ from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
 from bson import ObjectId
-
-from app import app
 from models.isp_connection import STATUS_OFFLINE, STATUS_ONLINE
+from tests.app_bootstrap import load_test_app
 from utils.auth import create_access_token
 from utils.utc import utc_now
+
+app = load_test_app()
 
 
 class IspServiceTests(unittest.TestCase):

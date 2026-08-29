@@ -8,56 +8,10 @@ from unittest.mock import patch
 from bson import ObjectId
 from pymongo.errors import DuplicateKeyError
 
+from tests.app_bootstrap import load_test_app
 from utils.auth import create_access_token, hash_password
 
-
-class _BootstrapCollection:
-    def create_index(self, *args, **kwargs):
-        return "idx"
-
-    def update_many(self, *args, **kwargs):
-        return SimpleNamespace(modified_count=0)
-
-    def estimated_document_count(self):
-        return 0
-
-    def find(self, *args, **kwargs):
-        return []
-
-    def find_one(self, *args, **kwargs):
-        return None
-
-    def count_documents(self, *args, **kwargs):
-        return 0
-
-    def insert_many(self, *args, **kwargs):
-        return SimpleNamespace(inserted_ids=[])
-
-    def insert_one(self, *args, **kwargs):
-        return SimpleNamespace(inserted_id=ObjectId())
-
-    def drop_index(self, *args, **kwargs):
-        return None
-
-
-class _BootstrapDb:
-    def __getattr__(self, name):
-        return _BootstrapCollection()
-
-    def __getitem__(self, name):
-        return _BootstrapCollection()
-
-
-class _BootstrapMongoClient:
-    def __init__(self, *args, **kwargs):
-        self.admin = SimpleNamespace(command=lambda *a, **k: {"ok": 1})
-
-    def __getitem__(self, name):
-        return _BootstrapDb()
-
-
-with patch("pymongo.MongoClient", _BootstrapMongoClient):
-    from app import app
+app = load_test_app()
 
 
 class _Cursor:

@@ -51,6 +51,7 @@ export function useTopologyLayout(viewKey: string) {
       const res = await getTopologyLayout(viewKey)
       return res.layout
     },
+    staleTime: Infinity,
   })
 }
 

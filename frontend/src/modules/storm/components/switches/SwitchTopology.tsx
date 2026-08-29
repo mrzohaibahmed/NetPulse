@@ -18,7 +18,10 @@ import { cn } from '@/lib/utils'
 import { SwitchNode } from './SwitchNode'
 import {
   buildSwitchGraph,
+  dedupeSwitchEdges,
   layoutPositionsFromSaved,
+  mergeLayoutPositions,
+  hasSavedLayout,
   SWITCHES_LAYOUT_VIEW_KEY,
 } from './switchTopologyUtils'
 
@@ -31,6 +34,15 @@ interface SwitchTopologyProps {
   edges: TopologyEdge[]
 }
 
+function buildStructureKey(switches: TopologyNode[], edges: TopologyEdge[]) {
+  const switchIds = new Set(switches.map((sw) => sw.id))
+  const edgePairs = dedupeSwitchEdges(edges, switchIds)
+    .map((edge) => [edge.source, edge.target].sort().join(':'))
+    .sort()
+    .join('|')
+  return `${[...switchIds].sort().join('|')}::${edgePairs}`
+}
+
 export function SwitchTopology({ switches, edges }: SwitchTopologyProps) {
   const layoutQuery = useTopologyLayout(SWITCHES_LAYOUT_VIEW_KEY)
   const saveLayoutMutation = useSaveTopologyLayoutMutation()
@@ -41,13 +53,18 @@ export function SwitchTopology({ switches, edges }: SwitchTopologyProps) {
   const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null)
   const [saveStatus, setSaveStatus] = useState<LayoutSaveStatus>('idle')
 
-  const shouldFitViewRef = useRef(true)
   const sessionPositionsRef = useRef<Record<string, { x: number; y: number }>>({})
+  const layoutInitializedRef = useRef(false)
+  const initialViewportAppliedRef = useRef(false)
+  const prevStructureKeyRef = useRef('')
 
   const savedPositions = useMemo(
     () => layoutPositionsFromSaved(layoutQuery.data),
     [layoutQuery.data],
   )
+
+  const structureKey = useMemo(() => buildStructureKey(switches, edges), [switches, edges])
+  const savedLayoutExists = hasSavedLayout(savedPositions)
 
   useEffect(() => {
     if (layoutQuery.isLoading) return
@@ -59,17 +76,50 @@ export function SwitchTopology({ switches, edges }: SwitchTopologyProps) {
   }, [layoutQuery.data, layoutQuery.isLoading])
 
   useEffect(() => {
+    if (layoutQuery.isLoading || layoutInitializedRef.current) return
+    layoutInitializedRef.current = true
+    if (savedLayoutExists) {
+      sessionPositionsRef.current = { ...savedPositions }
+    }
+  }, [layoutQuery.isLoading, savedLayoutExists, savedPositions])
+
+  useEffect(() => {
     if (switches.length === 0) {
       setNodes([])
       setFlowEdges([])
+      prevStructureKeyRef.current = ''
       return
     }
 
     if (layoutQuery.isLoading) return
 
-    const positionMap = {
-      ...savedPositions,
-      ...sessionPositionsRef.current,
+    const structureChanged = prevStructureKeyRef.current !== structureKey
+    prevStructureKeyRef.current = structureKey
+
+    const positionMap = mergeLayoutPositions(
+      savedPositions,
+      sessionPositionsRef.current,
+      saveStatus === 'unsaved',
+    )
+
+    if (!structureChanged && nodes.length > 0) {
+      setNodes((current) =>
+        current.map((node) => {
+          const sw = switches.find((item) => item.id === node.id)
+          if (!sw) return node
+          const status = sw.status || sw.details?.status || 'Unknown'
+          return {
+            ...node,
+            data: {
+              ...node.data,
+              hostname: sw.hostname || sw.label || 'Unknown',
+              ip: sw.ip || sw.managementAddress || '',
+              status,
+            },
+          }
+        }),
+      )
+      return
     }
 
     const graph = buildSwitchGraph(switches, edges, positionMap)
@@ -81,17 +131,32 @@ export function SwitchTopology({ switches, edges }: SwitchTopologyProps) {
     setNodes(graph.nodes)
     setFlowEdges(graph.edges)
     setCanvasSize(graph.bounds)
-    shouldFitViewRef.current = true
-  }, [switches, edges, savedPositions, layoutQuery.isLoading, setNodes, setFlowEdges])
+    initialViewportAppliedRef.current = false
+  }, [
+    structureKey,
+    switches,
+    edges,
+    savedPositions,
+    layoutQuery.isLoading,
+    saveStatus,
+    nodes.length,
+    setNodes,
+    setFlowEdges,
+  ])
 
   useEffect(() => {
-    if (!rfInstance || nodes.length === 0 || !shouldFitViewRef.current) return
+    if (!rfInstance || nodes.length === 0 || initialViewportAppliedRef.current) return
+    if (savedLayoutExists) {
+      initialViewportAppliedRef.current = true
+      return
+    }
+
     const frame = window.requestAnimationFrame(() => {
       rfInstance.fitView({ padding: 0.2, maxZoom: 1.25, duration: 250 })
-      shouldFitViewRef.current = false
+      initialViewportAppliedRef.current = true
     })
     return () => window.cancelAnimationFrame(frame)
-  }, [rfInstance, nodes])
+  }, [rfInstance, nodes.length, savedLayoutExists])
 
   const onNodeDragStop = useCallback(() => {
     const currentNodes = rfInstance?.getNodes() ?? nodes
@@ -104,9 +169,10 @@ export function SwitchTopology({ switches, edges }: SwitchTopologyProps) {
   const handleSaveTopology = useCallback(async () => {
     const currentNodes = rfInstance?.getNodes() ?? nodes
     const currentEdges = rfInstance?.getEdges() ?? flowEdges
-    sessionPositionsRef.current = Object.fromEntries(
+    const savedSession = Object.fromEntries(
       currentNodes.map((node) => [node.id, node.position]),
     )
+    sessionPositionsRef.current = savedSession
     setSaveStatus('saving')
     try {
       await saveLayoutMutation.mutateAsync({

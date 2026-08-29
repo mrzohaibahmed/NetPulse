@@ -39,15 +39,16 @@ class SSHCollectorError(Exception):
     """Raised when SSH collection fails in a recoverable, caller-visible way."""
 
 
-def _ensure_paramiko() -> None:
+def _ensure_paramiko() -> Any:
     """Import paramiko lazily so installs are detected without relying on stale flags."""
     global paramiko, _PARAMIKO_AVAILABLE
     if _PARAMIKO_AVAILABLE and paramiko is not None:
-        return
+        return paramiko
     try:
         import paramiko as paramiko_mod
         paramiko = paramiko_mod
         _PARAMIKO_AVAILABLE = True
+        return paramiko_mod
     except ImportError as exc:
         _PARAMIKO_AVAILABLE = False
         paramiko = None  # type: ignore[assignment]
@@ -289,10 +290,18 @@ class SSHInterfaceCollector:
     # outputs == {"status": "...", "description": "...", ...}
     """
 
-    def __init__(self, credentials: SSHCredentials, *, ssh_slot_kind: str = "collector"):
+    def __init__(
+        self,
+        credentials: SSHCredentials,
+        *,
+        ssh_slot_kind: str = "collector",
+        require_privileged: bool = False,
+    ):
         _ensure_paramiko()
         self.credentials = credentials
         self.ssh_slot_kind = ssh_slot_kind
+        self.require_privileged = require_privileged
+        self._privileged_confirmed = False
         self._client: Any = None
         self._shell: Any = None
         self._slot_cm = None
@@ -307,6 +316,7 @@ class SSHInterfaceCollector:
     def connect(self) -> None:
         from services.collector_concurrency import ssh_session_slot  # noqa: PLC0415
 
+        pk = _ensure_paramiko()
         creds = self.credentials
         self._slot_cm = ssh_session_slot(
             kind=self.ssh_slot_kind,
@@ -321,7 +331,7 @@ class SSHInterfaceCollector:
             creds.vendor,
         )
 
-        client = paramiko.SSHClient()
+        client = pk.SSHClient()
         from utils.ssh_security import apply_host_key_policy  # noqa: PLC0415
 
         apply_host_key_policy(client)
@@ -333,7 +343,7 @@ class SSHInterfaceCollector:
                 (creds.host, creds.port),
                 timeout=creds.timeout,
             )
-            transport = paramiko.Transport(sock)
+            transport = pk.Transport(sock)
             transport.banner_timeout = creds.timeout
             transport.auth_timeout = creds.timeout
             _apply_legacy_ssh_algorithms(transport)
@@ -343,7 +353,7 @@ class SSHInterfaceCollector:
                 transport.auth_password(creds.username, creds.password)
 
             client._transport = transport  # noqa: SLF001 — attach for invoke_shell
-        except paramiko.AuthenticationException as exc:
+        except pk.AuthenticationException as exc:
             try:
                 client.close()
             except Exception:  # noqa: BLE001
@@ -352,7 +362,7 @@ class SSHInterfaceCollector:
             raise SSHCollectorError(
                 f"SSH authentication failed for {creds.host}: {exc}"
             ) from exc
-        except (paramiko.SSHException, socket.error, OSError, TimeoutError) as exc:
+        except (pk.SSHException, socket.error, OSError, TimeoutError) as exc:
             try:
                 client.close()
             except Exception:  # noqa: BLE001
@@ -446,22 +456,90 @@ class SSHInterfaceCollector:
         if vendor.startswith("cisco") or vendor in ("generic", "aruba_os"):
             self._run_command("terminal length 0", wait=1.0)
             self._run_command("terminal width 0", wait=0.5)
-            if self.credentials.secret:
-                self._enter_enable(self.credentials.secret)
+            self._ensure_privileged_session()
         elif vendor.startswith("juniper"):
             self._run_command("set cli screen-length 0", wait=1.0)
             self._run_command("set cli screen-width 0", wait=0.5)
 
-    def _enter_enable(self, secret: str) -> None:
-        if not self._shell:
+    def assert_privileged_mode(self) -> None:
+        """Raise when the session is not in privileged exec mode (# prompt)."""
+        if self._privileged_confirmed:
             return
+        prompt = self._read_session_prompt()
+        if _is_privileged_prompt_line(prompt):
+            self._privileged_confirmed = True
+            return
+        host = self.credentials.host
+        raise SSHCollectorError(
+            f"Unable to enter privileged mode on {host}: "
+            "enable password missing or rejected."
+        )
+
+    def _ensure_privileged_session(self) -> None:
+        """Enter enable when needed; fail when privileged mode is required."""
+        host = self.credentials.host
+        prompt = self._read_session_prompt()
+
+        if _is_privileged_prompt_line(prompt):
+            self._privileged_confirmed = True
+            return
+
+        if _is_user_prompt_line(prompt):
+            secret = self.credentials.secret
+            if secret:
+                output = self._enter_enable(secret)
+                if _enable_output_indicates_failure(output):
+                    if self.require_privileged:
+                        raise SSHCollectorError(
+                            f"Unable to enter privileged mode on {host}: "
+                            "enable password rejected."
+                        )
+                    return
+                prompt = self._read_session_prompt()
+                if _is_privileged_prompt_line(prompt):
+                    self._privileged_confirmed = True
+                    return
+                if self.require_privileged:
+                    raise SSHCollectorError(
+                        f"Unable to enter privileged mode on {host}: "
+                        "enable password rejected."
+                    )
+                return
+
+            if self.require_privileged:
+                raise SSHCollectorError(
+                    f"Unable to enter privileged mode on {host}: "
+                    "enable password not configured."
+                )
+            return
+
+        if self.require_privileged:
+            raise SSHCollectorError(
+                f"Unable to enter privileged mode on {host}: "
+                "privileged prompt not detected."
+            )
+
+    def _read_session_prompt(self) -> str | None:
+        """Elicit and return the current CLI prompt line, if detectable."""
+        if self._shell is None:
+            return None
+        self._drain(timeout=0.2)
+        self._shell.send("\n")
+        time.sleep(0.4)
+        buffer = self._read_until_prompt(timeout=2.0)
+        return _extract_prompt_line(buffer)
+
+    def _enter_enable(self, secret: str) -> str:
+        if not self._shell:
+            return ""
         self._shell.send("enable\n")
         time.sleep(0.8)
         buffer = self._drain(timeout=1.5)
         if "password" in buffer.lower() or "assword" in buffer:
             self._shell.send(secret + "\n")
             time.sleep(0.8)
-            self._drain(timeout=1.5)
+            buffer += self._drain(timeout=1.5)
+        return buffer
 
     def _run_command(self, command: str, wait: float = 0.4) -> str:
         if self._shell is None:
@@ -523,18 +601,47 @@ class SSHInterfaceCollector:
         return "".join(chunks)
 
 
-def _looks_like_prompt(text: str) -> bool:
-    """Heuristic: last non-empty line ends with # or > (Cisco / Junos)."""
+def _extract_prompt_line(text: str) -> str | None:
+    """Return the last CLI prompt line from shell output, or None."""
     lines = [ln.strip() for ln in text.replace("\r", "").splitlines() if ln.strip()]
     if not lines:
-        return False
+        return None
     last = lines[-1]
     if last.endswith("#") or last.endswith(">"):
-        # Avoid matching "Password:" style prompts mid-command
         if last.lower().endswith("password:"):
-            return False
-        return True
-    return False
+            return None
+        return last
+    return None
+
+
+def _is_privileged_prompt_line(line: str | None) -> bool:
+    """True when the prompt line indicates privileged exec mode (ends with #)."""
+    return bool(line and line.endswith("#") and not line.lower().endswith("password:"))
+
+
+def _is_user_prompt_line(line: str | None) -> bool:
+    """True when the prompt line indicates user exec mode (ends with >)."""
+    return bool(line and line.endswith(">"))
+
+
+_ENABLE_FAILURE_MARKERS = (
+    "% bad secrets",
+    "% bad passwords",
+    "% access denied",
+    "password incorrect",
+    "% authentication failed",
+)
+
+
+def _enable_output_indicates_failure(output: str) -> bool:
+    """Detect enable-password rejection in CLI output."""
+    text = (output or "").lower()
+    return any(marker in text for marker in _ENABLE_FAILURE_MARKERS)
+
+
+def _looks_like_prompt(text: str) -> bool:
+    """Heuristic: last non-empty line ends with # or > (Cisco / Junos)."""
+    return _extract_prompt_line(text) is not None
 
 
 def _strip_command_echo(output: str, command: str) -> str:

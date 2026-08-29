@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 
 from bson import ObjectId
 
+from services.interface_collection.ssh_collector import SSHInterfaceCollector
 from routes.alert_routes import serialize_alert
 from services.alert_service import (
     claim_storm_confirmed_alert,
@@ -422,7 +423,7 @@ class StormAlertEngineIntegrationTests(unittest.TestCase):
         self._mock_system_gates(fake_db)
         mock_db_fn.return_value = fake_db
 
-        mock_collector = MagicMock()
+        mock_collector = MagicMock(spec=SSHInterfaceCollector)
         mock_ssh.return_value = mock_collector
         mock_collector.run_command.side_effect = lambda cmd, wait=0.4: (
             "interface GigabitEthernet1/0/10\n shutdown\n" if "show" in cmd else "OK"
@@ -463,7 +464,7 @@ class StormAlertEngineIntegrationTests(unittest.TestCase):
         self._mock_system_gates(fake_db)
         mock_db_fn.return_value = fake_db
 
-        mock_collector = MagicMock()
+        mock_collector = MagicMock(spec=SSHInterfaceCollector)
         mock_ssh.return_value = mock_collector
         mock_collector.run_command.side_effect = RuntimeError("SSH dropped")
 
@@ -514,7 +515,7 @@ class StormAlertEngineIntegrationTests(unittest.TestCase):
         fake_db.devices.find_one.return_value = self.device_doc
         mock_db_fn.return_value = fake_db
 
-        mock_collector = MagicMock()
+        mock_collector = MagicMock(spec=SSHInterfaceCollector)
         mock_ssh.return_value = mock_collector
         mock_collector.run_command.side_effect = lambda cmd, wait=0.4: (
             "interface GigabitEthernet1/0/10\n no shutdown\n" if "show" in cmd else "OK"
@@ -574,7 +575,7 @@ class StormAlertEngineIntegrationTests(unittest.TestCase):
         fake_db.devices.find_one.return_value = self.device_doc
         mock_db_fn.return_value = fake_db
 
-        mock_collector = MagicMock()
+        mock_collector = MagicMock(spec=SSHInterfaceCollector)
         mock_ssh.return_value = mock_collector
         mock_collector.run_command.side_effect = RuntimeError("Recovery SSH failed")
 

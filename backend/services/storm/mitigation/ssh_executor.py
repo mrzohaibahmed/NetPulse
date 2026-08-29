@@ -88,7 +88,11 @@ class SSHMitigationExecutor:
 
     def connect(self) -> None:
         try:
-            self.collector = SSHInterfaceCollector(self.creds, ssh_slot_kind="priority")
+            self.collector = SSHInterfaceCollector(
+                self.creds,
+                ssh_slot_kind="priority",
+                require_privileged=True,
+            )
             self.collector.connect()
         except SSHCollectorError as exc:
             raise RuntimeError(f"SSH reachability check failed: {exc}") from exc
@@ -109,6 +113,9 @@ class SSHMitigationExecutor:
         results = []
         for cmd in commands:
             assert_safe_mitigation_command(cmd, interface)
+            cmd_lower = cmd.strip().lower()
+            if not cmd_lower.startswith("show "):
+                self.collector.assert_privileged_mode()
             try:
                 logger.info(
                     "Executing mitigation command | host=%s | %s",
