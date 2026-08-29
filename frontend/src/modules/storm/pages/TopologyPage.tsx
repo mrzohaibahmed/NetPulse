@@ -11,7 +11,6 @@ import {
   getSmoothStepPath,
   useNodesState,
   useEdgesState,
-  Panel,
 } from '@xyflow/react'
 import type { Node, Edge, NodeProps, EdgeProps, ReactFlowInstance } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
@@ -811,10 +810,47 @@ export function TopologyPage() {
           </div>
         </div>
 
-        <div className="relative max-h-[calc(100vh-15rem)] min-h-[420px] overflow-auto rounded-xl border border-border/70 bg-card/40">
+        <div className="relative min-h-[420px] max-h-[calc(100vh-15rem)] rounded-xl border border-border/70 bg-card/40">
           {isLoadingActive || layoutQuery.isLoading ? (
             <div className="absolute inset-0 z-10 flex items-center justify-center bg-card/50 backdrop-blur-sm">
               <LoadingState label="Drawing topology…" />
+            </div>
+          ) : null}
+
+          {nodes.length > 0 ? (
+            <div className="pointer-events-none absolute right-3 top-3 z-20">
+              <div className="pointer-events-auto flex flex-wrap items-center gap-2 rounded-lg border border-border/70 bg-card/90 px-2.5 py-1.5 text-xs font-medium text-foreground shadow-sm backdrop-blur-md">
+                <span className="text-muted-foreground">
+                  {selectedSwitchId === null ? 'Level 2 · Full Topology' : 'Level 1 · Switch Neighbors'}
+                </span>
+                <span
+                  className={cn(
+                    'rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
+                    saveStatus === 'unsaved' && 'bg-amber-500/15 text-amber-700 dark:text-amber-300',
+                    saveStatus === 'saved' && 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300',
+                    saveStatus === 'saving' && 'bg-primary/10 text-primary',
+                    saveStatus === 'error' && 'bg-destructive/15 text-destructive',
+                    saveStatus === 'idle' && 'bg-muted text-muted-foreground',
+                  )}
+                >
+                  {saveStatusLabel}
+                </span>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  className="h-7 gap-1.5 px-2 text-xs"
+                  disabled={nodes.length === 0 || saveStatus === 'saving' || saveLayoutMutation.isPending}
+                  onClick={() => void handleSaveTopology()}
+                >
+                  {saveStatus === 'saving' || saveLayoutMutation.isPending ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Save className="h-3.5 w-3.5" />
+                  )}
+                  {saveStatus === 'saving' || saveLayoutMutation.isPending ? 'Saving…' : 'Save Topology'}
+                </Button>
+              </div>
             </div>
           ) : null}
 
@@ -825,71 +861,38 @@ export function TopologyPage() {
               </div>
             </div>
           ) : (
-            <div
-              style={{
-                width: Math.max(canvasSize.width, 960),
-                height: Math.max(canvasSize.height, 420),
-                minWidth: '100%',
-              }}
-            >
-              <ReactFlow
-                nodes={nodes}
-                edges={edges}
-                onNodesChange={onNodesChange}
-                onEdgesChange={onEdgesChange}
-                onNodeDragStop={onNodeDragStop}
-                onEdgeMouseEnter={onEdgeMouseEnter}
-                onEdgeMouseMove={onEdgeMouseMove}
-                onEdgeMouseLeave={onEdgeMouseLeave}
-                onInit={setRfInstance}
-                nodeTypes={nodeTypes}
-                edgeTypes={edgeTypes}
-                nodesDraggable
-                panOnDrag
-                zoomOnScroll
-                minZoom={0.25}
-                maxZoom={2}
-                proOptions={{ hideAttribution: true }}
-                defaultEdgeOptions={{ type: 'topologyEdge' }}
+            <div className="max-h-[calc(100vh-15rem)] min-h-[420px] overflow-auto">
+              <div
+                style={{
+                  width: Math.max(canvasSize.width, 960),
+                  height: Math.max(canvasSize.height, 420),
+                  minWidth: '100%',
+                }}
               >
-                <Background color="#94a3b8" gap={18} size={1} />
-                <Controls className="border-border bg-card fill-foreground" />
-                <Panel
-                  position="top-right"
-                  className="flex flex-wrap items-center gap-2 rounded-lg border border-border/70 bg-card/90 px-2.5 py-1.5 text-xs font-medium text-foreground shadow-sm backdrop-blur-md"
+                <ReactFlow
+                  nodes={nodes}
+                  edges={edges}
+                  onNodesChange={onNodesChange}
+                  onEdgesChange={onEdgesChange}
+                  onNodeDragStop={onNodeDragStop}
+                  onEdgeMouseEnter={onEdgeMouseEnter}
+                  onEdgeMouseMove={onEdgeMouseMove}
+                  onEdgeMouseLeave={onEdgeMouseLeave}
+                  onInit={setRfInstance}
+                  nodeTypes={nodeTypes}
+                  edgeTypes={edgeTypes}
+                  nodesDraggable
+                  panOnDrag
+                  zoomOnScroll
+                  minZoom={0.25}
+                  maxZoom={2}
+                  proOptions={{ hideAttribution: true }}
+                  defaultEdgeOptions={{ type: 'topologyEdge' }}
                 >
-                  <span className="text-muted-foreground">
-                    {selectedSwitchId === null ? 'Level 2 · Full Topology' : 'Level 1 · Switch Neighbors'}
-                  </span>
-                  <span
-                    className={cn(
-                      'rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
-                      saveStatus === 'unsaved' && 'bg-amber-500/15 text-amber-700 dark:text-amber-300',
-                      saveStatus === 'saved' && 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300',
-                      saveStatus === 'saving' && 'bg-primary/10 text-primary',
-                      saveStatus === 'error' && 'bg-destructive/15 text-destructive',
-                      saveStatus === 'idle' && 'bg-muted text-muted-foreground',
-                    )}
-                  >
-                    {saveStatusLabel}
-                  </span>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="secondary"
-                    className="h-7 gap-1.5 px-2 text-xs"
-                    disabled={nodes.length === 0 || saveStatus === 'saving' || saveLayoutMutation.isPending}
-                    onClick={() => void handleSaveTopology()}
-                  >
-                    {saveStatus === 'saving' || saveLayoutMutation.isPending ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <Save className="h-3.5 w-3.5" />
-                    )}
-                    {saveStatus === 'saving' || saveLayoutMutation.isPending ? 'Saving…' : 'Save Topology'}
-                  </Button>
-                </Panel>
-              </ReactFlow>
+                  <Background color="#94a3b8" gap={18} size={1} />
+                  <Controls className="border-border bg-card fill-foreground" />
+                </ReactFlow>
+              </div>
             </div>
           )}
         </div>
