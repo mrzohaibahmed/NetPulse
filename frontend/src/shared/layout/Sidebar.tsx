@@ -18,6 +18,7 @@ import {
   Server,
   Settings,
   Share2,
+  Boxes,
   Shield,
   ShieldAlert,
   ShieldCheck,
@@ -131,6 +132,7 @@ export function Sidebar({ pinned, onPinnedChange, mobileOpen, onMobileOpenChange
         },
         { id: 'storm-interfaces', to: '/interfaces', label: 'Interfaces', icon: Network },
         { id: 'storm-topology', to: '/topology', label: 'Topology', icon: Share2 },
+        { id: 'storm-switches', to: '/switches', label: 'Switches', icon: Boxes },
         {
           id: 'storm-pipeline',
           to: '/storm?view=pipeline',
