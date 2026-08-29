@@ -41,9 +41,9 @@ if not exist "frontend\dist\index.html" (
 echo [1/1] Starting backend / production UI
 echo       http://0.0.0.0:5000
 echo.
-start "NetPulse Backend" cmd /k "cd /d "%~dp0backend" && call venv\Scripts\activate.bat && python app.py"
+start "NetPulse Backend" cmd /k "cd /d "%~dp0backend" && call venv\Scripts\activate.bat && waitress-serve --host=0.0.0.0 --port=5000 --threads=8 app:app"
 
-REM Give Flask a moment to bind before opening the browser
+REM Give the server a moment to bind before opening the browser
 timeout /t 5 /nobreak >nul
 start "" "http://127.0.0.1:5000"
 
