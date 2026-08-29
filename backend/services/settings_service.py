@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from config.database import db
+from services.whatsapp_service import get_public_whatsapp_status
 from utils.secret_crypto import encrypt_secret
 
 SETTINGS_ID = "global"
@@ -163,6 +164,7 @@ def get_public_settings():
         "dataRetentionDays": int(settings.get("dataRetentionDays", 90)),
         "incidentRetentionDays": int(settings.get("incidentRetentionDays", 365)),
         "stormNotifications": _public_storm_notifications(settings),
+        "whatsapp": get_public_whatsapp_status(),
         "updatedAt": settings.get("updatedAt"),
     }
 

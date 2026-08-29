@@ -9,6 +9,10 @@ from services.email_service import (
     send_critical_offline_alert,
     send_storm_confirmed_notification,
 )
+from services.whatsapp_service import (
+    send_critical_offline_whatsapp_alert,
+    send_device_recovery_whatsapp_alert,
+)
 from services.mongo_retry import (
     assert_insert_acknowledged,
     assert_update_acknowledged,
@@ -147,6 +151,15 @@ def resolve_critical_offline_alerts(device, *, cycle_id=None) -> int:
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("Audit log failed for alert resolve: %s", exc)
+        try:
+            send_device_recovery_whatsapp_alert(device)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "WhatsApp recovery alert failed | deviceId=%s | ip=%s | error=%s",
+                device_id,
+                ip_address,
+                exc,
+            )
     return modified
 
 
@@ -305,6 +318,15 @@ def maybe_send_critical_offline_alert(
             "attemptId": attempt_id,
         },
     )
+    try:
+        send_critical_offline_whatsapp_alert(device, scan_type=scan_type)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "WhatsApp critical offline alert failed | deviceId=%s | ip=%s | error=%s",
+            device_id,
+            ip_address,
+            exc,
+        )
     return True
 
 

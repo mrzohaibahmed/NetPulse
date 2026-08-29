@@ -137,3 +137,37 @@ def test_email_route():
 
     except Exception as error:
         return internal_error_response(error, message="Failed to send test email")
+
+
+@settings_bp.route("/settings/test-whatsapp", methods=["POST"])
+@require_auth(roles=["admin"])
+def test_whatsapp_route():
+    """Send a test WhatsApp alert using the configured Cloud API credentials.
+
+    Credentials are read from environment variables only and are never returned.
+    """
+    try:
+        from services.whatsapp_service import send_test_whatsapp_alert  # noqa: PLC0415
+
+        delivered, error_message = send_test_whatsapp_alert()
+
+        if delivered:
+            log_audit(
+                action="test_whatsapp_sent",
+                entity_type="settings",
+                entity_id="global",
+                details={},
+            )
+            return jsonify(
+                {"success": True, "message": "Test WhatsApp alert sent successfully."}
+            ), 200
+
+        return jsonify(
+            {
+                "success": False,
+                "message": error_message or "Failed to send test WhatsApp alert.",
+            }
+        ), 400
+
+    except Exception as error:
+        return internal_error_response(error, message="Failed to send test WhatsApp alert")

@@ -16,6 +16,7 @@ Flask REST API for LAN monitoring, switch interface collection, and storm protec
 - **Storm protection** — eligibility → risk → confirmation → safety → prepare → mitigation → recovery
 - **Manual shutdown / recover** — user/admin actions on individual interfaces
 - **Alerts + email** — critical offline transitions (hysteresis + alert threshold)
+- **WhatsApp alerts** — optional Meta Cloud API notifications (see `docs/WHATSAPP_ALERTS.md`)
 - **Settings** — ping, SMTP, mitigation mode, auto-recovery, retention
 - **Audit logging** — administrative and storm execution trail
 - **Data retention** — TTL indexes + daily closed-incident purge
