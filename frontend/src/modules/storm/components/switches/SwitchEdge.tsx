@@ -12,7 +12,7 @@ function SpeedLabel({ x, y, text, isDown }: { x: number; y: number; text: string
     >
       <span
         className={cn(
-          'rounded-md border px-2 py-0.5 text-[10px] font-semibold shadow-sm',
+          'rounded border px-1 py-px text-[9px] font-semibold leading-none shadow-sm',
           isDown
             ? 'border-red-500/60 bg-red-500/10 text-red-700 dark:text-red-300'
             : 'border-border/80 bg-card/95 text-foreground',

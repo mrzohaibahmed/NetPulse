@@ -53,7 +53,6 @@ export function SwitchTopology({ switches, edges, searchQuery = '' }: SwitchTopo
 
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([])
   const [flowEdges, setFlowEdges, onEdgesChange] = useEdgesState<Edge>([])
-  const [canvasSize, setCanvasSize] = useState({ width: 960, height: 420 })
   const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null)
   const [saveStatus, setSaveStatus] = useState<LayoutSaveStatus>('idle')
 
@@ -130,7 +129,6 @@ export function SwitchTopology({ switches, edges, searchQuery = '' }: SwitchTopo
 
     setNodes(graph.nodes)
     setFlowEdges(graph.edges)
-    setCanvasSize(graph.bounds)
     initialViewportAppliedRef.current = false
   }, [
     structureKey,
@@ -147,17 +145,13 @@ export function SwitchTopology({ switches, edges, searchQuery = '' }: SwitchTopo
 
   useEffect(() => {
     if (!rfInstance || nodes.length === 0 || initialViewportAppliedRef.current) return
-    if (savedLayoutExists) {
-      initialViewportAppliedRef.current = true
-      return
-    }
 
     const frame = window.requestAnimationFrame(() => {
-      rfInstance.fitView({ padding: 0.2, maxZoom: 1.25, duration: 250 })
+      rfInstance.fitView({ padding: 0.12, maxZoom: 1.35, minZoom: 0.08, duration: 250 })
       initialViewportAppliedRef.current = true
     })
     return () => window.cancelAnimationFrame(frame)
-  }, [rfInstance, nodes.length, savedLayoutExists])
+  }, [rfInstance, nodes.length, structureKey])
 
   const onNodeDragStop = useCallback(() => {
     const currentNodes = rfInstance?.getNodes() ?? nodes
@@ -218,7 +212,7 @@ export function SwitchTopology({ switches, edges, searchQuery = '' }: SwitchTopo
   return (
     <div className="space-y-3">
       <LinkSpeedLegend />
-      <div className="relative min-h-[420px] max-h-[calc(100vh-15rem)] rounded-xl border border-border/60 bg-background/40">
+      <div className="relative h-[calc(100vh-15rem)] min-h-[420px] rounded-xl border border-border/60 bg-background/40">
       <div className="pointer-events-none absolute right-3 top-3 z-20">
         <div className="pointer-events-auto flex flex-wrap items-center gap-2 rounded-lg border border-border/70 bg-card/95 px-2.5 py-1.5 text-xs font-medium text-foreground shadow-sm backdrop-blur-md">
           <span
@@ -257,15 +251,9 @@ export function SwitchTopology({ switches, edges, searchQuery = '' }: SwitchTopo
         </div>
       ) : null}
 
-      <div className="max-h-[calc(100vh-15rem)] min-h-[420px] overflow-auto">
-        <div
-          style={{
-            width: Math.max(canvasSize.width, 960),
-            height: Math.max(canvasSize.height, 420),
-            minWidth: '100%',
-          }}
-        >
+      <div className="h-full w-full">
           <ReactFlow
+            className="h-full w-full"
             nodes={nodes}
             edges={flowEdges}
             onNodesChange={onNodesChange}
@@ -274,7 +262,7 @@ export function SwitchTopology({ switches, edges, searchQuery = '' }: SwitchTopo
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
             onInit={setRfInstance}
-            minZoom={0.25}
+            minZoom={0.08}
             maxZoom={2}
             nodesDraggable
             nodesConnectable={false}
@@ -287,7 +275,6 @@ export function SwitchTopology({ switches, edges, searchQuery = '' }: SwitchTopo
             <Controls showInteractive={false} />
           </ReactFlow>
         </div>
-      </div>
       </div>
     </div>
   )

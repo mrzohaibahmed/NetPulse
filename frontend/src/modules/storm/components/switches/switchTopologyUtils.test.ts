@@ -8,6 +8,7 @@ import {
   getSpeedCategory,
   isLinkDown,
   normalizeSpeedToMbps,
+  resolveSwitchDisplay,
 } from './switchTopologyUtils'
 
 function edge(
@@ -146,6 +147,53 @@ describe('dedupeSwitchEdges', () => {
   it('ignores edges that do not connect known switches', () => {
     const edges = [edge('a', 'x'), edge('x', 'b')]
     expect(dedupeSwitchEdges(edges, switchIds)).toHaveLength(0)
+  })
+})
+
+describe('resolveSwitchDisplay', () => {
+  it('uses hostname when available', () => {
+    const sw = {
+      hostname: 'Core-SW-01',
+      label: 'Core-SW-01',
+      ip: '192.168.1.1',
+      managementAddress: '192.168.1.1',
+      details: { hostname: 'Core-SW-01', ip: '192.168.1.1' },
+    } as import('@/api/topologyService').TopologyNode
+
+    expect(resolveSwitchDisplay(sw)).toEqual({
+      hostname: 'Core-SW-01',
+      ip: '192.168.1.1',
+    })
+  })
+
+  it('falls back to IP instead of Unknown when hostname is missing', () => {
+    const sw = {
+      hostname: '',
+      label: 'Unknown Device',
+      ip: '192.168.18.1',
+      managementAddress: '192.168.18.1',
+      details: { hostname: '', ip: '192.168.18.1' },
+    } as import('@/api/topologyService').TopologyNode
+
+    expect(resolveSwitchDisplay(sw)).toEqual({
+      hostname: '192.168.18.1',
+      ip: '',
+    })
+  })
+
+  it('uses details hostname when top-level hostname is empty', () => {
+    const sw = {
+      hostname: '',
+      label: 'Unknown Device',
+      ip: '192.168.18.6',
+      managementAddress: '192.168.18.6',
+      details: { hostname: 'Access-SW-06', ip: '192.168.18.6' },
+    } as import('@/api/topologyService').TopologyNode
+
+    expect(resolveSwitchDisplay(sw)).toEqual({
+      hostname: 'Access-SW-06',
+      ip: '192.168.18.6',
+    })
   })
 })
 

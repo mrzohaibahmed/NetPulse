@@ -10,9 +10,11 @@ import {
 } from '@/modules/storm/utils/topologyLayout'
 
 export { layoutPositionsFromSaved, mergeLayoutPositions, hasSavedLayout }
-export const SWITCH_NODE_WIDTH = 180
-export const SWITCH_NODE_HEIGHT = 72
+export const SWITCH_NODE_WIDTH = 80
+export const SWITCH_NODE_HEIGHT = 58
 export const SWITCHES_LAYOUT_VIEW_KEY = 'switches'
+
+const GENERIC_HOSTNAME_LABELS = new Set(['', 'unknown', 'unknown device'])
 
 export type SpeedCategory =
   | '100_GBPS'
@@ -152,6 +154,36 @@ export function resolveEdgeSpeedMbps(edge: TopologyEdge): number | null {
   return normalizeSpeedToMbps(edge.speed)
 }
 
+export function resolveSwitchIp(sw: TopologyNode): string {
+  return (sw.ip || sw.managementAddress || sw.details?.ip || '').trim()
+}
+
+export function resolveSwitchDisplay(sw: TopologyNode): { hostname: string; ip: string } {
+  const ip = resolveSwitchIp(sw)
+  const candidates = [sw.hostname, sw.details?.hostname, sw.label]
+    .map((value) => (value || '').trim())
+    .filter((value) => value && !GENERIC_HOSTNAME_LABELS.has(value.toLowerCase()))
+
+  let hostname = candidates.find((value) => value !== ip) || candidates[0] || ''
+  if (!hostname) {
+    hostname = ip || 'Unknown'
+  }
+
+  return {
+    hostname,
+    ip: ip && ip !== hostname ? ip : '',
+  }
+}
+
+export function resolveSwitchSearchText(sw: TopologyNode): { hostname: string; ip: string } {
+  const display = resolveSwitchDisplay(sw)
+  const ip = resolveSwitchIp(sw)
+  return {
+    hostname: display.hostname,
+    ip: ip || display.ip,
+  }
+}
+
 export function getPointOnPath(path: string, ratio: number) {
   if (typeof document === 'undefined') {
     return { x: 0, y: 0 }
@@ -256,9 +288,8 @@ export function buildSwitchSearchVisibility(
 
   const matchIds = new Set<string>()
   for (const sw of switches) {
-    const hostname = (sw.hostname || sw.label || '').toLowerCase()
-    const ip = (sw.ip || sw.managementAddress || '').toLowerCase()
-    if (hostname.includes(trimmed) || ip.includes(trimmed)) {
+    const { hostname, ip } = resolveSwitchSearchText(sw)
+    if (hostname.toLowerCase().includes(trimmed) || ip.toLowerCase().includes(trimmed)) {
       matchIds.add(sw.id)
     }
   }
@@ -335,6 +366,7 @@ export function buildSwitchGraph(
   const nodes: Node<SwitchNodeData>[] = switches.map((sw) => {
     const isMatch = searchVisibility.matchIds.has(sw.id)
     const isDimmed = searchVisibility.dimmedIds.has(sw.id)
+    const display = resolveSwitchDisplay(sw)
 
     return {
       id: sw.id,
@@ -342,8 +374,8 @@ export function buildSwitchGraph(
       position: positionOverrides?.[sw.id] ?? { x: 0, y: 0 },
       draggable: true,
       data: {
-        hostname: sw.hostname || sw.label || 'Unknown',
-        ip: sw.ip || sw.managementAddress || '',
+        hostname: display.hostname,
+        ip: display.ip,
         status: sw.status || sw.details?.status || 'Unknown',
         highlighted: isMatch,
         dimmed: isDimmed,
@@ -384,9 +416,9 @@ export function buildSwitchGraph(
 
 function layoutSwitchGrid(nodes: Node<SwitchNodeData>[]) {
   const cols = Math.max(1, Math.ceil(Math.sqrt(nodes.length)))
-  const gapX = 220
-  const gapY = 120
-  const padding = 96
+  const gapX = 110
+  const gapY = 72
+  const padding = 48
 
   const layoutedNodes = nodes.map((node, index) => ({
     ...node,
@@ -416,7 +448,7 @@ function layoutSwitchGraph(nodes: Node<SwitchNodeData>[], edges: Edge<SwitchEdge
 
   const graph = new dagre.graphlib.Graph()
   graph.setDefaultEdgeLabel(() => ({}))
-  graph.setGraph({ rankdir: 'TB', nodesep: 80, ranksep: 100, marginx: 48, marginy: 48 })
+  graph.setGraph({ rankdir: 'TB', nodesep: 36, ranksep: 56, marginx: 32, marginy: 32 })
 
   nodes.forEach((node) => {
     graph.setNode(node.id, { width: SWITCH_NODE_WIDTH, height: SWITCH_NODE_HEIGHT })
