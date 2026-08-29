@@ -1,5 +1,5 @@
 import dagre from 'dagre'
-import { MarkerType, Position } from '@xyflow/react'
+import { Position } from '@xyflow/react'
 import type { Edge, Node } from '@xyflow/react'
 import type { TopologyEdge, TopologyNode } from '@/api/topologyService'
 import type { SwitchNodeData } from './SwitchNode'
@@ -13,6 +13,202 @@ export { layoutPositionsFromSaved, mergeLayoutPositions, hasSavedLayout }
 export const SWITCH_NODE_WIDTH = 180
 export const SWITCH_NODE_HEIGHT = 72
 export const SWITCHES_LAYOUT_VIEW_KEY = 'switches'
+
+export type SpeedCategory =
+  | '100_GBPS'
+  | '20_GBPS'
+  | '10_GBPS'
+  | '1_GBPS'
+  | '100_MBPS'
+  | '10_MBPS'
+  | 'UNKNOWN'
+  | 'DOWN'
+
+export type LinkStyle = {
+  category: SpeedCategory
+  color: string
+  strokeDasharray?: string
+  strokeWidth: number
+  label: string
+}
+
+export type SwitchEdgeData = {
+  speedMbps: number | null
+  speedLabel: string
+  linkStyle: LinkStyle
+  sourcePort?: string
+  targetPort?: string
+  operStatus?: string
+}
+
+export const LINK_SPEED_COLORS: Record<Exclude<SpeedCategory, 'DOWN'>, string> = {
+  '100_GBPS': '#2563eb',
+  '20_GBPS': '#d946ef',
+  '10_GBPS': '#ec4899',
+  '1_GBPS': '#8b5cf6',
+  '100_MBPS': '#06b6d4',
+  '10_MBPS': '#3b82f6',
+  UNKNOWN: '#94a3b8',
+}
+
+export const DOWN_LINK_COLOR = '#ef4444'
+
+const SPEED_LABEL_RE =
+  /^(\d+(?:\.\d+)?)\s*(g|gbps|gb|m|mbps|mb|k|kbps|bps|b)?$/i
+
+export function normalizeSpeedToMbps(raw: string | number | null | undefined): number | null {
+  if (raw === null || raw === undefined) return null
+
+  if (typeof raw === 'number') {
+    if (!Number.isFinite(raw) || raw <= 0) return null
+    if (raw >= 1_000_000) return Math.round(raw / 1_000_000)
+    if (raw >= 1000) return Math.round(raw / 1000)
+    return Math.round(raw)
+  }
+
+  const text = String(raw).trim()
+  if (!text) return null
+
+  const lower = text.toLowerCase().replace(/\s+/g, '')
+  if (['auto', 'a-auto', 'unknown', '-', 'n/a', 'na'].includes(lower)) return null
+
+  if (/^\d+(\.\d+)?$/.test(lower)) {
+    const numeric = Number(lower)
+    if (!Number.isFinite(numeric) || numeric <= 0) return null
+    if (numeric >= 1_000_000) return Math.round(numeric / 1_000_000)
+    if (numeric >= 1000 && numeric % 1000 === 0 && numeric >= 10_000) {
+      return Math.round(numeric / 1_000_000) >= 1
+        ? Math.round(numeric / 1_000_000) * 1000
+        : Math.round(numeric / 1000)
+    }
+    return Math.round(numeric)
+  }
+
+  const normalized = lower.replace(/^a-/, '')
+  const match = normalized.match(SPEED_LABEL_RE)
+  if (!match) return null
+
+  const value = Number(match[1])
+  if (!Number.isFinite(value) || value <= 0) return null
+
+  const unit = (match[2] || '').toLowerCase()
+  if (unit === 'bps' || unit === 'b') return Math.round(value / 1_000_000)
+  if (['g', 'gbps', 'gb'].includes(unit)) return Math.round(value * 1000)
+  if (['k', 'kbps'].includes(unit)) return Math.round(value / 1000)
+  return Math.round(value)
+}
+
+export function formatSpeed(mbps: number | null): string {
+  if (mbps === null || mbps <= 0) return 'Unknown'
+  if (mbps >= 1000 && mbps % 1000 === 0) {
+    return `${(mbps / 1000).toFixed(1)} Gbps`
+  }
+  if (mbps >= 1000) {
+    const gbps = mbps / 1000
+    return `${gbps % 1 === 0 ? gbps.toFixed(1) : gbps.toFixed(1)} Gbps`
+  }
+  return `${mbps.toFixed(1)} Mbps`
+}
+
+export function getSpeedCategory(mbps: number | null): Exclude<SpeedCategory, 'DOWN'> {
+  if (mbps === null || mbps <= 0) return 'UNKNOWN'
+  if (mbps >= 100_000) return '100_GBPS'
+  if (mbps >= 20_000) return '20_GBPS'
+  if (mbps >= 10_000) return '10_GBPS'
+  if (mbps >= 1_000) return '1_GBPS'
+  if (mbps >= 100) return '100_MBPS'
+  if (mbps >= 10) return '10_MBPS'
+  return 'UNKNOWN'
+}
+
+export function isLinkDown(edge: Pick<TopologyEdge, 'operStatus'>): boolean {
+  return String(edge.operStatus || '').toLowerCase() === 'down'
+}
+
+export function getLinkStyle(
+  speedMbps: number | null,
+  isDown: boolean,
+): LinkStyle {
+  if (isDown) {
+    return {
+      category: 'DOWN',
+      color: DOWN_LINK_COLOR,
+      strokeDasharray: '8 6',
+      strokeWidth: 2,
+      label: formatSpeed(speedMbps),
+    }
+  }
+
+  const category = getSpeedCategory(speedMbps)
+  return {
+    category,
+    color: LINK_SPEED_COLORS[category],
+    strokeWidth: 2,
+    label: formatSpeed(speedMbps),
+  }
+}
+
+export function resolveEdgeSpeedMbps(edge: TopologyEdge): number | null {
+  return normalizeSpeedToMbps(edge.speed)
+}
+
+export function getPointOnPath(path: string, ratio: number) {
+  if (typeof document === 'undefined') {
+    return { x: 0, y: 0 }
+  }
+  const svgPath = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+  svgPath.setAttribute('d', path)
+  const length = svgPath.getTotalLength()
+  const point = svgPath.getPointAtLength(length * ratio)
+  return { x: point.x, y: point.y }
+}
+
+function canonicalDevicePair(source: string, target: string): [string, string] {
+  return source <= target ? [source, target] : [target, source]
+}
+
+function canonicalPortPair(sourcePort: string, targetPort: string): string {
+  const ports = [sourcePort.trim(), targetPort.trim()].filter(Boolean).sort()
+  return ports.length > 0 ? ports.join('|') : 'default'
+}
+
+function dedupeKey(edge: TopologyEdge): string {
+  const [left, right] = canonicalDevicePair(edge.source, edge.target)
+  const leftPort = edge.source === left ? edge.sourcePort : edge.targetPort
+  const rightPort = edge.source === left ? edge.targetPort : edge.sourcePort
+  return `${left}|${right}|${canonicalPortPair(leftPort || '', rightPort || '')}`
+}
+
+function preferEdge(current: TopologyEdge, candidate: TopologyEdge): TopologyEdge {
+  const currentDown = isLinkDown(current)
+  const candidateDown = isLinkDown(candidate)
+  if (currentDown !== candidateDown) return candidateDown ? current : candidate
+
+  const currentSpeed = resolveEdgeSpeedMbps(current)
+  const candidateSpeed = resolveEdgeSpeedMbps(candidate)
+  if (currentSpeed === null && candidateSpeed !== null) return candidate
+  if (candidateSpeed === null && currentSpeed !== null) return current
+
+  const currentOper = String(current.operStatus || '').toLowerCase()
+  const candidateOper = String(candidate.operStatus || '').toLowerCase()
+  if (currentOper !== 'up' && candidateOper === 'up') return candidate
+  return current
+}
+
+export function dedupeSwitchEdges(edges: TopologyEdge[], switchIds: Set<string>): TopologyEdge[] {
+  const merged = new Map<string, TopologyEdge>()
+
+  for (const edge of edges) {
+    if (!switchIds.has(edge.source) || !switchIds.has(edge.target)) continue
+    if (edge.source === edge.target) continue
+
+    const key = dedupeKey(edge)
+    const existing = merged.get(key)
+    merged.set(key, existing ? preferEdge(existing, edge) : edge)
+  }
+
+  return [...merged.values()]
+}
 
 export function computeBoundsFromNodes(nodes: Node[]) {
   if (nodes.length === 0) {
@@ -38,28 +234,92 @@ export function computeBoundsFromNodes(nodes: Node[]) {
   }
 }
 
-export function dedupeSwitchEdges(edges: TopologyEdge[], switchIds: Set<string>): TopologyEdge[] {
-  const seen = new Set<string>()
-  const result: TopologyEdge[] = []
+export function buildSwitchSearchVisibility(
+  switches: TopologyNode[],
+  edges: TopologyEdge[],
+  searchQuery: string,
+): {
+  matchIds: Set<string>
+  connectedIds: Set<string>
+  dimmedIds: Set<string>
+} {
+  const switchIds = new Set(switches.map((sw) => sw.id))
+  const trimmed = searchQuery.trim().toLowerCase()
 
-  for (const edge of edges) {
-    if (!switchIds.has(edge.source) || !switchIds.has(edge.target)) continue
-    if (edge.source === edge.target) continue
-
-    const pair = [edge.source, edge.target].sort().join('|')
-    if (seen.has(pair)) continue
-    seen.add(pair)
-    result.push(edge)
+  if (!trimmed) {
+    return {
+      matchIds: new Set(),
+      connectedIds: new Set(switchIds),
+      dimmedIds: new Set(),
+    }
   }
 
-  return result
+  const matchIds = new Set<string>()
+  for (const sw of switches) {
+    const hostname = (sw.hostname || sw.label || '').toLowerCase()
+    const ip = (sw.ip || sw.managementAddress || '').toLowerCase()
+    if (hostname.includes(trimmed) || ip.includes(trimmed)) {
+      matchIds.add(sw.id)
+    }
+  }
+
+  if (matchIds.size === 0) {
+    return {
+      matchIds,
+      connectedIds: new Set(switchIds),
+      dimmedIds: new Set(),
+    }
+  }
+
+  const connectedIds = new Set<string>(matchIds)
+  const switchEdges = dedupeSwitchEdges(edges, switchIds)
+  for (const edge of switchEdges) {
+    if (matchIds.has(edge.source)) connectedIds.add(edge.target)
+    if (matchIds.has(edge.target)) connectedIds.add(edge.source)
+  }
+
+  const dimmedIds = new Set<string>()
+  for (const id of switchIds) {
+    if (!connectedIds.has(id)) dimmedIds.add(id)
+  }
+
+  return { matchIds, connectedIds, dimmedIds }
+}
+
+function toFlowEdge(edge: TopologyEdge): Edge<SwitchEdgeData> {
+  const speedMbps = resolveEdgeSpeedMbps(edge)
+  const down = isLinkDown(edge)
+  const linkStyle = getLinkStyle(speedMbps, down)
+
+  return {
+    id: edge.id,
+    source: edge.source,
+    target: edge.target,
+    type: 'switchEdge',
+    animated: false,
+    selectable: false,
+    data: {
+      speedMbps,
+      speedLabel: linkStyle.label,
+      linkStyle,
+      sourcePort: edge.sourcePort || '',
+      targetPort: edge.targetPort || '',
+      operStatus: edge.operStatus || '',
+    },
+    style: {
+      stroke: linkStyle.color,
+      strokeWidth: linkStyle.strokeWidth,
+      strokeDasharray: linkStyle.strokeDasharray,
+    },
+  }
 }
 
 export function buildSwitchGraph(
   switches: TopologyNode[],
   edges: TopologyEdge[],
   positionOverrides?: Record<string, { x: number; y: number }>,
-): { nodes: Node[]; edges: Edge[]; bounds: { width: number; height: number } } {
+  searchQuery = '',
+): { nodes: Node<SwitchNodeData>[]; edges: Edge<SwitchEdgeData>[]; bounds: { width: number; height: number } } {
   if (switches.length === 0) {
     return {
       nodes: [],
@@ -70,34 +330,28 @@ export function buildSwitchGraph(
 
   const switchIds = new Set(switches.map((sw) => sw.id))
   const switchEdges = dedupeSwitchEdges(edges, switchIds)
+  const searchVisibility = buildSwitchSearchVisibility(switches, edges, searchQuery)
 
-  const nodes: Node[] = switches.map((sw) => ({
-    id: sw.id,
-    type: 'switchNode',
-    position: positionOverrides?.[sw.id] ?? { x: 0, y: 0 },
-    draggable: true,
-    data: {
-      hostname: sw.hostname || sw.label || 'Unknown',
-      ip: sw.ip || sw.managementAddress || '',
-      status: sw.status || sw.details?.status || 'Unknown',
-    } satisfies SwitchNodeData,
-  }))
+  const nodes: Node<SwitchNodeData>[] = switches.map((sw) => {
+    const isMatch = searchVisibility.matchIds.has(sw.id)
+    const isDimmed = searchVisibility.dimmedIds.has(sw.id)
 
-  const flowEdges: Edge[] = switchEdges.map((edge) => ({
-    id: edge.id,
-    source: edge.source,
-    target: edge.target,
-    type: 'smoothstep',
-    animated: edge.animated ?? false,
-    style: {
-      stroke: edge.status === 'stale' ? '#94a3b8' : '#3b82f6',
-      strokeWidth: 2,
-    },
-    markerEnd: {
-      type: MarkerType.ArrowClosed,
-      color: edge.status === 'stale' ? '#94a3b8' : '#3b82f6',
-    },
-  }))
+    return {
+      id: sw.id,
+      type: 'switchNode',
+      position: positionOverrides?.[sw.id] ?? { x: 0, y: 0 },
+      draggable: true,
+      data: {
+        hostname: sw.hostname || sw.label || 'Unknown',
+        ip: sw.ip || sw.managementAddress || '',
+        status: sw.status || sw.details?.status || 'Unknown',
+        highlighted: isMatch,
+        dimmed: isDimmed,
+      },
+    }
+  })
+
+  const flowEdges = switchEdges.map(toFlowEdge)
 
   const needsLayout = nodes.some((node) => !positionOverrides?.[node.id])
 
@@ -128,7 +382,7 @@ export function buildSwitchGraph(
   }
 }
 
-function layoutSwitchGrid(nodes: Node[]) {
+function layoutSwitchGrid(nodes: Node<SwitchNodeData>[]) {
   const cols = Math.max(1, Math.ceil(Math.sqrt(nodes.length)))
   const gapX = 220
   const gapY = 120
@@ -154,7 +408,7 @@ function layoutSwitchGrid(nodes: Node[]) {
   }
 }
 
-function layoutSwitchGraph(nodes: Node[], edges: Edge[]) {
+function layoutSwitchGraph(nodes: Node<SwitchNodeData>[], edges: Edge<SwitchEdgeData>[]) {
   if (edges.length === 0) {
     const grid = layoutSwitchGrid(nodes)
     return { nodes: grid.nodes, edges, bounds: grid.bounds }

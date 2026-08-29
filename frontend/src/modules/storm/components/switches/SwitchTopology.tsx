@@ -16,6 +16,8 @@ import { useTopologyLayout, useSaveTopologyLayoutMutation } from '@/hooks/useTop
 import { Button } from '@/shared/ui/button'
 import { cn } from '@/lib/utils'
 import { SwitchNode } from './SwitchNode'
+import { SwitchEdge } from './SwitchEdge'
+import { LinkSpeedLegend } from './LinkSpeedLegend'
 import {
   buildSwitchGraph,
   dedupeSwitchEdges,
@@ -26,12 +28,14 @@ import {
 } from './switchTopologyUtils'
 
 const nodeTypes = { switchNode: SwitchNode }
+const edgeTypes = { switchEdge: SwitchEdge }
 
 type LayoutSaveStatus = 'idle' | 'saved' | 'unsaved' | 'saving' | 'error'
 
 interface SwitchTopologyProps {
   switches: TopologyNode[]
   edges: TopologyEdge[]
+  searchQuery?: string
 }
 
 function buildStructureKey(switches: TopologyNode[], edges: TopologyEdge[]) {
@@ -43,7 +47,7 @@ function buildStructureKey(switches: TopologyNode[], edges: TopologyEdge[]) {
   return `${[...switchIds].sort().join('|')}::${edgePairs}`
 }
 
-export function SwitchTopology({ switches, edges }: SwitchTopologyProps) {
+export function SwitchTopology({ switches, edges, searchQuery = '' }: SwitchTopologyProps) {
   const layoutQuery = useTopologyLayout(SWITCHES_LAYOUT_VIEW_KEY)
   const saveLayoutMutation = useSaveTopologyLayoutMutation()
 
@@ -103,26 +107,22 @@ export function SwitchTopology({ switches, edges }: SwitchTopologyProps) {
     )
 
     if (!structureChanged && nodes.length > 0) {
+      const graph = buildSwitchGraph(switches, edges, positionMap, searchQuery)
       setNodes((current) =>
         current.map((node) => {
-          const sw = switches.find((item) => item.id === node.id)
-          if (!sw) return node
-          const status = sw.status || sw.details?.status || 'Unknown'
+          const updated = graph.nodes.find((item) => item.id === node.id)
+          if (!updated) return node
           return {
             ...node,
-            data: {
-              ...node.data,
-              hostname: sw.hostname || sw.label || 'Unknown',
-              ip: sw.ip || sw.managementAddress || '',
-              status,
-            },
+            data: updated.data,
           }
         }),
       )
+      setFlowEdges(graph.edges)
       return
     }
 
-    const graph = buildSwitchGraph(switches, edges, positionMap)
+    const graph = buildSwitchGraph(switches, edges, positionMap, searchQuery)
 
     sessionPositionsRef.current = Object.fromEntries(
       graph.nodes.map((node) => [node.id, node.position]),
@@ -139,6 +139,7 @@ export function SwitchTopology({ switches, edges }: SwitchTopologyProps) {
     savedPositions,
     layoutQuery.isLoading,
     saveStatus,
+    searchQuery,
     nodes.length,
     setNodes,
     setFlowEdges,
@@ -215,7 +216,9 @@ export function SwitchTopology({ switches, edges }: SwitchTopologyProps) {
   }
 
   return (
-    <div className="relative min-h-[420px] max-h-[calc(100vh-15rem)] rounded-xl border border-border/60 bg-background/40">
+    <div className="space-y-3">
+      <LinkSpeedLegend />
+      <div className="relative min-h-[420px] max-h-[calc(100vh-15rem)] rounded-xl border border-border/60 bg-background/40">
       <div className="pointer-events-none absolute right-3 top-3 z-20">
         <div className="pointer-events-auto flex flex-wrap items-center gap-2 rounded-lg border border-border/70 bg-card/95 px-2.5 py-1.5 text-xs font-medium text-foreground shadow-sm backdrop-blur-md">
           <span
@@ -269,6 +272,7 @@ export function SwitchTopology({ switches, edges }: SwitchTopologyProps) {
             onEdgesChange={onEdgesChange}
             onNodeDragStop={onNodeDragStop}
             nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
             onInit={setRfInstance}
             minZoom={0.25}
             maxZoom={2}
@@ -283,6 +287,7 @@ export function SwitchTopology({ switches, edges }: SwitchTopologyProps) {
             <Controls showInteractive={false} />
           </ReactFlow>
         </div>
+      </div>
       </div>
     </div>
   )

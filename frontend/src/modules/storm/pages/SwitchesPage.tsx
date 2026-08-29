@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { Search } from 'lucide-react'
 
 import { PageHeader } from '@/shared/components/PageHeader'
@@ -9,16 +9,6 @@ import { Input } from '@/shared/ui/input'
 import { useTopologySwitches, useFullTopology } from '@/hooks/useTopologyData'
 import { SwitchTopology } from '@/modules/storm/components/switches/SwitchTopology'
 
-function matchesSwitchSearch(
-  hostname: string,
-  ip: string,
-  query: string,
-): boolean {
-  const q = query.trim().toLowerCase()
-  if (!q) return true
-  return hostname.toLowerCase().includes(q) || ip.toLowerCase().includes(q)
-}
-
 export function SwitchesPage() {
   const [search, setSearch] = useState('')
   const switchesQuery = useTopologySwitches()
@@ -26,14 +16,6 @@ export function SwitchesPage() {
 
   const switches = switchesQuery.data ?? []
   const topologyEdges = topologyQuery.data?.edges ?? []
-
-  const filteredSwitches = useMemo(() => {
-    return switches.filter((sw) => {
-      const hostname = sw.hostname || sw.label || ''
-      const ip = sw.ip || sw.managementAddress || ''
-      return matchesSwitchSearch(hostname, ip, search)
-    })
-  }, [switches, search])
 
   const retry = () => {
     void switchesQuery.refetch()
@@ -104,7 +86,7 @@ export function SwitchesPage() {
                   Switch links could not be loaded. Showing switches without connections.
                 </p>
               ) : null}
-              <SwitchTopology switches={filteredSwitches} edges={topologyEdges} />
+              <SwitchTopology switches={switches} edges={topologyEdges} searchQuery={search} />
             </div>
           )}
         </CardContent>
