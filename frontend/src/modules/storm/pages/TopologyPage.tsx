@@ -37,6 +37,14 @@ import {
   mergeLayoutPositions,
   hasSavedLayout,
 } from '@/modules/storm/utils/topologyLayout'
+import { LinkSpeedLegend } from '@/modules/storm/components/switches/LinkSpeedLegend'
+import {
+  getLinkStyle,
+  isLinkDown,
+  normalizeSpeedToMbps,
+  formatSpeed,
+  type LinkStyle,
+} from '@/modules/storm/components/switches/switchTopologyUtils'
 import { toast } from 'sonner'
 
 type NodeHandleSpec = {
@@ -67,14 +75,15 @@ type TopologyEdgeData = {
   protocol?: string
   description?: string
   speed?: string
+  operStatus?: string
+  speedLabel?: string
+  linkStyle?: LinkStyle
   centerLabel?: string
   status?: 'active' | 'stale'
 }
 
 const NODE_WIDTH = 200
 const NODE_HEIGHT = 96
-const EDGE_COLOR = '#3b82f6'
-const TRUNK_EDGE_COLOR = '#f59e0b'
 const STALE_EDGE_COLOR = '#94a3b8'
 
 type LayoutSaveStatus = 'idle' | 'saved' | 'unsaved' | 'saving' | 'error'
@@ -229,11 +238,13 @@ function EdgeLabel({
   y,
   text,
   variant = 'port',
+  accentColor,
 }: {
   x: number
   y: number
   text: string
-  variant?: 'port' | 'center' | 'trunk'
+  variant?: 'port' | 'center' | 'trunk' | 'speed' | 'speed-down'
+  accentColor?: string
 }) {
   if (!text) return null
   return (
@@ -243,12 +254,15 @@ function EdgeLabel({
     >
       <span
         className={cn(
-          'rounded-md border px-1.5 py-0.5 text-[10px] font-medium shadow-sm',
+          'rounded border px-1 py-px text-[9px] font-semibold leading-none shadow-sm',
           variant === 'trunk' &&
             'border-amber-500/50 bg-amber-500/15 font-semibold text-amber-700 dark:text-amber-300',
           variant === 'center' && 'border-border/80 bg-card/95 text-muted-foreground',
           variant === 'port' && 'border-border/80 bg-card/95 font-mono text-foreground/90',
+          variant === 'speed' && 'border-border/80 bg-card/95 text-foreground',
+          variant === 'speed-down' && 'border-red-500/60 bg-red-500/10 text-red-700 dark:text-red-300',
         )}
+        style={accentColor && variant === 'speed' ? { borderColor: `${accentColor}99` } : undefined}
       >
         {text}
       </span>
@@ -402,7 +416,19 @@ const TopologyEdge = memo(function TopologyEdge({
   const edgeData = (data || {}) as TopologyEdgeData
   const isTrunk = Boolean(edgeData.isTrunk)
   const isStale = edgeData.status === 'stale'
-  const stroke = isStale ? STALE_EDGE_COLOR : isTrunk ? TRUNK_EDGE_COLOR : EDGE_COLOR
+  const linkDown = isLinkDown({ operStatus: edgeData.operStatus })
+  const speedMbps = normalizeSpeedToMbps(edgeData.speed)
+  const linkStyle = edgeData.linkStyle ?? getLinkStyle(speedMbps, linkDown)
+
+  let stroke = linkStyle.color
+  let strokeDasharray = linkStyle.strokeDasharray
+  let opacity = 1
+
+  if (isStale && !linkDown) {
+    stroke = STALE_EDGE_COLOR
+    strokeDasharray = '8,6'
+    opacity = 0.45
+  }
 
   const [edgePath] = getSmoothStepPath({
     sourceX,
@@ -420,9 +446,7 @@ const TopologyEdge = memo(function TopologyEdge({
 
   const sourcePort = (edgeData.sourcePort || '').trim()
   const targetPort = (edgeData.targetPort || '').trim()
-  const centerLabel = isTrunk
-    ? 'Trunk'
-    : (edgeData.centerLabel || edgeData.linkType || edgeData.protocol || '').trim()
+  const speedLabel = edgeData.speedLabel || linkStyle.label
 
   return (
     <>
@@ -433,9 +457,9 @@ const TopologyEdge = memo(function TopologyEdge({
         interactionWidth={20}
         style={{
           stroke,
-          strokeWidth: isTrunk ? 2.5 : 2,
-          strokeDasharray: isStale ? '8,6' : isTrunk ? undefined : '6,4',
-          opacity: isStale ? 0.45 : 1,
+          strokeWidth: isTrunk ? 2.5 : linkStyle.strokeWidth,
+          strokeDasharray,
+          opacity,
           ...style,
         }}
       />
@@ -444,9 +468,18 @@ const TopologyEdge = memo(function TopologyEdge({
         <EdgeLabel
           x={centerLabelPoint.x}
           y={centerLabelPoint.y}
-          text={centerLabel}
-          variant={isTrunk ? 'trunk' : 'center'}
+          text={speedLabel}
+          variant={linkDown ? 'speed-down' : 'speed'}
+          accentColor={linkStyle.color}
         />
+        {isTrunk ? (
+          <EdgeLabel
+            x={centerLabelPoint.x}
+            y={centerLabelPoint.y - 14}
+            text="Trunk"
+            variant="trunk"
+          />
+        ) : null}
         <EdgeLabel x={targetLabelPoint.x} y={targetLabelPoint.y} text={targetPort} variant="port" />
       </EdgeLabelRenderer>
     </>
@@ -629,6 +662,9 @@ export function TopologyPage() {
       const handles = edgeHandles.get(e.id)
       const isTrunk = Boolean(e.isTrunk)
       const isStale = e.status === 'stale'
+      const linkDown = isLinkDown(e)
+      const speedMbps = normalizeSpeedToMbps(e.speed)
+      const linkStyle = getLinkStyle(speedMbps, linkDown)
       const sourceStatus = nodeStatusMap.get(e.source)
       const targetStatus = nodeStatusMap.get(e.target)
       const isOffline =
@@ -636,7 +672,7 @@ export function TopologyPage() {
       const isInactive = isOffline || isStale
       const edgeStatus: 'active' | 'stale' = isInactive ? 'stale' : 'active'
 
-      const stroke = isInactive ? STALE_EDGE_COLOR : isTrunk ? TRUNK_EDGE_COLOR : EDGE_COLOR
+      const stroke = isInactive && !linkDown ? STALE_EDGE_COLOR : linkStyle.color
       return {
         id: e.id,
         source: e.source,
@@ -644,7 +680,7 @@ export function TopologyPage() {
         sourceHandle: handles?.sourceHandle,
         targetHandle: handles?.targetHandle,
         type: 'topologyEdge',
-        animated: !isTrunk && !isInactive,
+        animated: !isTrunk && !isInactive && !linkDown,
         data: {
           sourcePort: e.sourcePort,
           targetPort: e.targetPort,
@@ -653,13 +689,15 @@ export function TopologyPage() {
           protocol: e.protocol,
           description: e.description,
           speed: e.speed,
-          centerLabel: e.isTrunk ? 'Trunk' : e.linkType || e.protocol,
+          operStatus: e.operStatus,
+          speedLabel: linkStyle.label,
+          linkStyle,
           status: edgeStatus,
         } satisfies TopologyEdgeData,
         style: {
           stroke,
-          strokeWidth: isTrunk ? 2.5 : 2,
-          opacity: isInactive ? 0.45 : 1,
+          strokeWidth: isTrunk ? 2.5 : linkStyle.strokeWidth,
+          opacity: isInactive && !linkDown ? 0.45 : 1,
         },
         markerEnd: {
           type: MarkerType.ArrowClosed,
@@ -864,6 +902,14 @@ export function TopologyPage() {
         </div>
 
         <div className="relative min-h-[420px] max-h-[calc(100vh-15rem)] rounded-xl border border-border/70 bg-card/40">
+          {nodes.length > 0 ? (
+            <div className="pointer-events-none absolute left-3 top-3 z-20">
+              <div className="pointer-events-auto">
+                <LinkSpeedLegend />
+              </div>
+            </div>
+          ) : null}
+
           {isLoadingActive || layoutQuery.isLoading ? (
             <div className="absolute inset-0 z-10 flex items-center justify-center bg-card/50 backdrop-blur-sm">
               <LoadingState label="Drawing topology…" />
@@ -970,11 +1016,7 @@ export function TopologyPage() {
             <div className="text-foreground capitalize">{hoveredEdge.data.linkType || hoveredEdge.data.protocol || 'Unknown'}</div>
             <div className="text-muted-foreground">Speed:</div>
             <div className="text-foreground">
-              {hoveredEdge.data.speed 
-                ? (hoveredEdge.data.speed.match(/^\d+$/) || hoveredEdge.data.speed.match(/^a-\d+$/) 
-                    ? `${hoveredEdge.data.speed} Mbps` 
-                    : hoveredEdge.data.speed)
-                : 'Unknown'}
+              {formatSpeed(normalizeSpeedToMbps(hoveredEdge.data.speed))}
             </div>
             <div className="text-muted-foreground">Link:</div>
             <div className="text-foreground capitalize">
