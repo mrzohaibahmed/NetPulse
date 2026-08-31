@@ -5,7 +5,6 @@ import {
   Background,
   BaseEdge,
   EdgeLabelRenderer,
-  MarkerType,
   Handle,
   Position,
   getSmoothStepPath,
@@ -39,10 +38,10 @@ import {
 } from '@/modules/storm/utils/topologyLayout'
 import {
   formatSpeed,
-  getLinkStyle,
-  isLinkDown,
+  buildTopologyFlowEdge,
+  isTopologyOfflineStatus,
   normalizeSpeedToMbps,
-  type LinkStyle,
+  type TopologyFlowEdgeData,
 } from '@/modules/storm/components/switches/switchTopologyUtils'
 import { toast } from 'sonner'
 
@@ -66,27 +65,10 @@ type TopologyNodeData = {
   handles: NodeHandleSpec[]
 }
 
-type TopologyEdgeData = {
-  sourcePort?: string
-  targetPort?: string
-  isTrunk?: boolean
-  linkType?: string
-  protocol?: string
-  description?: string
-  speed?: string
-  operStatus?: string
-  vlanSummary?: string
-  speedLabel?: string
-  linkStyle?: LinkStyle
-  centerLabel?: string
-  status?: 'active' | 'stale'
-}
+type TopologyEdgeData = TopologyFlowEdgeData
 
 const NODE_WIDTH = 200
 const NODE_HEIGHT = 96
-const EDGE_COLOR = '#3b82f6'
-const TRUNK_EDGE_COLOR = '#f59e0b'
-const STALE_EDGE_COLOR = '#94a3b8'
 
 type LayoutSaveStatus = 'idle' | 'saved' | 'unsaved' | 'saving' | 'error'
 
@@ -94,13 +76,27 @@ function isSwitchType(type: string) {
   return type.toLowerCase().includes('switch')
 }
 
-function isOfflineDeviceStatus(status: string | undefined) {
-  const value = (status || '').toLowerCase()
-  return (
-    value.includes('offline') ||
-    value.includes('not reachable') ||
-    value.includes('critical')
-  )
+function buildNodeStatusMap(nodes: { id: string; status?: string }[]) {
+  return new Map(nodes.map((n) => [n.id, n.status?.toLowerCase() || '']))
+}
+
+function apiEdgesToFlowEdges(
+  visibleEdges: ApiTopologyEdge[],
+  nodeStatusMap: Map<string, string>,
+  edgeHandles: Map<string, { sourceHandle: string; targetHandle: string }>,
+): Edge[] {
+  return visibleEdges.map((edge) => {
+    const handles = edgeHandles.get(edge.id)
+    const built = buildTopologyFlowEdge(edge, nodeStatusMap)
+    return {
+      id: edge.id,
+      source: edge.source,
+      target: edge.target,
+      sourceHandle: handles?.sourceHandle,
+      targetHandle: handles?.targetHandle,
+      ...built,
+    }
+  })
 }
 
 function displayHostname(data: TopologyNodeData) {
@@ -271,7 +267,7 @@ const TopologyDeviceNode = memo(function TopologyDeviceNode({ data }: NodeProps)
   const nodeData = data as TopologyNodeData
   const switchLike = isSwitchType(nodeData.type || '')
   const details = nodeData.details
-  const isOffline = isOfflineDeviceStatus(details?.status || nodeData.status)
+  const isOffline = isTopologyOfflineStatus(details?.status || nodeData.status)
 
   const card = (
     <div
@@ -412,8 +408,6 @@ const TopologyEdge = memo(function TopologyEdge({
 }: EdgeProps) {
   const edgeData = (data || {}) as TopologyEdgeData
   const isTrunk = Boolean(edgeData.isTrunk)
-  const isStale = edgeData.status === 'stale'
-  const stroke = isStale ? STALE_EDGE_COLOR : isTrunk ? TRUNK_EDGE_COLOR : EDGE_COLOR
 
   const [edgePath] = getSmoothStepPath({
     sourceX,
@@ -442,13 +436,7 @@ const TopologyEdge = memo(function TopologyEdge({
         path={edgePath}
         markerEnd={markerEnd}
         interactionWidth={20}
-        style={{
-          stroke,
-          strokeWidth: isTrunk ? 2.5 : 2,
-          strokeDasharray: isStale ? '8,6' : isTrunk ? undefined : '6,4',
-          opacity: isStale ? 0.45 : 1,
-          ...style,
-        }}
+        style={style}
       />
       <EdgeLabelRenderer>
         <EdgeLabel x={sourceLabelPoint.x} y={sourceLabelPoint.y} text={sourcePort} variant="port" />
@@ -471,7 +459,6 @@ export function TopologyPage() {
   const [selectedSwitchId, setSelectedSwitchId] = useState<string | null>(null)
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
-  const [canvasSize, setCanvasSize] = useState({ width: 960, height: 560 })
   const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null)
   const [saveStatus, setSaveStatus] = useState<LayoutSaveStatus>('idle')
 
@@ -505,6 +492,8 @@ export function TopologyPage() {
   const layoutInitializedRef = useRef(false)
   const prevStructureKeyRef = useRef('')
   const prevViewKeyRef = useRef(viewKey)
+  const prevNodeIdsRef = useRef<Set<string>>(new Set())
+  const pendingFitNodeIdsRef = useRef<string[]>([])
   /** Live session positions per view — survives discovery polling without auto-persisting. */
   const sessionPositionsRef = useRef<Record<string, Record<string, { x: number; y: number }>>>({})
 
@@ -539,6 +528,8 @@ export function TopologyPage() {
     if (prevViewKeyRef.current !== viewKey) {
       prevViewKeyRef.current = viewKey
       prevStructureKeyRef.current = ''
+      prevNodeIdsRef.current = new Set()
+      pendingFitNodeIdsRef.current = []
       layoutInitializedRef.current = false
       initialViewportAppliedRef.current = false
       setSaveStatus(layoutQuery.data ? 'saved' : 'idle')
@@ -589,6 +580,7 @@ export function TopologyPage() {
     )
 
     if (!structureChanged && nodes.length > 0) {
+      const nodeStatusMap = buildNodeStatusMap(activeData.nodes)
       setNodes((current) =>
         current.map((node) => {
           const source = activeData.nodes.find((item) => item.id === node.id)
@@ -612,6 +604,25 @@ export function TopologyPage() {
           }
         }),
       )
+      setEdges((current) => {
+        const apiById = new Map(visibleEdges.map((edge) => [edge.id, edge]))
+        return current
+          .filter((edge) => apiById.has(edge.id))
+          .map((edge) => {
+            const apiEdge = apiById.get(edge.id)!
+            const handles = edgeHandles.get(edge.id)
+            const built = buildTopologyFlowEdge(apiEdge, nodeStatusMap)
+            return {
+              ...edge,
+              sourceHandle: handles?.sourceHandle ?? edge.sourceHandle,
+              targetHandle: handles?.targetHandle ?? edge.targetHandle,
+              ...built,
+              id: edge.id,
+              source: edge.source,
+              target: edge.target,
+            }
+          })
+      })
       return
     }
 
@@ -634,84 +645,27 @@ export function TopologyPage() {
       } satisfies TopologyNodeData,
     }))
 
-    const nodeStatusMap = new Map(activeData.nodes.map((n) => [n.id, n.status?.toLowerCase() || '']))
+    const nodeStatusMap = buildNodeStatusMap(activeData.nodes)
 
-    const flowEdges: Edge[] = visibleEdges.map((e) => {
-      const handles = edgeHandles.get(e.id)
-      const isTrunk = Boolean(e.isTrunk)
-      const isStale = e.status === 'stale'
-      const linkDown = isLinkDown(e)
-      const speedMbps = normalizeSpeedToMbps(e.speed)
-      const linkStyle = getLinkStyle(speedMbps, linkDown)
-      const sourceStatus = nodeStatusMap.get(e.source)
-      const targetStatus = nodeStatusMap.get(e.target)
-      const isOffline =
-        isOfflineDeviceStatus(sourceStatus) || isOfflineDeviceStatus(targetStatus)
-      const isInactive = isOffline || isStale
-      const edgeStatus: 'active' | 'stale' = isInactive ? 'stale' : 'active'
-
-      const stroke = isInactive && !linkDown ? STALE_EDGE_COLOR : linkStyle.color
-      return {
-        id: e.id,
-        source: e.source,
-        target: e.target,
-        sourceHandle: handles?.sourceHandle,
-        targetHandle: handles?.targetHandle,
-        type: 'topologyEdge',
-        animated: !isTrunk && !isInactive && !linkDown,
-        data: {
-          sourcePort: e.sourcePort,
-          targetPort: e.targetPort,
-          isTrunk: e.isTrunk,
-          linkType: e.linkType,
-          protocol: e.protocol,
-          description: e.description,
-          speed: e.speed,
-          operStatus: e.operStatus,
-          vlanSummary: e.vlanSummary,
-          speedLabel: linkStyle.label,
-          linkStyle,
-          status: edgeStatus,
-        } satisfies TopologyEdgeData,
-        style: {
-          stroke,
-          strokeWidth: isTrunk ? 2.5 : linkStyle.strokeWidth,
-          opacity: isInactive && !linkDown ? 0.45 : 1,
-        },
-        markerEnd: {
-          type: MarkerType.ArrowClosed,
-          width: 16,
-          height: 16,
-          color: stroke,
-        },
-      }
-    })
+    const flowEdges: Edge[] = apiEdgesToFlowEdges(visibleEdges, nodeStatusMap, edgeHandles)
 
     const needsLayout = flowNodes.some((node) => !positionMap[node.id])
     let nextNodes = flowNodes
 
     if (needsLayout) {
-      const { nodes: layoutedNodes, bounds } = getLayoutedElements(flowNodes, flowEdges, 'TB')
+      const { nodes: layoutedNodes } = getLayoutedElements(flowNodes, flowEdges, 'TB')
       nextNodes = layoutedNodes.map((node) => ({
         ...node,
         position: positionMap[node.id] ?? node.position,
       }))
-      setCanvasSize({ width: bounds.width, height: bounds.height })
-    } else {
-      let minX = Infinity
-      let minY = Infinity
-      let maxX = -Infinity
-      let maxY = -Infinity
-      for (const node of nextNodes) {
-        minX = Math.min(minX, node.position.x)
-        minY = Math.min(minY, node.position.y)
-        maxX = Math.max(maxX, node.position.x + NODE_WIDTH)
-        maxY = Math.max(maxY, node.position.y + NODE_HEIGHT)
-      }
-      setCanvasSize({
-        width: Math.max(maxX - minX + 192, 960),
-        height: Math.max(maxY - minY + 192, 560),
-      })
+    }
+
+    const currentNodeIds = new Set(activeData.nodes.map((node) => node.id))
+    const hadPreviousNodes = prevNodeIdsRef.current.size > 0
+    const addedNodeIds = [...currentNodeIds].filter((id) => !prevNodeIdsRef.current.has(id))
+    prevNodeIdsRef.current = currentNodeIds
+    if (hadPreviousNodes && addedNodeIds.length > 0) {
+      pendingFitNodeIdsRef.current = addedNodeIds
     }
 
     // Keep session positions for existing nodes after rebuild (incl. dagre for new nodes).
@@ -721,7 +675,9 @@ export function TopologyPage() {
 
     setNodes(nextNodes)
     setEdges(flowEdges)
-    initialViewportAppliedRef.current = false
+    if (addedNodeIds.length === 0) {
+      initialViewportAppliedRef.current = false
+    }
   }, [
     activeData,
     selectedSwitchId,
@@ -736,16 +692,34 @@ export function TopologyPage() {
   ])
 
   useEffect(() => {
-    if (!rfInstance || nodes.length === 0 || initialViewportAppliedRef.current) return
+    if (!rfInstance || nodes.length === 0) return
+
+    const pendingFit = pendingFitNodeIdsRef.current
+    if (pendingFit.length > 0) {
+      pendingFitNodeIdsRef.current = []
+      requestAnimationFrame(() => {
+        rfInstance.fitView({
+          nodes: pendingFit.map((id) => ({ id })),
+          padding: 0.2,
+          duration: 250,
+          maxZoom: 1.5,
+        })
+      })
+      initialViewportAppliedRef.current = true
+      return
+    }
+
+    if (initialViewportAppliedRef.current) return
     if (savedLayoutExists) {
       initialViewportAppliedRef.current = true
       return
     }
+
     requestAnimationFrame(() => {
       rfInstance.fitView({ padding: 0.18, duration: 250 })
       initialViewportAppliedRef.current = true
     })
-  }, [rfInstance, nodes.length, viewKey, savedLayoutExists])
+  }, [rfInstance, nodes.length, viewKey, savedLayoutExists, topologyStructureKey])
 
   const captureSessionPositions = useCallback(
     (nextNodes: Node[]) => {
@@ -854,7 +828,7 @@ export function TopologyPage() {
                 className={cn(
                   'w-56 shrink-0 cursor-pointer border-border/70 bg-card/70 shadow-sm transition-all hover:border-primary',
                   selectedSwitchId === sw.id && 'border-primary bg-primary/5 ring-1 ring-primary',
-                  isOfflineDeviceStatus(sw.status) && 'opacity-70',
+                  isTopologyOfflineStatus(sw.status) && 'opacity-70',
                 )}
                 onClick={() => setSelectedSwitchId(sw.id)}
               >
@@ -880,7 +854,7 @@ export function TopologyPage() {
           </div>
         </div>
 
-        <div className="relative min-h-[420px] max-h-[calc(100vh-15rem)] rounded-xl border border-border/70 bg-card/40">
+        <div className="np-topology-canvas rounded-xl border border-border/70 bg-card/40">
           {isLoadingActive || layoutQuery.isLoading ? (
             <div className="absolute inset-0 z-10 flex items-center justify-center bg-card/50 backdrop-blur-sm">
               <LoadingState label="Drawing topology…" />
@@ -931,39 +905,30 @@ export function TopologyPage() {
               </div>
             </div>
           ) : (
-            <div className="max-h-[calc(100vh-15rem)] min-h-[420px] overflow-auto">
-              <div
-                style={{
-                  width: Math.max(canvasSize.width, 960),
-                  height: Math.max(canvasSize.height, 420),
-                  minWidth: '100%',
-                }}
-              >
-                <ReactFlow
-                  nodes={nodes}
-                  edges={edges}
-                  onNodesChange={onNodesChange}
-                  onEdgesChange={onEdgesChange}
-                  onNodeDragStop={onNodeDragStop}
-                  onEdgeMouseEnter={onEdgeMouseEnter}
-                  onEdgeMouseMove={onEdgeMouseMove}
-                  onEdgeMouseLeave={onEdgeMouseLeave}
-                  onInit={setRfInstance}
-                  nodeTypes={nodeTypes}
-                  edgeTypes={edgeTypes}
-                  nodesDraggable
-                  panOnDrag
-                  zoomOnScroll
-                  minZoom={0.25}
-                  maxZoom={2}
-                  proOptions={{ hideAttribution: true }}
-                  defaultEdgeOptions={{ type: 'topologyEdge' }}
-                >
-                  <Background color="#94a3b8" gap={18} size={1} />
-                  <Controls className="border-border bg-card fill-foreground" />
-                </ReactFlow>
-              </div>
-            </div>
+            <ReactFlow
+              className="h-full w-full"
+              nodes={nodes}
+              edges={edges}
+              onNodesChange={onNodesChange}
+              onEdgesChange={onEdgesChange}
+              onNodeDragStop={onNodeDragStop}
+              onEdgeMouseEnter={onEdgeMouseEnter}
+              onEdgeMouseMove={onEdgeMouseMove}
+              onEdgeMouseLeave={onEdgeMouseLeave}
+              onInit={setRfInstance}
+              nodeTypes={nodeTypes}
+              edgeTypes={edgeTypes}
+              nodesDraggable
+              panOnDrag
+              zoomOnScroll
+              minZoom={0.25}
+              maxZoom={2}
+              proOptions={{ hideAttribution: true }}
+              defaultEdgeOptions={{ type: 'topologyEdge' }}
+            >
+              <Background color="#94a3b8" gap={18} size={1} />
+              <Controls className="border-border bg-card fill-foreground" />
+            </ReactFlow>
           )}
         </div>
       </div>

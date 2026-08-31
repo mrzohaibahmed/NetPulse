@@ -76,10 +76,10 @@ export function DeviceDrawer({ deviceId, open, onOpenChange }: DeviceDrawerProps
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className="flex w-full flex-col p-0 sm:max-w-xl md:max-w-2xl">
         <SheetHeader className="space-y-1 border-b border-border bg-card/40 p-6 pb-4">
-          <SheetTitle className="text-xl tracking-tight">
+          <SheetTitle className="truncate text-xl tracking-tight">
             {device?.hostname ?? 'Device details'}
           </SheetTitle>
-          <SheetDescription className="mono text-sm">
+          <SheetDescription className="mono truncate text-sm">
             {device
               ? `${device.ipAddress} · ${displayDeviceType(device.deviceType, device.classificationConfidence)}`
               : 'Loading device telemetry…'}
@@ -419,7 +419,7 @@ export function DeviceDrawer({ deviceId, open, onOpenChange }: DeviceDrawerProps
                             {openPorts.length === 0 ? (
                               <EmptyState title="No open ports detected" className="py-6" />
                             ) : (
-                              <div className="overflow-auto rounded-lg border border-border/60">
+                              <div className="w-full max-w-full overflow-x-auto rounded-lg border border-border/60">
                                 <Table>
                                   <TableHeader>
                                     <TableRow>
@@ -467,7 +467,7 @@ export function DeviceDrawer({ deviceId, open, onOpenChange }: DeviceDrawerProps
                                 icon={<Shield className="h-4 w-4" />}
                                 title={`All Scanned Ports (${networkInfo.ports.length})`}
                               />
-                              <div className="overflow-auto rounded-lg border border-border/60">
+                              <div className="w-full max-w-full overflow-x-auto rounded-lg border border-border/60">
                                 <Table>
                                   <TableHeader>
                                     <TableRow>

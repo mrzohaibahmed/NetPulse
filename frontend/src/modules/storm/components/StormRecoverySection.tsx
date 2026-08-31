@@ -205,7 +205,7 @@ export function StormRecoverySection({
                   <RecoveryStatusBadge status={selectedRecovery.recoveryStatus} />
                   <ManualOverrideDetail row={selectedRecovery} />
                   {selectedRecovery.verificationResult?.output ? (
-                    <pre className="max-h-32 overflow-auto rounded-md border border-border bg-zinc-950 p-3 font-mono text-xs text-zinc-300">
+                    <pre className="np-log-block max-h-32 text-muted-foreground dark:text-zinc-300">
                       {selectedRecovery.verificationResult.output}
                     </pre>
                   ) : null}
@@ -231,7 +231,7 @@ export function StormRecoverySection({
                     }
                   />
                   {selectedRecovery.verificationResult?.output ? (
-                    <pre className="max-h-32 overflow-auto rounded-md border border-border bg-zinc-950 p-3 font-mono text-xs text-zinc-300">
+                    <pre className="np-log-block max-h-32 text-muted-foreground dark:text-zinc-300">
                       {selectedRecovery.verificationResult.output}
                     </pre>
                   ) : null}

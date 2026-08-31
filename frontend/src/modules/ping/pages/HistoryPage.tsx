@@ -70,7 +70,7 @@ export function HistoryPage() {
     total === 0 && !debouncedQuery && statusFilter === 'all' && typeFilter === 'all'
 
   return (
-    <div className="np-page">
+    <div className="np-page min-w-0 max-w-full">
       <PageHeader
         title="Ping Monitoring · History"
         description="Manual and automatic ping results across the monitored fleet."
@@ -202,8 +202,8 @@ export function HistoryPage() {
         ) : (
           <Card className="glass overflow-hidden rounded-xl">
             <CardContent className="p-0">
-              <div className="overflow-auto">
-                <Table>
+              <div className="w-full max-w-full overflow-x-auto">
+                <Table className="min-w-[720px]">
                   <TableHeader className="sticky top-0 z-10 bg-card/95 backdrop-blur">
                     <TableRow>
                       <TableHead className="pl-5">

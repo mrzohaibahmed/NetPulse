@@ -38,7 +38,11 @@ import { deviceTypeIcon } from '@/lib/device-icons'
 import { displayDeviceType, DEVICE_TYPES } from '@/modules/ping/constants/devices'
 import { formatMs, formatRelative } from '@/utils/format'
 import type { Device } from '@/types'
-import { getDevices } from '@/api'
+import { getDevices, updateDevice } from '@/api'
+import { useQueryClient } from '@tanstack/react-query'
+import { queryKeys } from '@/hooks/queryKeys'
+import { fetchAllListPages } from '@/utils/fetchAllPages'
+import { runWithConcurrency } from '@/utils/runWithConcurrency'
 import { toast } from 'sonner'
 import { DeviceDrawer } from '@/modules/ping/components/DeviceDrawer'
 import { DeviceFormDialog } from '@/modules/ping/components/DeviceFormDialog'
@@ -82,6 +86,7 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table'
 
 const DEFAULT_LIMIT = 25
+const BULK_MONITOR_CONCURRENCY = 5
 
 export function DevicesPage() {
   const { isAdmin, isUser } = useAuth()
@@ -125,25 +130,48 @@ export function DevicesPage() {
   const nmapScanAll = useNmapScanAllMutation()
   const pingAll = usePingAllDevicesMutation()
   const dash = useDashboardQuery()
+  const queryClient = useQueryClient()
 
   const handleBulkMonitoringUpdate = async (isCritical: boolean | null, enableMonitoring: boolean) => {
     setIsBulkUpdating(true)
     try {
-      const res = await getDevices({ limit: 10000 })
-      const toUpdate = res.data.filter((d: Device) => 
-        (isCritical === null || d.critical === isCritical) && d.monitor !== enableMonitoring
+      const { data: allDevices } = await fetchAllListPages((page, limit) => getDevices({ page, limit }))
+      const toUpdate = allDevices.filter(
+        (d: Device) =>
+          (isCritical === null || d.critical === isCritical) && d.monitor !== enableMonitoring,
       )
-      
+
       if (toUpdate.length === 0) {
-        const targetStr = isCritical === null ? 'all' : (isCritical ? 'critical' : 'non-critical')
+        const targetStr = isCritical === null ? 'all' : isCritical ? 'critical' : 'non-critical'
         toast.info(`All ${targetStr} devices are already ${enableMonitoring ? 'monitored' : 'unmonitored'}.`)
         return
       }
-      for (const d of toUpdate) {
-        await update.mutateAsync({ id: d._id, payload: { monitor: enableMonitoring } })
+
+      let failed = 0
+      await runWithConcurrency(toUpdate, BULK_MONITOR_CONCURRENCY, async (device) => {
+        try {
+          await updateDevice(device._id, { monitor: enableMonitoring })
+        } catch {
+          failed += 1
+        }
+      })
+
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['devices'] }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.all }),
+      ])
+
+      const targetStr = isCritical === null ? 'all' : isCritical ? 'critical' : 'non-critical'
+      const succeeded = toUpdate.length - failed
+      if (failed > 0) {
+        toast.warning(
+          `${enableMonitoring ? 'Enabled' : 'Disabled'} monitoring for ${succeeded}/${toUpdate.length} ${targetStr} device(s).`,
+        )
+      } else {
+        toast.success(
+          `${enableMonitoring ? 'Enabled' : 'Disabled'} monitoring for ${succeeded} ${targetStr} device(s).`,
+        )
       }
-      const targetStr = isCritical === null ? 'all' : (isCritical ? 'critical' : 'non-critical')
-      toast.success(`${enableMonitoring ? 'Enabled' : 'Disabled'} monitoring for ${toUpdate.length} ${targetStr} device(s).`)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Bulk update failed')
     } finally {
@@ -266,16 +294,17 @@ export function DevicesPage() {
           return (
             <button
               type="button"
-              className="flex items-center gap-2 text-left font-semibold text-primary hover:underline"
+              className="flex min-w-0 max-w-[14rem] items-center gap-2 text-left font-semibold text-primary hover:underline sm:max-w-[18rem]"
+              title={row.original.hostname}
               onClick={(e) => {
                 e.stopPropagation()
                 openDrawer(row.original._id)
               }}
             >
-              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
                 <Icon className="h-4 w-4" />
               </span>
-              {row.original.hostname}
+              <span className="truncate">{row.original.hostname}</span>
             </button>
           )
         },
@@ -558,7 +587,7 @@ export function DevicesPage() {
       </section>
 
       {/* 2. Device Inventory */}
-      <section id="inventory-section" className="space-y-4 scroll-mt-24" aria-label="Device inventory">
+      <section id="inventory-section" className="min-w-0 max-w-full space-y-4 scroll-mt-24" aria-label="Device inventory">
         <SectionHeading
           title="Device Inventory"
           description="Search, filter, and manage monitored hosts."
@@ -748,8 +777,8 @@ export function DevicesPage() {
         ) : (
           <Card variant="primary" className="glass overflow-hidden rounded-xl">
             <CardContent className="p-0">
-              <div className="overflow-auto p-1 sm:p-2">
-                <Table>
+              <div className="w-full max-w-full overflow-x-auto p-1 sm:p-2">
+                <Table className="min-w-[960px]">
                   <TableHeader className="sticky top-0 z-10 bg-card/95 backdrop-blur">
                     {table.getHeaderGroups().map((headerGroup) => (
                       <TableRow key={headerGroup.id}>

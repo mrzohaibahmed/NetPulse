@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { useQueries } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import {
   ChevronDown,
   ChevronUp,
@@ -10,7 +10,7 @@ import {
   RefreshCw,
   Radar,
 } from 'lucide-react'
-import { getDeviceInterfaceStats } from '@/api'
+import { getDevices, getInterfaces } from '@/api'
 import { useAuth } from '@/shared/auth/AuthContext'
 import {
   InterfaceStatusBadge,
@@ -32,16 +32,16 @@ import { Card, CardContent } from '@/shared/ui/card'
 import { Input } from '@/shared/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table'
-import { queryKeys } from '@/hooks/queryKeys'
 import { useClientPagination } from '@/hooks/useClientPagination'
-import { useDevicesQuery, useInterfaceMutations, useInterfacesQuery, useRiskQuery } from '@/hooks/queries'
+import { useBatchedDeviceStats } from '@/hooks/useBatchedDeviceStats'
+import { useInterfaceMutations, useRiskQuery } from '@/hooks/queries'
 import { isManagedSwitch } from '@/modules/storm/components/stormShared'
 import type { InterfaceListRow, InterfaceStat } from '@/types'
+import { fetchAllListPages } from '@/utils/fetchAllPages'
 import { formatDateTime, formatRelative } from '@/utils/format'
 import { interfaceNamesMatch } from '@/utils/interfaceNames'
 
-/** Backend max for GET /api/interfaces — fetch full inventory for client grouping. */
-const FETCH_LIMIT = 500
+/** Backend max page size for list APIs — fetchAllListPages walks every page. */
 const DEFAULT_SWITCHES_PER_PAGE = 10
 const DEFAULT_PORTS_PER_PAGE = 25
 const COLLAPSE_KEY = 'netpulse.interfaceInventory.collapsedDevices'
@@ -124,12 +124,17 @@ export function InterfacesEnterprisePage() {
 
   // Ask the API for switch-like types so older switches are not dropped by
   // newest-first pagination when the inventory has many discovered hosts.
-  const devicesQuery = useDevicesQuery({
-    page: 1,
-    limit: FETCH_LIMIT,
-    deviceType: 'switch',
+  const devicesInventoryQuery = useQuery({
+    queryKey: ['devices', 'inventory', 'switch'],
+    queryFn: () =>
+      fetchAllListPages((page, limit) =>
+        getDevices({ page, limit, deviceType: 'switch' }),
+      ),
+    refetchInterval: 20_000,
+    staleTime: 5_000,
   })
-  const devices = devicesQuery.data?.data ?? []
+  const devices = devicesInventoryQuery.data?.data ?? []
+  const devicesInventoryTotal = devicesInventoryQuery.data?.total ?? devices.length
 
   const switchDevices = useMemo(
     () => devices.filter((device) => isManagedSwitch(device.deviceType)),
@@ -140,14 +145,25 @@ export function InterfacesEnterprisePage() {
     [switchDevices],
   )
 
-  const interfacesQuery = useInterfacesQuery({
-    page: 1,
-    limit: FETCH_LIMIT,
-    ...(switchFilter !== 'all' ? { deviceId: switchFilter } : {}),
+  const interfacesInventoryQuery = useQuery({
+    queryKey: ['interfaces', 'inventory', switchFilter],
+    queryFn: () =>
+      fetchAllListPages((page, limit) =>
+        getInterfaces({
+          page,
+          limit,
+          ...(switchFilter !== 'all' ? { deviceId: switchFilter } : {}),
+        }),
+      ),
+    refetchInterval: 20_000,
+    staleTime: 5_000,
   })
   const riskQuery = useRiskQuery({ page: 1, limit: 1000 })
 
-  const interfaces = interfacesQuery.data?.data ?? []
+  const interfaces = interfacesInventoryQuery.data?.data ?? []
+  const interfacesInventoryTotal = interfacesInventoryQuery.data?.total ?? interfaces.length
+  const inventoryTruncated =
+    interfacesInventoryQuery.isSuccess && interfaces.length < interfacesInventoryTotal
   const riskRows = riskQuery.data?.data ?? []
 
   const deviceIds = useMemo(
@@ -158,23 +174,8 @@ export function InterfacesEnterprisePage() {
     [interfaces, switchIdSet],
   )
 
-  const statsQueries = useQueries({
-    queries: deviceIds.map((deviceId) => ({
-      queryKey: queryKeys.interfaceStats(deviceId),
-      queryFn: async () => (await getDeviceInterfaceStats(deviceId)).data,
-      staleTime: 15_000,
-      refetchInterval: 20_000,
-    })),
-  })
-
-  const statsByDevice = useMemo(() => {
-    const map = new Map<string, InterfaceStat[]>()
-    deviceIds.forEach((deviceId, index) => {
-      const data = statsQueries[index]?.data
-      if (data) map.set(deviceId, data)
-    })
-    return map
-  }, [deviceIds, statsQueries])
+  const statsQuery = useBatchedDeviceStats(deviceIds)
+  const statsByDevice = statsQuery.data ?? new Map<string, InterfaceStat[]>()
 
   const rows = useMemo(() => mergeInterfaceRows(interfaces, statsByDevice), [interfaces, statsByDevice])
 
@@ -385,7 +386,7 @@ export function InterfacesEnterprisePage() {
     stormRiskFilter !== 'all' ||
     Boolean(vlanFilter.trim())
 
-  const noSwitchesConfigured = !devicesQuery.isLoading && switchDevices.length === 0
+  const noSwitchesConfigured = !devicesInventoryQuery.isLoading && switchDevices.length === 0
   const hasNonSwitchDevices = devices.length > 0 && switchDevices.length === 0
   const isBusy = mutations.discoverAll.isPending || mutations.collectAll.isPending
 
@@ -445,11 +446,17 @@ export function InterfacesEnterprisePage() {
   }
 
   const isLoading =
-    (devicesQuery.isLoading && devices.length === 0) ||
-    (interfacesQuery.isLoading && switchDevices.length === 0 && rows.length === 0)
+    (devicesInventoryQuery.isLoading && devices.length === 0) ||
+    (interfacesInventoryQuery.isLoading && switchDevices.length === 0 && rows.length === 0)
+
+  const refreshInventory = () => {
+    void devicesInventoryQuery.refetch()
+    void interfacesInventoryQuery.refetch()
+    void statsQuery.refetch()
+  }
 
   return (
-    <div className="np-page mx-auto w-full max-w-[1600px]">
+    <div className="np-page mx-auto w-full min-w-0 max-w-[1600px]">
       <PageHeader
         title="Interface Inventory"
         description="Switch Interface Manager — managed switches and their ports only"
@@ -467,15 +474,7 @@ export function InterfacesEnterprisePage() {
                 </Button>
               </>
             ) : null}
-            <Button
-              type="button"
-              size="sm"
-              variant="secondary"
-              onClick={() => {
-                void devicesQuery.refetch()
-                void interfacesQuery.refetch()
-              }}
-            >
+            <Button type="button" size="sm" variant="secondary" onClick={refreshInventory}>
               Refresh
             </Button>
             {switchDevices.length > 0 ? (
@@ -491,6 +490,22 @@ export function InterfacesEnterprisePage() {
           </div>
         }
       />
+
+      {inventoryTruncated ? (
+        <p className="mb-3 text-sm text-amber-600 dark:text-amber-400">
+          Loaded {interfaces.length} of {interfacesInventoryTotal} interfaces. Refresh or contact an
+          administrator if the inventory looks incomplete.
+        </p>
+      ) : interfacesInventoryQuery.isSuccess && interfaces.length > 0 ? (
+        <p className="mb-3 text-sm text-muted-foreground">
+          {interfaces.length} interface{interfaces.length === 1 ? '' : 's'} across{' '}
+          {switchDevices.length} managed switch{switchDevices.length === 1 ? '' : 'es'}
+          {devices.length < devicesInventoryTotal
+            ? ` (${devices.length} of ${devicesInventoryTotal} switch-type devices loaded)`
+            : ''}
+          .
+        </p>
+      ) : null}
 
       {noSwitchesConfigured ? (
         <EmptyState
@@ -510,6 +525,7 @@ export function InterfacesEnterprisePage() {
         />
       ) : (
         <>
+          <section className="min-w-0 max-w-full">
           <Card className="border-border/70 bg-card/70 shadow-sm">
             <CardContent className="space-y-3 p-4">
               <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
@@ -650,14 +666,14 @@ export function InterfacesEnterprisePage() {
               </div>
               <TableSkeleton />
             </>
-          ) : interfacesQuery.error && switchDevices.length === 0 ? (
+          ) : interfacesInventoryQuery.error && switchDevices.length === 0 ? (
             <ErrorState
               message={
-                interfacesQuery.error instanceof Error
-                  ? interfacesQuery.error.message
+                interfacesInventoryQuery.error instanceof Error
+                  ? interfacesInventoryQuery.error.message
                   : 'Failed to load interfaces'
               }
-              onRetry={() => void interfacesQuery.refetch()}
+              onRetry={() => void interfacesInventoryQuery.refetch()}
             />
           ) : groupedDevices.length === 0 ? (
             <EmptyState
@@ -760,6 +776,7 @@ export function InterfacesEnterprisePage() {
               </div>
             </>
           )}
+          </section>
         </>
       )}
     </div>
@@ -882,7 +899,7 @@ function DeviceInventorySection({
             </div>
           ) : (
             <>
-              <div className="w-full max-w-full">
+              <div className="w-full max-w-full overflow-x-auto">
                 <Table className="min-w-[1080px]">
                   <TableHeader>
                     <TableRow className="hover:bg-transparent">

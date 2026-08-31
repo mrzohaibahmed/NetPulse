@@ -212,7 +212,7 @@ export function SwitchTopology({ switches, edges, searchQuery = '' }: SwitchTopo
   return (
     <div className="space-y-3">
       <LinkSpeedLegend />
-      <div className="relative h-[calc(100vh-15rem)] min-h-[420px] rounded-xl border border-border/60 bg-background/40">
+      <div className="np-topology-canvas rounded-xl border border-border/60 bg-background/40">
       <div className="pointer-events-none absolute right-3 top-3 z-20">
         <div className="pointer-events-auto flex flex-wrap items-center gap-2 rounded-lg border border-border/70 bg-card/95 px-2.5 py-1.5 text-xs font-medium text-foreground shadow-sm backdrop-blur-md">
           <span

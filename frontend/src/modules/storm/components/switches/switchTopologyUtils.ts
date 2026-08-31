@@ -1,5 +1,5 @@
 import dagre from 'dagre'
-import { Position } from '@xyflow/react'
+import { MarkerType, Position } from '@xyflow/react'
 import type { Edge, Node } from '@xyflow/react'
 import type { TopologyEdge, TopologyNode } from '@/api/topologyService'
 import type { SwitchNodeData } from './SwitchNode'
@@ -54,6 +54,119 @@ export const LINK_SPEED_COLORS: Record<Exclude<SpeedCategory, 'DOWN'>, string> =
 }
 
 export const DOWN_LINK_COLOR = '#ef4444'
+export const TOPOLOGY_STALE_EDGE_COLOR = '#94a3b8'
+export const TOPOLOGY_TRUNK_EDGE_COLOR = '#f59e0b'
+
+export function isTopologyOfflineStatus(status: string | undefined): boolean {
+  const value = (status || '').toLowerCase()
+  return (
+    value.includes('offline') ||
+    value.includes('not reachable') ||
+    value.includes('critical')
+  )
+}
+
+export type TopologyFlowEdgeData = SwitchEdgeData & {
+  sourcePort?: string
+  targetPort?: string
+  isTrunk?: boolean
+  linkType?: string
+  protocol?: string
+  description?: string
+  speed?: string
+  operStatus?: string
+  vlanSummary?: string
+  centerLabel?: string
+  status?: 'active' | 'stale'
+}
+
+export type TopologyFlowEdgeProps = {
+  type: 'topologyEdge'
+  animated: boolean
+  data: TopologyFlowEdgeData
+  style: {
+    stroke: string
+    strokeWidth: number
+    opacity: number
+    strokeDasharray?: string
+  }
+  markerEnd: {
+    type: typeof MarkerType.ArrowClosed
+    width: number
+    height: number
+    color: string
+  }
+}
+
+export function buildTopologyFlowEdge(
+  edge: TopologyEdge,
+  nodeStatusById: Map<string, string>,
+): TopologyFlowEdgeProps {
+  const isTrunk = Boolean(edge.isTrunk)
+  const isStaleApi = edge.status === 'stale'
+  const linkDown = isLinkDown(edge)
+  const speedMbps = normalizeSpeedToMbps(edge.speed)
+  const linkStyle = getLinkStyle(speedMbps, linkDown)
+  const sourceStatus = nodeStatusById.get(edge.source)
+  const targetStatus = nodeStatusById.get(edge.target)
+  const isOffline = isTopologyOfflineStatus(sourceStatus) || isTopologyOfflineStatus(targetStatus)
+  const isInactive = isOffline || isStaleApi
+  const edgeStatus: 'active' | 'stale' = isInactive ? 'stale' : 'active'
+
+  let stroke: string
+  if (linkDown) {
+    stroke = linkStyle.color
+  } else if (isInactive) {
+    stroke = TOPOLOGY_STALE_EDGE_COLOR
+  } else if (isTrunk) {
+    stroke = TOPOLOGY_TRUNK_EDGE_COLOR
+  } else {
+    stroke = linkStyle.color
+  }
+
+  const centerLabel = isTrunk
+    ? 'Trunk'
+    : (edge.linkType || edge.protocol || '').trim()
+
+  return {
+    type: 'topologyEdge',
+    animated: !isTrunk && !isInactive && !linkDown,
+    data: {
+      sourcePort: edge.sourcePort,
+      targetPort: edge.targetPort,
+      isTrunk: edge.isTrunk,
+      linkType: edge.linkType,
+      protocol: edge.protocol,
+      description: edge.description,
+      speed: edge.speed,
+      operStatus: edge.operStatus,
+      vlanSummary: edge.vlanSummary,
+      speedLabel: linkStyle.label,
+      speedMbps,
+      linkStyle,
+      centerLabel,
+      status: edgeStatus,
+    },
+    style: {
+      stroke,
+      strokeWidth: isTrunk ? 2.5 : linkStyle.strokeWidth,
+      opacity: isInactive && !linkDown ? 0.45 : 1,
+      strokeDasharray: linkDown
+        ? linkStyle.strokeDasharray
+        : isInactive
+          ? '8,6'
+          : isTrunk
+            ? undefined
+            : '6,4',
+    },
+    markerEnd: {
+      type: MarkerType.ArrowClosed,
+      width: 16,
+      height: 16,
+      color: stroke,
+    },
+  }
+}
 
 const SPEED_LABEL_RE =
   /^(\d+(?:\.\d+)?)\s*(g|gbps|gb|m|mbps|mb|k|kbps|bps|b)?$/i

@@ -571,7 +571,7 @@ export function StormProtectionPage() {
   }, [viewParam, isBootstrapLoading, noSwitchesConfigured, pagedSwitches.length])
 
   return (
-    <div id="overview-section" className="np-page scroll-mt-24">
+    <div id="overview-section" className="np-page min-w-0 scroll-mt-24">
       <PageHeader
         title="Storm Protection"
         description="Per-switch eligibility → risk → confirmation → safety → diagnostics → mitigation → recovery."

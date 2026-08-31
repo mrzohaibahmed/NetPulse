@@ -217,28 +217,32 @@ export function AlertsPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
 
   const alertsQuery = useAlertsQuery(status, 100)
+  const acknowledgedTotalsQuery = useAlertsQuery('acknowledged', 1)
+  const dismissedTotalsQuery = useAlertsQuery('dismissed', 1)
   const { acknowledge, dismiss } = useAlertMutations()
   const healthQuery = useHealthQuery()
 
   const alerts = alertsQuery.data?.data ?? []
+  const apiTotal = alertsQuery.data?.total ?? alerts.length
+  const breakdownIsPartial = apiTotal > alerts.length
 
   const kpis = useMemo(() => {
     const critical = alerts.filter(isCriticalAlert).length
     const warning = alerts.filter(isWarningAlert).length
-    const acknowledged = alerts.filter((a) => a.acknowledged).length
-    const dismissed = alerts.filter((a) => a.dismissed).length
     const storm = alerts.filter(isStormAlert).length
     const device = alerts.length - storm
     return {
-      total: alerts.length,
+      total: apiTotal,
       critical,
       warning,
-      acknowledged,
-      dismissed,
+      acknowledged: acknowledgedTotalsQuery.data?.total ?? 0,
+      dismissed: dismissedTotalsQuery.data?.total ?? 0,
       storm,
       device: Math.max(0, device),
+      breakdownIsPartial,
+      breakdownSampleSize: alerts.length,
     }
-  }, [alerts])
+  }, [alerts, apiTotal, acknowledgedTotalsQuery.data?.total, dismissedTotalsQuery.data?.total, breakdownIsPartial])
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -362,7 +366,14 @@ export function AlertsPage() {
       />
 
       {/* KPI row */}
-      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7" aria-label="Alert KPIs">
+      <section className="space-y-2" aria-label="Alert KPIs">
+        {kpis.breakdownIsPartial ? (
+          <p className="text-xs text-muted-foreground">
+            Critical, warning, storm, and device counts are from the first {kpis.breakdownSampleSize}{' '}
+            loaded alerts. Total, acknowledged, and dismissed use server totals.
+          </p>
+        ) : null}
+        <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-7">
         <KpiCard
           label="Total Alerts"
           value={kpis.total}
@@ -412,9 +423,8 @@ export function AlertsPage() {
           tone="accent"
           onClick={() => handleKpiClick('devices')}
         />
+        </div>
       </section>
-
-      {/* System status */}
       <section aria-label="System status">
         <Card className="glass">
           <CardHeader className="pb-3">
@@ -453,14 +463,15 @@ export function AlertsPage() {
       </section>
 
       {/* Quick filters + search */}
-      <section className="space-y-3" aria-label="Filters">
-        <div className="flex flex-wrap gap-2">
+      <section className="min-w-0 space-y-3" aria-label="Filters">
+        <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
           {QUICK_FILTERS.map((filter) => (
             <Button
               key={filter.id}
               type="button"
               size="sm"
               variant={quickFilter === filter.id ? 'default' : 'secondary'}
+              className="shrink-0"
               onClick={() => {
                 onQuickFilter(filter.id)
                 scrollToAlertStream()
@@ -491,7 +502,7 @@ export function AlertsPage() {
           onRetry={() => void alertsQuery.refetch()}
         />
       ) : (
-        <div className="grid gap-6 xl:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.9fr)]">
+        <div className="grid min-w-0 gap-6 xl:grid-cols-[minmax(0,1.35fr)_minmax(280px,0.9fr)]">
           {/* Live alert stream */}
           <section
             id="alert-stream-section"

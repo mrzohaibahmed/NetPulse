@@ -166,7 +166,7 @@ export function ReportsPage() {
   const interfaces = filtersQuery.data?.interfaces ?? []
 
   return (
-    <div className="np-page">
+    <div className="np-page min-w-0">
       <PageHeader
         title="Reports"
         description="Management reports from live inventory, ping history, alerts, and storm incidents. Probe success is not SLA or availability."
@@ -1054,6 +1054,7 @@ function SimpleCountTable({
 }) {
   if (!rows.length) return <p className="text-sm text-muted-foreground">{empty}</p>
   return (
+    <div className="w-full max-w-full overflow-x-auto">
     <Table>
       <TableHeader>
         <TableRow>
@@ -1070,5 +1071,6 @@ function SimpleCountTable({
         ))}
       </TableBody>
     </Table>
+    </div>
   )
 }

@@ -361,7 +361,7 @@ export function InterfaceDetailPage() {
   const canManualRecover = latestIncident?.status === 'MITIGATED'
 
   return (
-    <div className="np-page">
+    <div className="np-page min-w-0">
       <div className="flex flex-wrap items-center gap-3">
         <Button type="button" variant="ghost" size="sm" asChild>
           <Link to="/interfaces">
@@ -787,7 +787,7 @@ export function InterfaceDetailPage() {
                 }
               />
             ) : (
-              <div className="h-72">
+              <div className="h-72 min-w-0 w-full">
                 <ResponsiveContainer width="100%" height="100%">
                   <AreaChart data={chartData}>
                     <defs>
@@ -920,7 +920,7 @@ export function InterfaceDetailPage() {
             {chartData.length === 0 ? (
               <EmptyState title="No samples" description="Collect stats to populate this chart." />
             ) : (
-              <div className="h-56">
+              <div className="h-56 min-w-0 w-full">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={chartData}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
@@ -1000,7 +1000,7 @@ export function InterfaceDetailPage() {
             {chartData.length === 0 ? (
               <EmptyState title="No samples" description="Collect stats to populate this chart." />
             ) : (
-              <div className="h-56">
+              <div className="h-56 min-w-0 w-full">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={chartData}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#334155" />

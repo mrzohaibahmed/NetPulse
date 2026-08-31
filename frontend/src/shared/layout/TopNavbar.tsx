@@ -13,6 +13,7 @@ import { useEffect, useState, useRef, type FormEvent } from 'react'
 import { toast } from 'sonner'
 import { useAuth } from '@/shared/auth/AuthContext'
 import { useAlertsQuery, useHealthQuery, DASHBOARD_ACTIVE_ALERTS_LIMIT } from '@/hooks/queries'
+import { refreshMonitoringQueries } from '@/utils/refreshMonitoringQueries'
 import { useTheme } from '@/lib/theme'
 import { formatRelative } from '@/utils/format'
 import { Avatar, AvatarFallback } from '@/shared/ui/avatar'
@@ -89,7 +90,7 @@ export function TopNavbar({ lastUpdated, monitoringOk }: TopNavbarProps) {
   const onRefresh = async () => {
     setRefreshing(true)
     try {
-      await qc.invalidateQueries()
+      await refreshMonitoringQueries(qc)
     } finally {
       setRefreshing(false)
     }
@@ -98,8 +99,8 @@ export function TopNavbar({ lastUpdated, monitoringOk }: TopNavbarProps) {
   const initials = (user?.username || 'U').slice(0, 2).toUpperCase()
 
   return (
-    <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-border/80 bg-background/80 px-4 backdrop-blur-md md:h-16 md:px-6">
-      <form onSubmit={onSearch} className="relative ml-10 flex-1 md:ml-0 md:max-w-md">
+    <header className="sticky top-0 z-30 flex h-14 min-w-0 items-center gap-2 border-b border-border/80 bg-background/80 px-4 backdrop-blur-md sm:gap-3 md:h-16 md:px-6">
+      <form onSubmit={onSearch} className="relative ml-10 min-w-0 flex-1 md:ml-0 md:max-w-md">
         <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
         <Input
           type="search"

@@ -600,7 +600,7 @@ export function DiscoveryPage() {
   }
 
   return (
-    <div className="np-page">
+    <div className="np-page min-w-0">
       <PageHeader
         title="Ping Monitoring · Discovery"
         description="Scan custom networks and subnets, detect online hosts, and auto-save new devices to inventory."
@@ -657,8 +657,8 @@ export function DiscoveryPage() {
                 />
               </div>
             ) : (
-              <div className="overflow-auto">
-                <Table>
+              <div className="w-full max-w-full overflow-x-auto">
+                <Table className="min-w-[800px]">
                   <TableHeader>
                     <TableRow>
                       <TableHead className="w-12">
@@ -855,8 +855,8 @@ export function DiscoveryPage() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="p-0 pt-0">
-                <div className="overflow-auto px-2 pb-2">
-                  <Table>
+                <div className="w-full max-w-full overflow-x-auto px-2 pb-2">
+                  <Table className="min-w-[1100px]">
                     <TableHeader>
                       <TableRow>
                         <TableHead>IP</TableHead>

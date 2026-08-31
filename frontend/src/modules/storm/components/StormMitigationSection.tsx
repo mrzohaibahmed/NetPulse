@@ -118,15 +118,15 @@ export function StormMitigationSection({
                     </span>
                   </p>
                   <MitigationStatusBadge status={selectedMitigation.status} />
-                  <div className="max-h-40 overflow-auto rounded-md border border-border bg-zinc-950 p-3 font-mono text-xs text-green-400">
+                  <div className="np-log-block">
                     {(selectedMitigation.commandsExecuted || []).map((cmd, idx) => (
                       <div key={idx} className="leading-relaxed">
-                        <span className="mr-2 text-zinc-600">$</span>
+                        <span className="mr-2 text-muted-foreground">$</span>
                         {cmd}
                       </div>
                     ))}
                   </div>
-                  <pre className="max-h-32 overflow-auto rounded-md border border-border bg-zinc-950/80 p-3 font-mono text-xs text-zinc-300">
+                  <pre className="np-log-block max-h-32 text-muted-foreground dark:text-zinc-300">
                     {JSON.stringify(selectedMitigation.verificationResult, null, 2)}
                   </pre>
                 </>

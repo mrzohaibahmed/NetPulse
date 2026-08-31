@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { lazy, Suspense } from 'react'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
-import { Toaster } from 'sonner'
+import { ThemedToaster } from '@/shared/components/ThemedToaster'
 import { AuthProvider } from '@/shared/auth/AuthContext'
 import { Layout } from '@/shared/layout/Layout'
 import { ProtectedRoute } from '@/shared/components/ProtectedRoute'
@@ -110,17 +110,7 @@ export default function App() {
                 </Routes>
               </Suspense>
             </BrowserRouter>
-            <Toaster
-              theme="dark"
-              position="top-right"
-              richColors
-              closeButton
-              toastOptions={{
-                classNames: {
-                  toast: 'bg-card border-border text-foreground',
-                },
-              }}
-            />
+            <ThemedToaster />
           </AuthProvider>
         </TooltipProvider>
       </ThemeProvider>

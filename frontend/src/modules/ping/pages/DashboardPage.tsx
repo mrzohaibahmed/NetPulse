@@ -134,9 +134,6 @@ export function DashboardPage() {
   const ispsQuery = useIspsQuery()
   const health = computeNetworkHealth(dash.summary)
 
-  const offlineCount =
-    (dash.summary?.notReachableDevices ?? 0) + (dash.summary?.criticalOfflineDevices ?? 0)
-
   const stormMetrics = useMemo(() => {
     const stormAlerts = dash.alerts.filter(isStormAlert)
     const incidentIds = new Set(
@@ -257,10 +254,17 @@ export function DashboardPage() {
               to: '/devices?status=Online',
             },
             {
-              label: 'Offline',
-              value: String(offlineCount),
+              label: 'Not Reachable',
+              value: String(dash.summary?.notReachableDevices ?? 0),
               icon: WifiOff,
-              tone: offlineCount > 0 ? 'warning' : 'default',
+              tone: (dash.summary?.notReachableDevices ?? 0) > 0 ? 'warning' : 'default',
+              to: '/devices?status=Not%20Reachable',
+            },
+            {
+              label: 'Critical Offline',
+              value: String(dash.summary?.criticalOfflineDevices ?? 0),
+              icon: WifiOff,
+              tone: (dash.summary?.criticalOfflineDevices ?? 0) > 0 ? 'danger' : 'default',
               to: '/devices?status=Offline%20(Critical)',
             },
             {
