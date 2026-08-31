@@ -3,6 +3,7 @@ from flask import Blueprint, jsonify, request
 
 from scheduler import reschedule_monitor_job
 from services.audit_service import log_audit
+from services.retention_service import RetentionTtlSyncError
 from services.settings_service import get_public_settings, update_settings
 from utils.auth import require_auth
 from utils.serializers import format_datetime
@@ -80,6 +81,15 @@ def update_settings_route():
 
     except ValueError as error:
         return jsonify({"success": False, "message": str(error)}), 400
+    except RetentionTtlSyncError as error:
+        public = get_public_settings()
+        public["updatedAt"] = format_datetime(public.get("updatedAt"))
+        return jsonify({
+            "success": False,
+            "message": str(error),
+            "data": public,
+            "ttlSync": error.results,
+        }), 409
     except Exception as error:
         return internal_error_response(error, message="Failed to update settings")
 

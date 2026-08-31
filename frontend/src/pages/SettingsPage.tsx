@@ -56,9 +56,9 @@ const schema = z.object({
   maximumRecoveryAttempts: z.number().min(1),
   reMitigationThreshold: z.number().min(1).max(100),
   requiredConfirmations: z.number().min(1).max(20),
-  pingHistoryRetentionDays: z.number().min(7).max(3650),
-  dataRetentionDays: z.number().min(7).max(3650),
-  incidentRetentionDays: z.number().min(30).max(3650),
+  pingHistoryRetentionDays: z.number().min(1).max(3650),
+  dataRetentionDays: z.number().min(1).max(3650),
+  incidentRetentionDays: z.number().min(1).max(3650),
   stormNotificationsEnabled: z.boolean(),
   stormShutdownEmails: z.boolean(),
   stormRecoveryEmails: z.boolean(),
@@ -569,7 +569,7 @@ export function SettingsPage() {
               <Input
                 id="pingHistoryRetentionDays"
                 type="number"
-                min={7}
+                min={1}
                 max={3650}
                 {...form.register('pingHistoryRetentionDays', { valueAsNumber: true })}
               />
@@ -582,7 +582,7 @@ export function SettingsPage() {
               <Input
                 id="dataRetentionDays"
                 type="number"
-                min={7}
+                min={1}
                 max={3650}
                 {...form.register('dataRetentionDays', { valueAsNumber: true })}
               />
@@ -595,7 +595,7 @@ export function SettingsPage() {
               <Input
                 id="incidentRetentionDays"
                 type="number"
-                min={30}
+                min={1}
                 max={3650}
                 {...form.register('incidentRetentionDays', { valueAsNumber: true })}
               />

@@ -24,15 +24,15 @@ from utils.monitor_logger import get_monitor_logger
 logger = get_monitor_logger("retention")
 
 DEFAULT_PING_HISTORY_RETENTION_DAYS = 7
-MIN_PING_HISTORY_RETENTION_DAYS = 7
+MIN_PING_HISTORY_RETENTION_DAYS = 1
 MAX_PING_HISTORY_RETENTION_DAYS = 3650
 
 DEFAULT_RETENTION_DAYS = 90
-MIN_RETENTION_DAYS = 7
+MIN_RETENTION_DAYS = 1
 MAX_RETENTION_DAYS = 3650
 
 DEFAULT_INCIDENT_RETENTION_DAYS = 365
-MIN_INCIDENT_RETENTION_DAYS = 30
+MIN_INCIDENT_RETENTION_DAYS = 1
 MAX_INCIDENT_RETENTION_DAYS = 3650
 
 # Ping history — shortest window (pingHistoryRetentionDays).
@@ -152,6 +152,66 @@ def _existing_ttl_seconds(coll, index_name: str) -> int | None:
     return None
 
 
+def _index_exists(coll, index_name: str) -> bool:
+    for idx in coll.list_indexes():
+        if idx.get("name") == index_name:
+            return True
+    return False
+
+
+def _verify_ttl_index(coll, index_name: str, field: str, expire_after: int) -> bool:
+    for idx in coll.list_indexes():
+        if idx.get("name") != index_name:
+            continue
+        key = idx.get("key") or {}
+        if key.get(field) != 1:
+            return False
+        if "expireAfterSeconds" not in idx:
+            return False
+        return int(idx["expireAfterSeconds"]) == int(expire_after)
+    return False
+
+
+def _modify_ttl_expire_seconds(
+    coll,
+    collection_name: str,
+    field: str,
+    expire_after: int,
+) -> None:
+    db.command(
+        {
+            "collMod": collection_name,
+            "index": {
+                "keyPattern": {field: 1},
+                "expireAfterSeconds": expire_after,
+            },
+        }
+    )
+
+
+class RetentionTtlSyncError(RuntimeError):
+    """Settings persisted but one or more retention TTL indexes failed to sync."""
+
+    def __init__(self, results: dict[str, Any]):
+        self.results = results
+        failed = [
+            name
+            for name, info in (results.get("indexes") or {}).items()
+            if (info or {}).get("status") == "error"
+        ]
+        detail = f" for: {', '.join(failed)}" if failed else ""
+        super().__init__(
+            f"Settings saved, but retention TTL synchronization failed{detail}"
+        )
+
+
+def retention_ttl_results_have_errors(results: dict[str, Any]) -> bool:
+    return any(
+        (info or {}).get("status") == "error"
+        for info in (results.get("indexes") or {}).values()
+    )
+
+
 def _ensure_ttl_group(
     targets: tuple[tuple[str, str, str], ...],
     days: int,
@@ -162,7 +222,9 @@ def _ensure_ttl_group(
         coll = db[collection_name]
         try:
             current = _existing_ttl_seconds(coll, index_name)
-            if current == expire_after:
+            if current == expire_after and _verify_ttl_index(
+                coll, index_name, field, expire_after
+            ):
                 results["indexes"][collection_name] = {
                     "status": "unchanged",
                     "expireAfterSeconds": current,
@@ -170,27 +232,45 @@ def _ensure_ttl_group(
                 }
                 continue
 
-            if current is not None:
-                coll.drop_index(index_name)
+            if _index_exists(coll, index_name):
+                _modify_ttl_expire_seconds(coll, collection_name, field, expire_after)
+                if not _verify_ttl_index(coll, index_name, field, expire_after):
+                    raise RuntimeError(
+                        "TTL index verification failed after collMod "
+                        f"(expected expireAfterSeconds={expire_after})"
+                    )
+                results["indexes"][collection_name] = {
+                    "status": "updated",
+                    "expireAfterSeconds": expire_after,
+                    "retentionDays": days,
+                }
                 logger.info(
-                    "Dropped TTL index for recreate | collection=%s name=%s old=%ss",
+                    "TTL index updated via collMod | collection=%s field=%s "
+                    "expireAfterSeconds=%s (%sd)",
                     collection_name,
-                    index_name,
-                    current,
+                    field,
+                    expire_after,
+                    days,
                 )
+                continue
 
             coll.create_index(
                 [(field, ASCENDING)],
                 name=index_name,
                 expireAfterSeconds=expire_after,
             )
+            if not _verify_ttl_index(coll, index_name, field, expire_after):
+                raise RuntimeError(
+                    "TTL index verification failed after create_index "
+                    f"(expected expireAfterSeconds={expire_after})"
+                )
             results["indexes"][collection_name] = {
-                "status": "ensured",
+                "status": "created",
                 "expireAfterSeconds": expire_after,
                 "retentionDays": days,
             }
             logger.info(
-                "TTL index ensured | collection=%s field=%s expireAfterSeconds=%s (%sd)",
+                "TTL index created | collection=%s field=%s expireAfterSeconds=%s (%sd)",
                 collection_name,
                 field,
                 expire_after,
@@ -199,15 +279,19 @@ def _ensure_ttl_group(
         except OperationFailure as exc:
             results["indexes"][collection_name] = {"status": "error", "error": str(exc)}
             logger.error(
-                "Failed to ensure TTL index | collection=%s error=%s",
+                "Failed to update TTL index | collection=%s operation=collMod_or_create "
+                "desired_seconds=%s error=%s",
                 collection_name,
+                expire_after,
                 exc,
             )
         except Exception as exc:  # noqa: BLE001
             results["indexes"][collection_name] = {"status": "error", "error": str(exc)}
             logger.error(
-                "Failed to ensure TTL index | collection=%s error=%s",
+                "Failed to update TTL index | collection=%s operation=collMod_or_create "
+                "desired_seconds=%s error=%s",
                 collection_name,
+                expire_after,
                 exc,
             )
 
@@ -220,8 +304,8 @@ def ensure_retention_ttl_indexes(
     """
     Ensure TTL indexes for all retention windows.
 
-    If an existing TTL index has a different expireAfterSeconds, it is dropped
-    and recreated (MongoDB does not allow in-place TTL value changes on all versions).
+    Existing retention-managed TTL indexes are updated in place via collMod.
+    Missing indexes are created. Indexes are never dropped solely to change TTL.
     """
     ping_history_days = (
         clamp_ping_history_retention_days(ping_history_retention_days)

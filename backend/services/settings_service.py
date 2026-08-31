@@ -329,21 +329,23 @@ def update_settings(payload: dict):
         or "dataRetentionDays" in update
         or "incidentRetentionDays" in update
     ):
-        try:
-            from services.retention_service import ensure_retention_ttl_indexes  # noqa: PLC0415
+        from services.retention_service import (  # noqa: PLC0415
+            RetentionTtlSyncError,
+            ensure_retention_ttl_indexes,
+            retention_ttl_results_have_errors,
+        )
 
-            ensure_retention_ttl_indexes(
-                ping_history_retention_days=int(
-                    updated_doc.get("pingHistoryRetentionDays", 7)
-                ),
-                retention_days=int(updated_doc.get("dataRetentionDays", 90)),
-                incident_retention_days=int(
-                    updated_doc.get("incidentRetentionDays", 365)
-                ),
-            )
-        except Exception:
-            # Settings write succeeded; index refresh is best-effort and logged inside.
-            pass
+        ttl_results = ensure_retention_ttl_indexes(
+            ping_history_retention_days=int(
+                updated_doc.get("pingHistoryRetentionDays", 7)
+            ),
+            retention_days=int(updated_doc.get("dataRetentionDays", 90)),
+            incident_retention_days=int(
+                updated_doc.get("incidentRetentionDays", 365)
+            ),
+        )
+        if retention_ttl_results_have_errors(ttl_results):
+            raise RetentionTtlSyncError(ttl_results)
 
     return updated_doc
 

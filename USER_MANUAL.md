@@ -536,8 +536,8 @@ Examples use placeholders, not real secrets.
 | `SNMP_DEFAULT_PORT` | No | SNMP port | `161` | `161` | |
 | `SNMP_TIMEOUT` | No | SNMP timeout | `3` | `3` | |
 | `SNMP_RETRIES` | No | SNMP retries | `1` | `1` | |
-| `DATA_RETENTION_DAYS` | Seed | History TTL days | `90` | `90` | Min 7, max 3650 via API |
-| `INCIDENT_RETENTION_DAYS` | Seed | Closed incident / action log days | `365` | `365` | Min 30 |
+| `DATA_RETENTION_DAYS` | Seed | History TTL days | `90` | `90` | Min 1, max 3650 via API |
+| `INCIDENT_RETENTION_DAYS` | Seed | Closed incident / action log days | `365` | `365` | Min 1, max 3650 via API |
 | `GUNICORN_BIND` | No | Bind address | `127.0.0.1:5000` | `127.0.0.1:5000` | |
 | `GUNICORN_WORKERS` | No | Worker count | `1` | `1` | >1 forces API role in gunicorn.conf.py |
 | `GUNICORN_TIMEOUT` | No | Worker timeout seconds | `120` | `120` | |
