@@ -46,6 +46,7 @@ export interface TopologyEdge {
   description?: string
   speed?: string
   operStatus?: string
+  vlanSummary?: string
   animated?: boolean
   /** Derived link state: active when both endpoints are Online inventory devices. */
   status?: 'active' | 'stale'

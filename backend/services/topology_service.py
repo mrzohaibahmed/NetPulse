@@ -74,6 +74,47 @@ def _link_type(iface: dict) -> str:
     return "unknown"
 
 
+def _vlan_summary(iface: dict | None) -> str:
+    """Human-readable VLAN summary from the local interface associated with a topology link."""
+    if not iface:
+        return ""
+
+    port_mode = str(iface.get("portMode") or iface.get("mode") or "").lower()
+    vlan_text = str(iface.get("vlan") or "").strip()
+    access = iface.get("accessVlan")
+    native = iface.get("nativeVlan")
+    voice = iface.get("voiceVlan")
+    allowed = iface.get("allowedVlans") or []
+    trunk_all = bool(iface.get("trunkVlansAll"))
+    is_trunk = _is_trunk_link(iface) or port_mode == "trunk" or vlan_text.lower() == "trunk"
+
+    if is_trunk:
+        parts: list[str] = []
+        if native is not None and native != "":
+            parts.append(f"Native {native}")
+        if trunk_all:
+            parts.append("All VLANs")
+        elif allowed:
+            if len(allowed) <= 8:
+                parts.append("Allowed " + ", ".join(str(v) for v in allowed))
+            else:
+                parts.append(f"Allowed {len(allowed)} VLANs")
+        return "Trunk" + (f" ({'; '.join(parts)})" if parts else "")
+
+    if access is not None and access != "":
+        if voice is not None and voice != "":
+            return f"VLAN {access} (Voice {voice})"
+        return f"VLAN {access}"
+
+    if vlan_text.isdigit():
+        return f"VLAN {vlan_text}"
+
+    if port_mode == "routed" or vlan_text.lower() == "routed":
+        return "Routed"
+
+    return ""
+
+
 def _neighbor_ip(neighbor: dict) -> str:
     return (
         neighbor.get("ip")
@@ -627,6 +668,8 @@ def _merge_raw_edges(raw_edges: list[dict]) -> list[dict]:
             existing["operStatus"] = "up"
         elif not existing.get("operStatus") and raw.get("operStatus"):
             existing["operStatus"] = raw["operStatus"]
+        if not existing.get("vlanSummary") and raw.get("vlanSummary"):
+            existing["vlanSummary"] = raw["vlanSummary"]
 
     normalized: list[dict] = []
     for pair, edge in merged.items():
@@ -652,6 +695,7 @@ def _merge_raw_edges(raw_edges: list[dict]) -> list[dict]:
                 "description": edge.get("description") or "",
                 "speed": edge.get("speed") or "",
                 "operStatus": edge.get("operStatus") or "",
+                "vlanSummary": edge.get("vlanSummary") or "",
                 "animated": True,
             }
         )
@@ -671,6 +715,7 @@ def _merge_raw_edges(raw_edges: list[dict]) -> list[dict]:
                 "description": raw.get("description") or "",
                 "speed": raw.get("speed") or "",
                 "operStatus": raw.get("operStatus") or "",
+                "vlanSummary": raw.get("vlanSummary") or "",
                 "animated": True,
             }
         )
@@ -802,6 +847,7 @@ def _build_topology_data(device_filter=None, *, live_only: bool = False):
                 "description": iface.get("description") or "",
                 "speed": iface.get("speed") or "",
                 "operStatus": iface.get("operStatus") or "",
+                "vlanSummary": _vlan_summary(iface),
             }
         )
 

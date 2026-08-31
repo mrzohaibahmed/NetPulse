@@ -14,6 +14,7 @@ from services.topology_service import (
     _derive_edge_status,
     _is_known_device_online,
     _prune_unconnected_synthetic_nodes,
+    _vlan_summary,
 )
 
 
@@ -320,6 +321,26 @@ class TestPruneSyntheticNodes(unittest.TestCase):
         pruned = _prune_unconnected_synthetic_nodes(nodes, edges)
         ids = {n["id"] for n in pruned}
         self.assertEqual(ids, {"a", "neighbor_x"})
+
+
+class TestVlanSummary(unittest.TestCase):
+    def test_access_vlan(self):
+        summary = _vlan_summary({"portMode": "access", "accessVlan": 100})
+        self.assertEqual(summary, "VLAN 100")
+
+    def test_trunk_vlan(self):
+        summary = _vlan_summary(
+            {
+                "portMode": "trunk",
+                "nativeVlan": 1,
+                "allowedVlans": [10, 20, 30],
+            }
+        )
+        self.assertEqual(summary, "Trunk (Native 1; Allowed 10, 20, 30)")
+
+    def test_missing_vlan(self):
+        self.assertEqual(_vlan_summary({}), "")
+        self.assertEqual(_vlan_summary(None), "")
 
 
 if __name__ == "__main__":

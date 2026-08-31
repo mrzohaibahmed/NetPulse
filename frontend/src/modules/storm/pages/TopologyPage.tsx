@@ -37,6 +37,13 @@ import {
   mergeLayoutPositions,
   hasSavedLayout,
 } from '@/modules/storm/utils/topologyLayout'
+import {
+  formatSpeed,
+  getLinkStyle,
+  isLinkDown,
+  normalizeSpeedToMbps,
+  type LinkStyle,
+} from '@/modules/storm/components/switches/switchTopologyUtils'
 import { toast } from 'sonner'
 
 type NodeHandleSpec = {
@@ -67,6 +74,10 @@ type TopologyEdgeData = {
   protocol?: string
   description?: string
   speed?: string
+  operStatus?: string
+  vlanSummary?: string
+  speedLabel?: string
+  linkStyle?: LinkStyle
   centerLabel?: string
   status?: 'active' | 'stale'
 }
@@ -629,6 +640,9 @@ export function TopologyPage() {
       const handles = edgeHandles.get(e.id)
       const isTrunk = Boolean(e.isTrunk)
       const isStale = e.status === 'stale'
+      const linkDown = isLinkDown(e)
+      const speedMbps = normalizeSpeedToMbps(e.speed)
+      const linkStyle = getLinkStyle(speedMbps, linkDown)
       const sourceStatus = nodeStatusMap.get(e.source)
       const targetStatus = nodeStatusMap.get(e.target)
       const isOffline =
@@ -636,7 +650,7 @@ export function TopologyPage() {
       const isInactive = isOffline || isStale
       const edgeStatus: 'active' | 'stale' = isInactive ? 'stale' : 'active'
 
-      const stroke = isInactive ? STALE_EDGE_COLOR : isTrunk ? TRUNK_EDGE_COLOR : EDGE_COLOR
+      const stroke = isInactive && !linkDown ? STALE_EDGE_COLOR : linkStyle.color
       return {
         id: e.id,
         source: e.source,
@@ -644,7 +658,7 @@ export function TopologyPage() {
         sourceHandle: handles?.sourceHandle,
         targetHandle: handles?.targetHandle,
         type: 'topologyEdge',
-        animated: !isTrunk && !isInactive,
+        animated: !isTrunk && !isInactive && !linkDown,
         data: {
           sourcePort: e.sourcePort,
           targetPort: e.targetPort,
@@ -653,13 +667,16 @@ export function TopologyPage() {
           protocol: e.protocol,
           description: e.description,
           speed: e.speed,
-          centerLabel: e.isTrunk ? 'Trunk' : e.linkType || e.protocol,
+          operStatus: e.operStatus,
+          vlanSummary: e.vlanSummary,
+          speedLabel: linkStyle.label,
+          linkStyle,
           status: edgeStatus,
         } satisfies TopologyEdgeData,
         style: {
           stroke,
-          strokeWidth: isTrunk ? 2.5 : 2,
-          opacity: isInactive ? 0.45 : 1,
+          strokeWidth: isTrunk ? 2.5 : linkStyle.strokeWidth,
+          opacity: isInactive && !linkDown ? 0.45 : 1,
         },
         markerEnd: {
           type: MarkerType.ArrowClosed,
@@ -970,11 +987,11 @@ export function TopologyPage() {
             <div className="text-foreground capitalize">{hoveredEdge.data.linkType || hoveredEdge.data.protocol || 'Unknown'}</div>
             <div className="text-muted-foreground">Speed:</div>
             <div className="text-foreground">
-              {hoveredEdge.data.speed 
-                ? (hoveredEdge.data.speed.match(/^\d+$/) || hoveredEdge.data.speed.match(/^a-\d+$/) 
-                    ? `${hoveredEdge.data.speed} Mbps` 
-                    : hoveredEdge.data.speed)
-                : 'Unknown'}
+              {formatSpeed(normalizeSpeedToMbps(hoveredEdge.data.speed))}
+            </div>
+            <div className="text-muted-foreground">VLAN:</div>
+            <div className="text-foreground">
+              {hoveredEdge.data.vlanSummary?.trim() || 'Unknown'}
             </div>
             <div className="text-muted-foreground">Link:</div>
             <div className="text-foreground capitalize">
