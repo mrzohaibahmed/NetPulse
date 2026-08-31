@@ -69,6 +69,7 @@ import {
   updateIsp,
   updateDevice,
   updateSettings,
+  deleteHistory,
   updateAccount,
   updateUser,
   discoverRange,
@@ -83,6 +84,7 @@ import {
   deleteNetwork,
   scanNetworks,
 } from '@/api'
+import type { HistoryDeletionScope } from '@/api'
 import { queryKeys } from '@/hooks/queryKeys'
 import type {
   DevicePayload,
@@ -1026,6 +1028,28 @@ export function useSettingsMutation() {
       ])
     },
     onError: (err: Error) => toast.error(err.message),
+  })
+}
+
+export function useHistoryDeletionMutation() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (scope: HistoryDeletionScope) => deleteHistory(scope),
+    onSuccess: async (res) => {
+      toast.success(res.message)
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: queryKeys.dashboard.all }),
+        qc.invalidateQueries({ queryKey: ['history'] }),
+        qc.invalidateQueries({ queryKey: ['device-history'] }),
+        qc.invalidateQueries({ queryKey: ['mitigation-history'] }),
+        qc.invalidateQueries({ queryKey: ['recovery-history'] }),
+        qc.invalidateQueries({ queryKey: ['eligibility'] }),
+        qc.invalidateQueries({ queryKey: ['risk'] }),
+        qc.invalidateQueries({ queryKey: ['confirmation'] }),
+        qc.invalidateQueries({ queryKey: ['safety'] }),
+      ])
+    },
+    onError: (err: Error) => toast.error(`History deletion failed: ${err.message}`),
   })
 }
 

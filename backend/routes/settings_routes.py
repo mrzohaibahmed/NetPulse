@@ -3,6 +3,11 @@ from flask import Blueprint, jsonify, request
 
 from scheduler import reschedule_monitor_job
 from services.audit_service import log_audit
+from services.history_deletion_service import (
+    HistoryDeletionError,
+    VALID_HISTORY_DELETION_SCOPES,
+    delete_history,
+)
 from services.retention_service import RetentionTtlSyncError
 from services.settings_service import get_public_settings, update_settings
 from utils.auth import require_auth
@@ -92,6 +97,87 @@ def update_settings_route():
         }), 409
     except Exception as error:
         return internal_error_response(error, message="Failed to update settings")
+
+
+@settings_bp.route("/settings/history", methods=["DELETE"])
+@require_auth(roles=["admin"])
+def delete_history_route():
+    try:
+        body = request.get_json(silent=True) or {}
+        if any(key in body for key in ("collection", "collections", "filter")):
+            return jsonify({
+                "success": False,
+                "message": "Invalid request",
+            }), 400
+
+        scope = str(body.get("scope") or "").strip().lower()
+        if not scope:
+            return jsonify({
+                "success": False,
+                "message": "scope is required",
+            }), 400
+        if scope not in VALID_HISTORY_DELETION_SCOPES:
+            return jsonify({
+                "success": False,
+                "message": (
+                    "Invalid history deletion scope. "
+                    "Allowed values: ping, telemetry, incidents, all"
+                ),
+            }), 400
+
+        results = delete_history(scope)
+        log_audit(
+            action="MANUAL_HISTORY_DELETE",
+            entity_type="settings",
+            entity_id="global",
+            details={
+                "scope": scope,
+                "result": results.get("result", "success"),
+                "totalDeleted": results.get("totalDeleted", 0),
+                "deleted": results.get("deleted", {}),
+            },
+        )
+
+        total_deleted = int(results.get("totalDeleted", 0))
+        if total_deleted == 0:
+            message = "No history records were found to delete."
+        else:
+            message = f"History deleted successfully. {total_deleted:,} records deleted."
+
+        return jsonify({
+            "success": True,
+            "message": message,
+            "scope": results.get("scope", scope),
+            "deleted": results.get("deleted", {}),
+            "totalDeleted": total_deleted,
+        }), 200
+
+    except ValueError as error:
+        return jsonify({"success": False, "message": str(error)}), 400
+    except HistoryDeletionError as error:
+        results = error.results
+        log_audit(
+            action="MANUAL_HISTORY_DELETE",
+            entity_type="settings",
+            entity_id="global",
+            details={
+                "scope": results.get("scope"),
+                "result": results.get("result"),
+                "totalDeleted": results.get("totalDeleted", 0),
+                "deleted": results.get("deleted", {}),
+                "failed": results.get("failed", {}),
+            },
+        )
+        return jsonify({
+            "success": False,
+            "message": str(error),
+            "scope": results.get("scope"),
+            "deleted": results.get("deleted", {}),
+            "failed": results.get("failed", {}),
+            "totalDeleted": results.get("totalDeleted", 0),
+        }), 500
+    except Exception as error:
+        return internal_error_response(error, message="Failed to delete history")
 
 
 @settings_bp.route("/settings/test-email", methods=["POST"])

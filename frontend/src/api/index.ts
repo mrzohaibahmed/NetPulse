@@ -321,6 +321,21 @@ export const updateSettings = (payload: Record<string, unknown>) =>
     body: payload,
   })
 
+export type HistoryDeletionScope = 'ping' | 'telemetry' | 'incidents' | 'all'
+
+export const deleteHistory = (scope: HistoryDeletionScope) =>
+  apiRequest<{
+    success: boolean
+    message: string
+    scope: HistoryDeletionScope
+    deleted: Record<string, number>
+    totalDeleted: number
+    failed?: Record<string, string>
+  }>('/api/settings/history', {
+    method: 'DELETE',
+    body: { scope },
+  })
+
 export const getUptimeReport = (params: PaginationParams = {}) =>
   apiRequest<{ success: boolean; count: number; data: UptimeRow[] }>(
     `/api/reports/uptime${toQuery(params)}`,

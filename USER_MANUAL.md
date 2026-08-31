@@ -1653,11 +1653,16 @@ Sections:
 3. **SMTP alerts** — provider selector (Gmail / Outlook), host, port, username, password, from address, from name, alert recipient, STARTTLS, Send test email
 4. **Storm email notifications** — enable, shutdown/recovery/failure emails, recipient
 5. **Recovery protection** — cooldown, stabilization, max attempts, prepare/re-mitigation risk threshold, data retention, incident retention
-6. **Save settings**
+6. **History management** — admin-only manual deletion of retained monitoring history (does not change retention settings or TTL indexes)
+7. **Save settings**
 
 **Not on this page:** `pingFailureConfirmationScans`, `pingConcurrency`, dispatcher interval (env only), `mitigationMode` / `autoRecovery` (Storm Overview).
 
 `GET /api/settings` is allowed for any authenticated user; `PUT` is admin.
+
+### Admin history deletion
+
+`DELETE /api/settings/history` (admin only) permanently deletes historical records from retention-managed collections. Request body: `{"scope":"ping"|"telemetry"|"incidents"|"all"}`. This does **not** modify retention settings, TTL indexes, device configuration, interfaces, topology, or current monitoring state. New history continues to be collected after deletion.
 
 > Screenshot: Settings — add current production screenshot here.
 

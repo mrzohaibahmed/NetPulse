@@ -7,6 +7,7 @@ import { Mail, Save, Timer, Activity, Send, CheckCircle2, AlertCircle, Shield, D
 import { useAuth } from '@/shared/auth/AuthContext'
 import { useSettingsMutation, useSettingsQuery } from '@/hooks/queries'
 import { IspSettingsSection } from '@/modules/ping/components/IspSettingsSection'
+import { HistoryManagementSection } from '@/modules/settings/components/HistoryManagementSection'
 import { ErrorState } from '@/shared/components/ErrorState'
 import { LoadingState } from '@/shared/components/LoadingState'
 import { PageHeader } from '@/shared/components/PageHeader'
@@ -613,6 +614,8 @@ export function SettingsPage() {
           </Button>
         </div>
         </form>
+
+        <HistoryManagementSection />
       </div>
     </div>
   )
