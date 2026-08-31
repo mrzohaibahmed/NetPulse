@@ -94,6 +94,22 @@ const HISTORY_LIMITS: Record<string, number> = {
   '500': 500,
 }
 
+/** Theme-aware chart colors from index.css design tokens. */
+const CHART_COLORS = {
+  grid: 'var(--color-border)',
+  tick: 'var(--color-muted-foreground)',
+  primary: 'var(--color-primary)',
+  success: 'var(--color-success)',
+  warning: 'var(--color-warning)',
+  danger: 'var(--color-danger)',
+  info: 'var(--color-info)',
+  muted: 'var(--color-muted-foreground)',
+  border: 'var(--color-border)',
+} as const
+
+const CHART_TICK = { fill: CHART_COLORS.tick, fontSize: 10 }
+const CHART_TICK_Y = { fill: CHART_COLORS.tick, fontSize: 11 }
+
 function ChartTooltip({
   active,
   payload,
@@ -792,19 +808,19 @@ export function InterfaceDetailPage() {
                   <AreaChart data={chartData}>
                     <defs>
                       <linearGradient id="utilFill" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="#3B82F6" stopOpacity={0.35} />
-                        <stop offset="100%" stopColor="#3B82F6" stopOpacity={0.02} />
+                        <stop offset="0%" stopColor={CHART_COLORS.primary} stopOpacity={0.35} />
+                        <stop offset="100%" stopColor={CHART_COLORS.primary} stopOpacity={0.02} />
                       </linearGradient>
                     </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-border" vertical={false} />
                     <XAxis
                       dataKey="timestamp"
-                      tick={{ fill: '#94a3b8', fontSize: 10 }}
+                      tick={CHART_TICK}
                       tickFormatter={(value) => formatDateTime(String(value)).slice(5, 16)}
                       minTickGap={28}
                     />
                     <YAxis
-                      tick={{ fill: '#94a3b8', fontSize: 11 }}
+                      tick={CHART_TICK_Y}
                       unit="%"
                       width={42}
                       domain={[0, 'auto']}
@@ -815,7 +831,7 @@ export function InterfaceDetailPage() {
                       type="monotone"
                       dataKey="utilization"
                       name="Utilization"
-                      stroke="#3B82F6"
+                      stroke={CHART_COLORS.primary}
                       fill="url(#utilFill)"
                       strokeWidth={2}
                       dot={false}
@@ -824,7 +840,7 @@ export function InterfaceDetailPage() {
                       type="monotone"
                       dataKey="rxUtilization"
                       name="RX %"
-                      stroke="#22C55E"
+                      stroke={CHART_COLORS.success}
                       strokeWidth={1.5}
                       dot={false}
                     />
@@ -832,7 +848,7 @@ export function InterfaceDetailPage() {
                       type="monotone"
                       dataKey="txUtilization"
                       name="TX %"
-                      stroke="#F59E0B"
+                      stroke={CHART_COLORS.warning}
                       strokeWidth={1.5}
                       dot={false}
                     />
@@ -923,21 +939,21 @@ export function InterfaceDetailPage() {
               <div className="h-56 min-w-0 w-full">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={chartData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
                     <XAxis
                       dataKey="timestamp"
-                      tick={{ fill: '#94a3b8', fontSize: 10 }}
+                      tick={CHART_TICK}
                       tickFormatter={(value) => formatDateTime(String(value)).slice(5, 16)}
                       minTickGap={28}
                     />
-                    <YAxis tick={{ fill: '#94a3b8', fontSize: 10 }} width={48} />
+                    <YAxis tick={CHART_TICK} width={48} />
                     <RechartsTooltip content={<ChartTooltip />} />
                     <Legend />
                     <Line
                       type="monotone"
                       dataKey="broadcastPackets"
                       name="Broadcast (combined)"
-                      stroke="#8B5CF6"
+                      stroke={CHART_COLORS.primary}
                       strokeWidth={2}
                       dot={false}
                     />
@@ -945,7 +961,7 @@ export function InterfaceDetailPage() {
                       type="monotone"
                       dataKey="rxBroadcastPackets"
                       name="RX Broadcast"
-                      stroke="#A78BFA"
+                      stroke={CHART_COLORS.info}
                       strokeWidth={1.5}
                       strokeDasharray="4 4"
                       dot={false}
@@ -954,7 +970,7 @@ export function InterfaceDetailPage() {
                       type="monotone"
                       dataKey="txBroadcastPackets"
                       name="TX Broadcast"
-                      stroke="#7C3AED"
+                      stroke={CHART_COLORS.warning}
                       strokeWidth={1.5}
                       strokeDasharray="4 4"
                       dot={false}
@@ -963,7 +979,7 @@ export function InterfaceDetailPage() {
                       type="monotone"
                       dataKey="multicastPackets"
                       name="Multicast (combined)"
-                      stroke="#06B6D4"
+                      stroke={CHART_COLORS.info}
                       strokeWidth={2}
                       dot={false}
                     />
@@ -971,7 +987,7 @@ export function InterfaceDetailPage() {
                       type="monotone"
                       dataKey="rxMulticastPackets"
                       name="RX Multicast"
-                      stroke="#22D3EE"
+                      stroke={CHART_COLORS.success}
                       strokeWidth={1.5}
                       strokeDasharray="4 4"
                       dot={false}
@@ -980,7 +996,7 @@ export function InterfaceDetailPage() {
                       type="monotone"
                       dataKey="txMulticastPackets"
                       name="TX Multicast"
-                      stroke="#0891B2"
+                      stroke={CHART_COLORS.warning}
                       strokeWidth={1.5}
                       strokeDasharray="4 4"
                       dot={false}
@@ -1003,21 +1019,21 @@ export function InterfaceDetailPage() {
               <div className="h-56 min-w-0 w-full">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={chartData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
                     <XAxis
                       dataKey="timestamp"
-                      tick={{ fill: '#94a3b8', fontSize: 10 }}
+                      tick={CHART_TICK}
                       tickFormatter={(value) => formatDateTime(String(value)).slice(5, 16)}
                       minTickGap={28}
                     />
-                    <YAxis tick={{ fill: '#94a3b8', fontSize: 10 }} width={48} />
+                    <YAxis tick={CHART_TICK} width={48} />
                     <RechartsTooltip content={<ChartTooltip />} />
                     <Legend />
                     <Line
                       type="monotone"
                       dataKey="inputErrors"
                       name="Input errors"
-                      stroke="#EF4444"
+                      stroke={CHART_COLORS.danger}
                       strokeWidth={2}
                       dot={false}
                     />
@@ -1025,7 +1041,7 @@ export function InterfaceDetailPage() {
                       type="monotone"
                       dataKey="outputErrors"
                       name="Output errors"
-                      stroke="#F97316"
+                      stroke={CHART_COLORS.warning}
                       strokeWidth={2}
                       dot={false}
                     />
@@ -1033,7 +1049,7 @@ export function InterfaceDetailPage() {
                       type="monotone"
                       dataKey="discards"
                       name="Discards (combined)"
-                      stroke="#94A3B8"
+                      stroke={CHART_COLORS.muted}
                       strokeWidth={2}
                       dot={false}
                     />
@@ -1041,7 +1057,7 @@ export function InterfaceDetailPage() {
                       type="monotone"
                       dataKey="rxDiscards"
                       name="RX Discards"
-                      stroke="#64748B"
+                      stroke={CHART_COLORS.border}
                       strokeWidth={1.5}
                       strokeDasharray="4 4"
                       dot={false}
@@ -1050,7 +1066,7 @@ export function InterfaceDetailPage() {
                       type="monotone"
                       dataKey="txDiscards"
                       name="TX Discards"
-                      stroke="#CBD5E1"
+                      stroke={CHART_COLORS.muted}
                       strokeWidth={1.5}
                       strokeDasharray="4 4"
                       dot={false}

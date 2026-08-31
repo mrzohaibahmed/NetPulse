@@ -56,6 +56,7 @@ import {
 import { formatRatio, reportQueryParams } from '@/modules/ping/components/reports/helpers'
 import { ReportLimitations } from '@/modules/ping/components/reports/ReportLimitations'
 import { ReportTrendChart } from '@/modules/ping/components/reports/ReportTrendChart'
+import { ReportTableScroll } from '@/modules/ping/components/reports/ReportTableScroll'
 import { StormIncidentDialog } from '@/modules/ping/components/reports/StormIncidentDialog'
 
 const REPORT_DEVICE_TYPES = ['all', ...DEVICE_TYPES]
@@ -560,6 +561,7 @@ function ExecutiveView({
           {data.highRisk.length === 0 ? (
             <EmptyState title="No high-risk interfaces" description="No HIGH or CRITICAL risk scores in the current snapshot." />
           ) : (
+            <ReportTableScroll minWidth="560px">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -582,6 +584,7 @@ function ExecutiveView({
                 ))}
               </TableBody>
             </Table>
+            </ReportTableScroll>
           )}
         </CardContent>
       </Card>
@@ -640,6 +643,7 @@ function AvailabilityView({
             <EmptyState title="No devices" description="No inventory matches this filter set." />
           ) : (
             <>
+              <ReportTableScroll minWidth="920px">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -673,6 +677,7 @@ function AvailabilityView({
                   ))}
                 </TableBody>
               </Table>
+              </ReportTableScroll>
               <PaginationControls
                 page={page}
                 totalPages={data.pagination.totalPages}
@@ -739,6 +744,7 @@ function PerformanceView({
             {ping.topDevices.length === 0 ? (
               <EmptyState title="No RTT samples" description="No successful ICMP scans in this period." />
             ) : (
+              <ReportTableScroll minWidth="520px">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -752,7 +758,9 @@ function PerformanceView({
                   {ping.topDevices.map((row) => (
                     <TableRow key={row.deviceId ?? row.hostname}>
                       <TableCell>
-                        <div className="font-medium">{row.hostname}</div>
+                        <div className="max-w-[12rem] truncate font-medium" title={row.hostname}>
+                          {row.hostname}
+                        </div>
                         <div className="np-caption">{row.ipAddress || '—'}</div>
                       </TableCell>
                       <TableCell>{formatMs(row.averageRttMs)}</TableCell>
@@ -762,6 +770,7 @@ function PerformanceView({
                   ))}
                 </TableBody>
               </Table>
+              </ReportTableScroll>
             )}
           </CardContent>
         </Card>
@@ -778,6 +787,7 @@ function PerformanceView({
                 description="No interface samples with a known speed in this period."
               />
             ) : (
+              <ReportTableScroll minWidth="520px">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -791,8 +801,12 @@ function PerformanceView({
                   {data.interfaces.topUtilization.map((row) => (
                     <TableRow key={`${row.deviceId}-${row.interface}`}>
                       <TableCell>
-                        <div className="font-medium">{row.hostname}</div>
-                        <div className="np-caption">{row.interface || '—'}</div>
+                        <div className="max-w-[12rem] truncate font-medium" title={row.hostname}>
+                          {row.hostname}
+                        </div>
+                        <div className="max-w-[12rem] truncate np-caption" title={row.interface || undefined}>
+                          {row.interface || '—'}
+                        </div>
                       </TableCell>
                       <TableCell>{formatPercent(row.averageUtilizationPercent)}</TableCell>
                       <TableCell>{formatPercent(row.peakUtilizationPercent)}</TableCell>
@@ -801,6 +815,7 @@ function PerformanceView({
                   ))}
                 </TableBody>
               </Table>
+              </ReportTableScroll>
             )}
           </CardContent>
         </Card>
@@ -889,6 +904,7 @@ function AlertsView({
             <EmptyState title="No alerts" description="No device or storm alerts in this period." />
           ) : (
             <>
+              <ReportTableScroll minWidth="920px">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -920,6 +936,7 @@ function AlertsView({
                   ))}
                 </TableBody>
               </Table>
+              </ReportTableScroll>
               <PaginationControls
                 page={page}
                 totalPages={alerts.pagination.totalPages}
@@ -992,6 +1009,7 @@ function StormView({
             <EmptyState title="No incidents" description="No storm incidents match this period and filter set." />
           ) : (
             <>
+              <ReportTableScroll minWidth="920px">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -1028,6 +1046,7 @@ function StormView({
                   ))}
                 </TableBody>
               </Table>
+              </ReportTableScroll>
               <PaginationControls
                 page={page}
                 totalPages={data.pagination.totalPages}
@@ -1054,23 +1073,25 @@ function SimpleCountTable({
 }) {
   if (!rows.length) return <p className="text-sm text-muted-foreground">{empty}</p>
   return (
-    <div className="w-full max-w-full overflow-x-auto">
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead>Name</TableHead>
-          <TableHead className="text-right">Count</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {rows.map((row) => (
-          <TableRow key={row.name}>
-            <TableCell>{row.name}</TableCell>
-            <TableCell className="text-right">{row.count}</TableCell>
+    <ReportTableScroll minWidth="480px">
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Name</TableHead>
+            <TableHead className="text-right">Count</TableHead>
           </TableRow>
-        ))}
-      </TableBody>
-    </Table>
-    </div>
+        </TableHeader>
+        <TableBody>
+          {rows.map((row) => (
+            <TableRow key={row.name}>
+              <TableCell className="max-w-[16rem] truncate" title={row.name}>
+                {row.name}
+              </TableCell>
+              <TableCell className="text-right">{row.count}</TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </ReportTableScroll>
   )
 }

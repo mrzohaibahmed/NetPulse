@@ -70,15 +70,16 @@ describe('IspConnectivitySection', () => {
     expect(screen.getAllByText(/Last seen:/)).toHaveLength(3)
   })
 
-  it('shows Online status and latency', () => {
+  it('shows online latency for reachable ISP', () => {
     render(<IspConnectivitySection isps={sampleIsps} />)
-    expect(screen.getByText('Online')).toBeInTheDocument()
     expect(screen.getByText('18.0 ms')).toBeInTheDocument()
+    expect(screen.getByText('8.8.8.8')).toBeInTheDocument()
   })
 
-  it('shows Offline status without latency', () => {
+  it('shows unavailable latency for offline ISP', () => {
     render(<IspConnectivitySection isps={sampleIsps} />)
-    expect(screen.getByText('Offline')).toBeInTheDocument()
+    expect(screen.getByText('Backup Link')).toBeInTheDocument()
+    expect(screen.getByText('1.1.1.1')).toBeInTheDocument()
     const dashes = screen.getAllByText('—')
     expect(dashes.length).toBeGreaterThan(0)
   })
