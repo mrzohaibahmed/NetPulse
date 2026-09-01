@@ -8,6 +8,7 @@ from typing import Any
 
 from services.storm.diagnostics.snapshots import parse_interface_snapshot
 from services.storm.mitigation.ssh_executor import SSHMitigationExecutor
+from services.storm.ssh_verification_retry import verify_with_bounded_retry
 from utils.monitor_logger import get_monitor_logger
 
 logger = get_monitor_logger("storm.recovery.verifier")
@@ -32,16 +33,23 @@ def verify_interface_up(executor: SSHMitigationExecutor, interface: str) -> tupl
         cmd = f"show interfaces {safe_iface}"
 
     logger.info("Verifying interface up | host=%s | command=%s", executor.creds.host, cmd)
-    try:
-        output = executor.collector.run_command(cmd)
-        snapshot = parse_interface_snapshot(output, safe_iface)
 
-        # Check if interface is administratively UP (not down)
-        is_up = bool(snapshot.get("available") and snapshot.get("adminStatus") == "up")
-        return is_up, output
-    except Exception as exc:
-        logger.error("Verification command failed | %s | %s", interface, exc)
-        return False, f"CLI command error: {exc}"
+    def _single_attempt() -> tuple[bool, str]:
+        try:
+            output = executor.collector.run_command(cmd)
+            snapshot = parse_interface_snapshot(output, safe_iface)
+
+            # Check if interface is administratively UP (not down)
+            is_up = bool(snapshot.get("available") and snapshot.get("adminStatus") == "up")
+            return is_up, output
+        except Exception as exc:
+            logger.error("Verification command failed | %s | %s", interface, exc)
+            return False, f"CLI command error: {exc}"
+
+    return verify_with_bounded_retry(
+        label="recovery:interface_up",
+        attempt_fn=_single_attempt,
+    )
 
 
 def collect_post_recovery_stats(device: dict, interface: str) -> dict[str, Any]:

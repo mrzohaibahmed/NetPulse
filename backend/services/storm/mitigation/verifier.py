@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from services.storm.mitigation.ssh_executor import SSHMitigationExecutor
 from services.storm.mitigation.strategy import MitigationStrategy
+from services.storm.ssh_verification_retry import verify_with_bounded_retry
 from utils.monitor_logger import get_monitor_logger
 
 logger = get_monitor_logger("storm.mitigation.verifier")
@@ -34,16 +35,22 @@ def verify_mitigation(
         commands,
     )
 
-    try:
-        outputs = executor.execute_commands(commands, interface)
-        output_text = "\n".join(outputs)
-        success = strategy.verify_output(output_text, vendor)
-        return success, output_text
-    except Exception as exc:
-        logger.error(
-            "Verification execution failed | strategy=%s | host=%s | error=%s",
-            strategy.name,
-            executor.creds.host,
-            exc,
-        )
-        return False, f"Verification failed to run: {exc}"
+    def _single_attempt() -> tuple[bool, str]:
+        try:
+            outputs = executor.execute_commands(commands, interface)
+            output_text = "\n".join(outputs)
+            success = strategy.verify_output(output_text, vendor)
+            return success, output_text
+        except Exception as exc:
+            logger.error(
+                "Verification execution failed | strategy=%s | host=%s | error=%s",
+                strategy.name,
+                executor.creds.host,
+                exc,
+            )
+            return False, f"Verification failed to run: {exc}"
+
+    return verify_with_bounded_retry(
+        label=f"mitigation:{strategy.name}",
+        attempt_fn=_single_attempt,
+    )

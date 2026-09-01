@@ -560,7 +560,6 @@ class SSHInterfaceCollector:
 
         deadline = time.monotonic() + timeout
         chunks: list[str] = []
-        idle_rounds = 0
 
         while time.monotonic() < deadline:
             if self._shell.recv_ready():
@@ -570,7 +569,6 @@ class SSHInterfaceCollector:
                 except Exception:  # noqa: BLE001
                     text = data.decode("latin-1", errors="ignore")
                 chunks.append(text)
-                idle_rounds = 0
                 combined = "".join(chunks)
                 if _looks_like_prompt(combined):
                     # Small grace read for trailing bytes
@@ -579,11 +577,9 @@ class SSHInterfaceCollector:
                         continue
                     break
             else:
-                idle_rounds += 1
                 time.sleep(0.2)
-                # If we already have content and the channel went idle, stop.
-                if chunks and idle_rounds >= 5:
-                    break
+                # Do not terminate on idle alone — wait for prompt or hard timeout.
+                # Premature idle exit caused incomplete show output during verification.
 
         return "".join(chunks)
 
