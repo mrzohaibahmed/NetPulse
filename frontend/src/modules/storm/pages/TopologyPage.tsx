@@ -14,7 +14,7 @@ import {
 import type { Node, Edge, NodeProps, EdgeProps, ReactFlowInstance } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import dagre from 'dagre'
-import { Network, Server, Share2, Loader2, Save, Search, X } from 'lucide-react'
+import { Network, Server, Share2, Loader2, Save } from 'lucide-react'
 
 import { PageHeader } from '@/shared/components/PageHeader'
 import { LoadingState } from '@/shared/components/LoadingState'
@@ -28,7 +28,6 @@ import {
 } from '@/hooks/useTopologyData'
 import { Card, CardContent, CardHeader, CardTitle } from '@/shared/ui/card'
 import { Button } from '@/shared/ui/button'
-import { Input } from '@/shared/ui/input'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip'
 import { cn } from '@/lib/utils'
 import type { TopologyEdge as ApiTopologyEdge, TopologyNodeDetails } from '@/api/topologyService'
@@ -46,6 +45,7 @@ import {
   normalizeSpeedToMbps,
   type TopologyFlowEdgeData,
 } from '@/modules/storm/components/switches/switchTopologyUtils'
+import { TopologyCanvasSearchBar } from '@/modules/storm/components/TopologyCanvasSearchBar'
 import { toast } from 'sonner'
 
 type NodeHandleSpec = {
@@ -498,7 +498,7 @@ const edgeTypes = { topologyEdge: TopologyEdge }
 export function TopologyPage() {
   const [selectedSwitchId, setSelectedSwitchId] = useState<string | null>(null)
   const [searchInput, setSearchInput] = useState('')
-  const [appliedSearch, setAppliedSearch] = useState('')
+  const [exactSearch, setExactSearch] = useState(false)
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
   const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null)
@@ -566,14 +566,21 @@ export function TopologyPage() {
     return `${nodeIds}::${edgeIds}`
   }, [activeData])
 
+  const searchOptions = useMemo(() => ({ strict: exactSearch }), [exactSearch])
+
   const searchVisibility = useMemo(() => {
     if (!activeData?.nodes || !activeData?.edges) {
-      return buildTopologySearchVisibility([], [], appliedSearch)
+      return buildTopologySearchVisibility([], [], searchInput, searchOptions)
     }
-    return buildTopologySearchVisibility(activeData.nodes, activeData.edges, appliedSearch)
-  }, [activeData, appliedSearch])
+    return buildTopologySearchVisibility(activeData.nodes, activeData.edges, searchInput, searchOptions)
+  }, [activeData, searchInput, searchOptions])
 
   const searchMatchCount = searchVisibility.matchEdgeIds.size + searchVisibility.matchNodeIds.size
+
+  const clearSearch = useCallback(() => {
+    setSearchInput('')
+    setExactSearch(false)
+  }, [])
 
   useEffect(() => {
     if (prevViewKeyRef.current !== viewKey) {
@@ -584,7 +591,7 @@ export function TopologyPage() {
       layoutInitializedRef.current = false
       initialViewportAppliedRef.current = false
       setSearchInput('')
-      setAppliedSearch('')
+      setExactSearch(false)
       setSaveStatus(layoutQuery.data ? 'saved' : 'idle')
     }
   }, [viewKey, layoutQuery.data])
@@ -785,7 +792,7 @@ export function TopologyPage() {
   }, [rfInstance, nodes.length, viewKey, savedLayoutExists, topologyStructureKey])
 
   useEffect(() => {
-    if (!rfInstance || !appliedSearch.trim() || searchMatchCount === 0) return
+    if (!rfInstance || !searchInput.trim() || searchMatchCount === 0) return
     const nodeIds = [...searchVisibility.highlightedNodeIds]
     if (nodeIds.length === 0) return
     requestAnimationFrame(() => {
@@ -796,7 +803,7 @@ export function TopologyPage() {
         maxZoom: 1.5,
       })
     })
-  }, [rfInstance, appliedSearch, searchMatchCount, searchVisibility.highlightedNodeIds])
+  }, [rfInstance, searchInput, exactSearch, searchMatchCount, searchVisibility.highlightedNodeIds])
 
   const captureSessionPositions = useCallback(
     (nextNodes: Node[]) => {
@@ -941,44 +948,15 @@ export function TopologyPage() {
           {nodes.length > 0 ? (
             <>
               <div className="pointer-events-none absolute left-3 top-3 z-20">
-                <div className="pointer-events-auto flex w-72 flex-col gap-1 rounded-lg border border-border/70 bg-card/90 p-2 shadow-sm backdrop-blur-md">
-                  <div className="relative">
-                    <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-                    <Input
-                      type="search"
-                      placeholder="Search IP, port, device… (Enter)"
-                      value={searchInput}
-                      onChange={(e) => setSearchInput(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          setAppliedSearch(searchInput.trim())
-                        }
-                      }}
-                      className="h-8 border-border/60 bg-background/80 pl-8 pr-8 text-xs"
-                    />
-                    {searchInput ? (
-                      <button
-                        type="button"
-                        className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:text-foreground"
-                        onClick={() => {
-                          setSearchInput('')
-                          setAppliedSearch('')
-                        }}
-                        aria-label="Clear search"
-                      >
-                        <X className="h-3.5 w-3.5" />
-                      </button>
-                    ) : null}
-                  </div>
-                  {appliedSearch ? (
-                    <span className="px-0.5 text-[10px] text-muted-foreground">
-                      {searchMatchCount > 0
-                        ? `${searchMatchCount} match${searchMatchCount === 1 ? '' : 'es'} for "${appliedSearch}"`
-                        : `No matches for "${appliedSearch}"`}
-                    </span>
-                  ) : searchInput.trim() ? (
-                    <span className="px-0.5 text-[10px] text-muted-foreground">Press Enter to search</span>
-                  ) : null}
+                <div className="pointer-events-auto rounded-lg border border-border/70 bg-card/90 p-2 shadow-sm backdrop-blur-md">
+                  <TopologyCanvasSearchBar
+                    searchInput={searchInput}
+                    exactSearch={exactSearch}
+                    searchMatchCount={searchMatchCount}
+                    onSearchInputChange={setSearchInput}
+                    onExactSearchChange={setExactSearch}
+                    onClear={clearSearch}
+                  />
                 </div>
               </div>
               <div className="pointer-events-none absolute right-3 top-3 z-20">
