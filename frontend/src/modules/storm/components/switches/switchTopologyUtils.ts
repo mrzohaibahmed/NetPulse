@@ -434,56 +434,105 @@ export function buildSwitchSearchVisibility(
   return { matchIds, connectedIds, dimmedIds }
 }
 
-function collectNodeSearchTexts(node: TopologyNode): string[] {
-  return [
-    node.hostname,
-    node.label,
-    node.ip,
-    node.mac,
-    node.type,
-    node.managementAddress,
-    node.details?.hostname,
-    node.details?.ip,
-    node.details?.managementAddress,
-    node.details?.vendor,
-    node.details?.platform,
-    node.details?.systemDescription,
-  ]
-    .map((value) => (value || '').trim().toLowerCase())
-    .filter(Boolean)
+const IPV4_RE = /^(?:\d{1,3}\.){3}\d{1,3}$/
+const MAC_RE = /^([0-9a-f]{2}[:-]){5}[0-9a-f]{2}$/i
+
+type SearchFieldKind = 'ip' | 'mac' | 'port' | 'text'
+
+export type TopologySearchOptions = {
+  /** When true (e.g. after pressing Enter), use exact matching for text fields too. */
+  strict?: boolean
 }
 
-function nodeMatchesSearch(node: TopologyNode, query: string): boolean {
-  return collectNodeSearchTexts(node).some((text) => text.includes(query))
+function inferQueryKind(query: string): SearchFieldKind {
+  const trimmed = query.trim()
+  if (IPV4_RE.test(trimmed)) return 'ip'
+  if (MAC_RE.test(trimmed)) return 'mac'
+  if (trimmed.includes('/') || /^[a-z]+[\d/]/i.test(trimmed)) return 'port'
+  return 'text'
+}
+
+function textMatchesSearchQuery(
+  text: string,
+  query: string,
+  fieldKind: SearchFieldKind,
+  strict: boolean,
+): boolean {
+  const normalizedText = text.trim().toLowerCase()
+  const normalizedQuery = query.trim().toLowerCase()
+  if (!normalizedText || !normalizedQuery) return false
+
+  const queryKind = inferQueryKind(query)
+
+  if (queryKind === 'ip') {
+    return fieldKind === 'ip' && normalizedText === normalizedQuery
+  }
+
+  if (queryKind === 'mac') {
+    return fieldKind === 'mac' && normalizedText === normalizedQuery
+  }
+
+  if (queryKind === 'port') {
+    return fieldKind === 'port' && normalizedText === normalizedQuery
+  }
+
+  if (strict) return normalizedText === normalizedQuery
+  return normalizedText.includes(normalizedQuery)
+}
+
+function collectNodeSearchFields(node: TopologyNode): { value: string; kind: SearchFieldKind }[] {
+  const fields: { value: string; kind: SearchFieldKind }[] = [
+    { value: node.hostname || '', kind: 'text' },
+    { value: node.label || '', kind: 'text' },
+    { value: node.ip || '', kind: 'ip' },
+    { value: node.mac || '', kind: 'mac' },
+    { value: node.type || '', kind: 'text' },
+    { value: node.managementAddress || '', kind: 'ip' },
+    { value: node.details?.hostname || '', kind: 'text' },
+    { value: node.details?.ip || '', kind: 'ip' },
+    { value: node.details?.managementAddress || '', kind: 'ip' },
+    { value: node.details?.vendor || '', kind: 'text' },
+    { value: node.details?.platform || '', kind: 'text' },
+    { value: node.details?.systemDescription || '', kind: 'text' },
+  ]
+  return fields.filter((field) => field.value.trim().length > 0)
+}
+
+function nodeMatchesSearch(node: TopologyNode, query: string, strict: boolean): boolean {
+  return collectNodeSearchFields(node).some((field) =>
+    textMatchesSearchQuery(field.value, query, field.kind, strict),
+  )
 }
 
 function edgeMatchesSearch(
   edge: TopologyEdge,
   query: string,
   nodeById: Map<string, TopologyNode>,
+  strict: boolean,
 ): boolean {
-  const edgeTexts = [
-    edge.sourcePort,
-    edge.targetPort,
-    edge.description,
-    edge.vlanSummary,
-    edge.linkType,
-    edge.protocol,
-    edge.speed,
-    edge.label,
+  const allEdgeFields: { value: string; kind: SearchFieldKind }[] = [
+    { value: edge.sourcePort || '', kind: 'port' },
+    { value: edge.targetPort || '', kind: 'port' },
+    { value: edge.description || '', kind: 'text' },
+    { value: edge.vlanSummary || '', kind: 'text' },
+    { value: edge.linkType || '', kind: 'text' },
+    { value: edge.protocol || '', kind: 'text' },
+    { value: edge.speed || '', kind: 'text' },
+    { value: edge.label || '', kind: 'text' },
   ]
-    .map((value) => (value || '').trim().toLowerCase())
-    .filter(Boolean)
+  const edgeFields = allEdgeFields.filter((field) => field.value.trim().length > 0)
 
-  if (edgeTexts.some((text) => text.includes(query))) {
+  if (
+    edgeFields.some((field) => textMatchesSearchQuery(field.value, query, field.kind, strict))
+  ) {
     return true
   }
 
   const source = nodeById.get(edge.source)
   const target = nodeById.get(edge.target)
   return (
-    (source != null && nodeMatchesSearch(source, query)) ||
-    (target != null && nodeMatchesSearch(target, query))
+    (source != null && nodeMatchesSearch(source, query, strict)) ||
+    (target != null && nodeMatchesSearch(target, query, strict))
   )
 }
 
@@ -491,6 +540,7 @@ export function buildTopologySearchVisibility(
   nodes: TopologyNode[],
   edges: TopologyEdge[],
   searchQuery: string,
+  options: TopologySearchOptions = {},
 ): {
   matchNodeIds: Set<string>
   matchEdgeIds: Set<string>
@@ -502,6 +552,7 @@ export function buildTopologySearchVisibility(
   const nodeIds = new Set(nodes.map((node) => node.id))
   const edgeIds = new Set(edges.map((edge) => edge.id))
   const trimmed = searchQuery.trim().toLowerCase()
+  const strict = options.strict ?? false
 
   if (!trimmed) {
     return {
@@ -517,14 +568,14 @@ export function buildTopologySearchVisibility(
   const nodeById = new Map(nodes.map((node) => [node.id, node]))
   const matchNodeIds = new Set<string>()
   for (const node of nodes) {
-    if (nodeMatchesSearch(node, trimmed)) {
+    if (nodeMatchesSearch(node, trimmed, strict)) {
       matchNodeIds.add(node.id)
     }
   }
 
   const matchEdgeIds = new Set<string>()
   for (const edge of edges) {
-    if (edgeMatchesSearch(edge, trimmed, nodeById)) {
+    if (edgeMatchesSearch(edge, trimmed, nodeById, strict)) {
       matchEdgeIds.add(edge.id)
     }
   }
@@ -639,6 +690,7 @@ export function buildSwitchGraph(
   edges: TopologyEdge[],
   positionOverrides?: Record<string, { x: number; y: number }>,
   searchQuery = '',
+  searchOptions: TopologySearchOptions = {},
 ): { nodes: Node<SwitchNodeData>[]; edges: Edge<SwitchEdgeData>[]; bounds: { width: number; height: number } } {
   if (switches.length === 0) {
     return {
@@ -650,7 +702,7 @@ export function buildSwitchGraph(
 
   const switchIds = new Set(switches.map((sw) => sw.id))
   const switchEdges = dedupeSwitchEdges(edges, switchIds)
-  const searchVisibility = buildTopologySearchVisibility(switches, switchEdges, searchQuery)
+  const searchVisibility = buildTopologySearchVisibility(switches, switchEdges, searchQuery, searchOptions)
 
   const nodes: Node<SwitchNodeData>[] = switches.map((sw) => {
     const isMatch = searchVisibility.matchNodeIds.has(sw.id)

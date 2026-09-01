@@ -256,4 +256,27 @@ describe('buildTopologySearchVisibility', () => {
     const result = buildTopologySearchVisibility(nodes, edges, 'vlan 10')
     expect(result.matchEdgeIds.has('e2')).toBe(true)
   })
+
+  it('matches exact IP only, not similar IPs', () => {
+    const ipNodes = [
+      { id: 'n2', hostname: 'SW-02', label: 'SW-02', ip: '192.168.10.2', type: 'Switch', status: 'Online', isKnownDevice: true, details: {} },
+      { id: 'n21', hostname: 'SW-21', label: 'SW-21', ip: '192.168.10.21', type: 'Switch', status: 'Online', isKnownDevice: true, details: {} },
+      { id: 'n22', hostname: 'SW-22', label: 'SW-22', ip: '192.168.10.22', type: 'Switch', status: 'Online', isKnownDevice: true, details: {} },
+    ] as unknown as import('@/api/topologyService').TopologyNode[]
+
+    const result = buildTopologySearchVisibility(ipNodes, edges, '192.168.10.2')
+    expect(result.matchNodeIds.has('n2')).toBe(true)
+    expect(result.matchNodeIds.has('n21')).toBe(false)
+    expect(result.matchNodeIds.has('n22')).toBe(false)
+  })
+
+  it('matches exact port only, not similar port names', () => {
+    const portEdges = [
+      edge('a', 'b', { id: 'p1', sourcePort: 'Gi1/0/2', targetPort: 'Gi1/0/48' }),
+      edge('b', 'c', { id: 'p2', sourcePort: 'Gi1/0/21', targetPort: 'eth0' }),
+    ]
+    const result = buildTopologySearchVisibility(nodes, portEdges, 'gi1/0/2')
+    expect(result.matchEdgeIds.has('p1')).toBe(true)
+    expect(result.matchEdgeIds.has('p2')).toBe(false)
+  })
 })

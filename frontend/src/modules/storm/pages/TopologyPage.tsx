@@ -497,7 +497,8 @@ const edgeTypes = { topologyEdge: TopologyEdge }
 
 export function TopologyPage() {
   const [selectedSwitchId, setSelectedSwitchId] = useState<string | null>(null)
-  const [search, setSearch] = useState('')
+  const [searchInput, setSearchInput] = useState('')
+  const [appliedSearch, setAppliedSearch] = useState('')
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
   const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null)
@@ -567,10 +568,10 @@ export function TopologyPage() {
 
   const searchVisibility = useMemo(() => {
     if (!activeData?.nodes || !activeData?.edges) {
-      return buildTopologySearchVisibility([], [], search)
+      return buildTopologySearchVisibility([], [], appliedSearch)
     }
-    return buildTopologySearchVisibility(activeData.nodes, activeData.edges, search)
-  }, [activeData, search])
+    return buildTopologySearchVisibility(activeData.nodes, activeData.edges, appliedSearch)
+  }, [activeData, appliedSearch])
 
   const searchMatchCount = searchVisibility.matchEdgeIds.size + searchVisibility.matchNodeIds.size
 
@@ -582,7 +583,8 @@ export function TopologyPage() {
       pendingFitNodeIdsRef.current = []
       layoutInitializedRef.current = false
       initialViewportAppliedRef.current = false
-      setSearch('')
+      setSearchInput('')
+      setAppliedSearch('')
       setSaveStatus(layoutQuery.data ? 'saved' : 'idle')
     }
   }, [viewKey, layoutQuery.data])
@@ -783,7 +785,7 @@ export function TopologyPage() {
   }, [rfInstance, nodes.length, viewKey, savedLayoutExists, topologyStructureKey])
 
   useEffect(() => {
-    if (!rfInstance || !search.trim() || searchMatchCount === 0) return
+    if (!rfInstance || !appliedSearch.trim() || searchMatchCount === 0) return
     const nodeIds = [...searchVisibility.highlightedNodeIds]
     if (nodeIds.length === 0) return
     requestAnimationFrame(() => {
@@ -794,7 +796,7 @@ export function TopologyPage() {
         maxZoom: 1.5,
       })
     })
-  }, [rfInstance, search, searchMatchCount, searchVisibility.highlightedNodeIds])
+  }, [rfInstance, appliedSearch, searchMatchCount, searchVisibility.highlightedNodeIds])
 
   const captureSessionPositions = useCallback(
     (nextNodes: Node[]) => {
@@ -944,28 +946,38 @@ export function TopologyPage() {
                     <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                     <Input
                       type="search"
-                      placeholder="Search connections, ports, devices..."
-                      value={search}
-                      onChange={(e) => setSearch(e.target.value)}
+                      placeholder="Search IP, port, device… (Enter)"
+                      value={searchInput}
+                      onChange={(e) => setSearchInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          setAppliedSearch(searchInput.trim())
+                        }
+                      }}
                       className="h-8 border-border/60 bg-background/80 pl-8 pr-8 text-xs"
                     />
-                    {search ? (
+                    {searchInput ? (
                       <button
                         type="button"
                         className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:text-foreground"
-                        onClick={() => setSearch('')}
+                        onClick={() => {
+                          setSearchInput('')
+                          setAppliedSearch('')
+                        }}
                         aria-label="Clear search"
                       >
                         <X className="h-3.5 w-3.5" />
                       </button>
                     ) : null}
                   </div>
-                  {search.trim() ? (
+                  {appliedSearch ? (
                     <span className="px-0.5 text-[10px] text-muted-foreground">
                       {searchMatchCount > 0
-                        ? `${searchMatchCount} match${searchMatchCount === 1 ? '' : 'es'} found`
-                        : 'No matches'}
+                        ? `${searchMatchCount} match${searchMatchCount === 1 ? '' : 'es'} for "${appliedSearch}"`
+                        : `No matches for "${appliedSearch}"`}
                     </span>
+                  ) : searchInput.trim() ? (
+                    <span className="px-0.5 text-[10px] text-muted-foreground">Press Enter to search</span>
                   ) : null}
                 </div>
               </div>

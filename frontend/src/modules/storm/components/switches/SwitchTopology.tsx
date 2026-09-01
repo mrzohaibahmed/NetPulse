@@ -52,7 +52,8 @@ export function SwitchTopology({ switches, edges }: SwitchTopologyProps) {
   const layoutQuery = useTopologyLayout(SWITCHES_LAYOUT_VIEW_KEY)
   const saveLayoutMutation = useSaveTopologyLayoutMutation()
 
-  const [search, setSearch] = useState('')
+  const [searchInput, setSearchInput] = useState('')
+  const [appliedSearch, setAppliedSearch] = useState('')
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([])
   const [flowEdges, setFlowEdges, onEdgesChange] = useEdgesState<Edge>([])
   const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null)
@@ -74,8 +75,8 @@ export function SwitchTopology({ switches, edges }: SwitchTopologyProps) {
   const searchVisibility = useMemo(() => {
     const switchIds = new Set(switches.map((sw) => sw.id))
     const switchEdges = dedupeSwitchEdges(edges, switchIds)
-    return buildTopologySearchVisibility(switches, switchEdges, search)
-  }, [switches, edges, search])
+    return buildTopologySearchVisibility(switches, switchEdges, appliedSearch)
+  }, [switches, edges, appliedSearch])
 
   const searchMatchCount =
     searchVisibility.matchEdgeIds.size + searchVisibility.matchNodeIds.size
@@ -117,7 +118,7 @@ export function SwitchTopology({ switches, edges }: SwitchTopologyProps) {
     )
 
     if (!structureChanged && nodes.length > 0) {
-      const graph = buildSwitchGraph(switches, edges, positionMap, search)
+      const graph = buildSwitchGraph(switches, edges, positionMap, appliedSearch)
       setNodes((current) =>
         current.map((node) => {
           const updated = graph.nodes.find((item) => item.id === node.id)
@@ -132,7 +133,7 @@ export function SwitchTopology({ switches, edges }: SwitchTopologyProps) {
       return
     }
 
-    const graph = buildSwitchGraph(switches, edges, positionMap, search)
+    const graph = buildSwitchGraph(switches, edges, positionMap, appliedSearch)
 
     sessionPositionsRef.current = Object.fromEntries(
       graph.nodes.map((node) => [node.id, node.position]),
@@ -148,7 +149,7 @@ export function SwitchTopology({ switches, edges }: SwitchTopologyProps) {
     savedPositions,
     layoutQuery.isLoading,
     saveStatus,
-    search,
+    appliedSearch,
     nodes.length,
     setNodes,
     setFlowEdges,
@@ -165,7 +166,7 @@ export function SwitchTopology({ switches, edges }: SwitchTopologyProps) {
   }, [rfInstance, nodes.length, structureKey])
 
   useEffect(() => {
-    if (!rfInstance || !search.trim() || searchMatchCount === 0) return
+    if (!rfInstance || !appliedSearch.trim() || searchMatchCount === 0) return
     const nodeIds = [...searchVisibility.highlightedNodeIds]
     if (nodeIds.length === 0) return
     requestAnimationFrame(() => {
@@ -176,7 +177,7 @@ export function SwitchTopology({ switches, edges }: SwitchTopologyProps) {
         maxZoom: 1.5,
       })
     })
-  }, [rfInstance, search, searchMatchCount, searchVisibility.highlightedNodeIds])
+  }, [rfInstance, appliedSearch, searchMatchCount, searchVisibility.highlightedNodeIds])
 
   const onNodeDragStop = useCallback(() => {
     const currentNodes = rfInstance?.getNodes() ?? nodes
@@ -244,28 +245,38 @@ export function SwitchTopology({ switches, edges }: SwitchTopologyProps) {
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
             <Input
               type="search"
-              placeholder="Search connections, ports, switches..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search IP, port, switch… (Enter)"
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  setAppliedSearch(searchInput.trim())
+                }
+              }}
               className="h-8 border-border/60 bg-background/80 pl-8 pr-8 text-xs"
             />
-            {search ? (
+            {searchInput ? (
               <button
                 type="button"
                 className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:text-foreground"
-                onClick={() => setSearch('')}
+                onClick={() => {
+                  setSearchInput('')
+                  setAppliedSearch('')
+                }}
                 aria-label="Clear search"
               >
                 <X className="h-3.5 w-3.5" />
               </button>
             ) : null}
           </div>
-          {search.trim() ? (
+          {appliedSearch ? (
             <span className="px-0.5 text-[10px] text-muted-foreground">
               {searchMatchCount > 0
-                ? `${searchMatchCount} match${searchMatchCount === 1 ? '' : 'es'} found`
-                : 'No matches'}
+                ? `${searchMatchCount} match${searchMatchCount === 1 ? '' : 'es'} for "${appliedSearch}"`
+                : `No matches for "${appliedSearch}"`}
             </span>
+          ) : searchInput.trim() ? (
+            <span className="px-0.5 text-[10px] text-muted-foreground">Press Enter to search</span>
           ) : null}
         </div>
       </div>
