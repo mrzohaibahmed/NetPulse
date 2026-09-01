@@ -672,17 +672,31 @@ export function buildSwitchGraph(
     }
   })
 
-  const flowEdges = switchEdges.map((edge) => {
+  const flowEdges: Edge<SwitchEdgeData>[] = switchEdges.map((edge) => {
     const base = toFlowEdge(edge)
+    const baseData = base.data!
     const highlighted = searchVisibility.highlightedEdgeIds.has(edge.id)
     const dimmed = searchVisibility.dimmedEdgeIds.has(edge.id)
-    const strokeWidth = base.style?.strokeWidth ?? 2
+    const baseStrokeWidth =
+      typeof base.style?.strokeWidth === 'number' ? base.style.strokeWidth : 2
+
+    const edgeData: SwitchEdgeData = {
+      speedMbps: baseData.speedMbps,
+      speedLabel: baseData.speedLabel,
+      linkStyle: baseData.linkStyle,
+      sourcePort: baseData.sourcePort,
+      targetPort: baseData.targetPort,
+      operStatus: baseData.operStatus,
+      highlighted,
+      dimmed,
+    }
+
     return {
       ...base,
-      data: { ...base.data, highlighted, dimmed },
+      data: edgeData,
       style: {
         ...base.style,
-        strokeWidth: highlighted ? strokeWidth + 2 : strokeWidth,
+        strokeWidth: highlighted ? baseStrokeWidth + 2 : baseStrokeWidth,
         opacity: dimmed ? 0.12 : 1,
       },
       zIndex: highlighted ? 10 : dimmed ? 0 : 1,
