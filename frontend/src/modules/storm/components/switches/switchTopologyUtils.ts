@@ -78,6 +78,8 @@ export type TopologyFlowEdgeData = SwitchEdgeData & {
   vlanSummary?: string
   centerLabel?: string
   status?: 'active' | 'stale'
+  highlighted?: boolean
+  dimmed?: boolean
 }
 
 export type TopologyFlowEdgeProps = {
@@ -428,6 +430,178 @@ export function buildSwitchSearchVisibility(
   }
 
   return { matchIds, connectedIds, dimmedIds }
+}
+
+function collectNodeSearchTexts(node: TopologyNode): string[] {
+  return [
+    node.hostname,
+    node.label,
+    node.ip,
+    node.mac,
+    node.type,
+    node.managementAddress,
+    node.details?.hostname,
+    node.details?.ip,
+    node.details?.managementAddress,
+    node.details?.vendor,
+    node.details?.platform,
+    node.details?.systemDescription,
+  ]
+    .map((value) => (value || '').trim().toLowerCase())
+    .filter(Boolean)
+}
+
+function nodeMatchesSearch(node: TopologyNode, query: string): boolean {
+  return collectNodeSearchTexts(node).some((text) => text.includes(query))
+}
+
+function edgeMatchesSearch(
+  edge: TopologyEdge,
+  query: string,
+  nodeById: Map<string, TopologyNode>,
+): boolean {
+  const edgeTexts = [
+    edge.sourcePort,
+    edge.targetPort,
+    edge.description,
+    edge.vlanSummary,
+    edge.linkType,
+    edge.protocol,
+    edge.speed,
+    edge.label,
+  ]
+    .map((value) => (value || '').trim().toLowerCase())
+    .filter(Boolean)
+
+  if (edgeTexts.some((text) => text.includes(query))) {
+    return true
+  }
+
+  const source = nodeById.get(edge.source)
+  const target = nodeById.get(edge.target)
+  return (
+    (source != null && nodeMatchesSearch(source, query)) ||
+    (target != null && nodeMatchesSearch(target, query))
+  )
+}
+
+export function buildTopologySearchVisibility(
+  nodes: TopologyNode[],
+  edges: TopologyEdge[],
+  searchQuery: string,
+): {
+  matchNodeIds: Set<string>
+  matchEdgeIds: Set<string>
+  highlightedNodeIds: Set<string>
+  highlightedEdgeIds: Set<string>
+  dimmedNodeIds: Set<string>
+  dimmedEdgeIds: Set<string>
+} {
+  const nodeIds = new Set(nodes.map((node) => node.id))
+  const edgeIds = new Set(edges.map((edge) => edge.id))
+  const trimmed = searchQuery.trim().toLowerCase()
+
+  if (!trimmed) {
+    return {
+      matchNodeIds: new Set(),
+      matchEdgeIds: new Set(),
+      highlightedNodeIds: new Set(nodeIds),
+      highlightedEdgeIds: new Set(edgeIds),
+      dimmedNodeIds: new Set(),
+      dimmedEdgeIds: new Set(),
+    }
+  }
+
+  const nodeById = new Map(nodes.map((node) => [node.id, node]))
+  const matchNodeIds = new Set<string>()
+  for (const node of nodes) {
+    if (nodeMatchesSearch(node, trimmed)) {
+      matchNodeIds.add(node.id)
+    }
+  }
+
+  const matchEdgeIds = new Set<string>()
+  for (const edge of edges) {
+    if (edgeMatchesSearch(edge, trimmed, nodeById)) {
+      matchEdgeIds.add(edge.id)
+    }
+  }
+
+  if (matchNodeIds.size === 0 && matchEdgeIds.size === 0) {
+    return {
+      matchNodeIds,
+      matchEdgeIds,
+      highlightedNodeIds: new Set(nodeIds),
+      highlightedEdgeIds: new Set(edgeIds),
+      dimmedNodeIds: new Set(),
+      dimmedEdgeIds: new Set(),
+    }
+  }
+
+  const highlightedNodeIds = new Set<string>(matchNodeIds)
+  const highlightedEdgeIds = new Set<string>(matchEdgeIds)
+
+  for (const edge of edges) {
+    if (matchNodeIds.has(edge.source) || matchNodeIds.has(edge.target)) {
+      highlightedEdgeIds.add(edge.id)
+      highlightedNodeIds.add(edge.source)
+      highlightedNodeIds.add(edge.target)
+    }
+    if (matchEdgeIds.has(edge.id)) {
+      highlightedNodeIds.add(edge.source)
+      highlightedNodeIds.add(edge.target)
+    }
+  }
+
+  const dimmedNodeIds = new Set<string>()
+  for (const id of nodeIds) {
+    if (!highlightedNodeIds.has(id)) dimmedNodeIds.add(id)
+  }
+
+  const dimmedEdgeIds = new Set<string>()
+  for (const id of edgeIds) {
+    if (!highlightedEdgeIds.has(id)) dimmedEdgeIds.add(id)
+  }
+
+  return {
+    matchNodeIds,
+    matchEdgeIds,
+    highlightedNodeIds,
+    highlightedEdgeIds,
+    dimmedNodeIds,
+    dimmedEdgeIds,
+  }
+}
+
+export function applyTopologyEdgeSearchStyle(
+  built: TopologyFlowEdgeProps,
+  highlighted: boolean,
+  dimmed: boolean,
+): TopologyFlowEdgeProps {
+  if (!highlighted && !dimmed) {
+    return {
+      ...built,
+      data: { ...built.data, highlighted: false, dimmed: false },
+    }
+  }
+
+  const baseStrokeWidth = built.style.strokeWidth
+  const baseOpacity = built.style.opacity
+
+  return {
+    ...built,
+    data: { ...built.data, highlighted, dimmed },
+    style: {
+      ...built.style,
+      strokeWidth: highlighted ? baseStrokeWidth + 2 : baseStrokeWidth,
+      opacity: dimmed ? 0.12 : highlighted ? 1 : baseOpacity,
+    },
+    markerEnd: {
+      ...built.markerEnd,
+      color: highlighted ? '#3b82f6' : built.markerEnd.color,
+    },
+    animated: highlighted ? true : built.animated,
+  }
 }
 
 function toFlowEdge(edge: TopologyEdge): Edge<SwitchEdgeData> {

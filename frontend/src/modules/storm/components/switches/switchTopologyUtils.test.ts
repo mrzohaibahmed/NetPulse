@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { TopologyEdge } from '@/api/topologyService'
 import {
   buildSwitchSearchVisibility,
+  buildTopologySearchVisibility,
   dedupeSwitchEdges,
   formatSpeed,
   getLinkStyle,
@@ -214,5 +215,45 @@ describe('buildSwitchSearchVisibility', () => {
     expect(result.matchIds.has('a')).toBe(true)
     expect(result.connectedIds.has('b')).toBe(true)
     expect(result.dimmedIds.has('c')).toBe(true)
+  })
+})
+
+describe('buildTopologySearchVisibility', () => {
+  const nodes = [
+  { id: 'a', hostname: 'Core-SW-01', label: 'Core-SW-01', ip: '192.168.1.1', type: 'Switch', status: 'Online', isKnownDevice: true, details: {} },
+  { id: 'b', hostname: 'Access-SW-01', label: 'Access-SW-01', ip: '192.168.1.10', type: 'Switch', status: 'Online', isKnownDevice: true, details: {} },
+  { id: 'c', hostname: 'Server-01', label: 'Server-01', ip: '192.168.1.50', type: 'Server', status: 'Online', isKnownDevice: true, details: {} },
+  ] as unknown as import('@/api/topologyService').TopologyNode[]
+
+  const edges = [
+    edge('a', 'b', { id: 'e1', sourcePort: 'Gi1/0/1', targetPort: 'Gi1/0/48' }),
+    edge('b', 'c', { id: 'e2', sourcePort: 'Gi1/0/10', targetPort: 'eth0', vlanSummary: 'VLAN 10' }),
+  ]
+
+  it('returns no dims when search is empty', () => {
+    const result = buildTopologySearchVisibility(nodes, edges, '')
+    expect(result.dimmedEdgeIds.size).toBe(0)
+    expect(result.dimmedNodeIds.size).toBe(0)
+  })
+
+  it('highlights matching connections by port name', () => {
+    const result = buildTopologySearchVisibility(nodes, edges, 'gi1/0/10')
+    expect(result.matchEdgeIds.has('e2')).toBe(true)
+    expect(result.highlightedEdgeIds.has('e2')).toBe(true)
+    expect(result.dimmedEdgeIds.has('e1')).toBe(true)
+    expect(result.highlightedNodeIds.has('b')).toBe(true)
+    expect(result.highlightedNodeIds.has('c')).toBe(true)
+  })
+
+  it('highlights device connections when searching by hostname', () => {
+    const result = buildTopologySearchVisibility(nodes, edges, 'core-sw')
+    expect(result.matchNodeIds.has('a')).toBe(true)
+    expect(result.highlightedEdgeIds.has('e1')).toBe(true)
+    expect(result.dimmedNodeIds.has('c')).toBe(true)
+  })
+
+  it('matches vlan summary on edges', () => {
+    const result = buildTopologySearchVisibility(nodes, edges, 'vlan 10')
+    expect(result.matchEdgeIds.has('e2')).toBe(true)
   })
 })

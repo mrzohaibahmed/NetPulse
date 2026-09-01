@@ -14,7 +14,7 @@ import {
 import type { Node, Edge, NodeProps, EdgeProps, ReactFlowInstance } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import dagre from 'dagre'
-import { Network, Server, Share2, Loader2, Save } from 'lucide-react'
+import { Network, Server, Share2, Loader2, Save, Search, X } from 'lucide-react'
 
 import { PageHeader } from '@/shared/components/PageHeader'
 import { LoadingState } from '@/shared/components/LoadingState'
@@ -28,6 +28,7 @@ import {
 } from '@/hooks/useTopologyData'
 import { Card, CardContent, CardHeader, CardTitle } from '@/shared/ui/card'
 import { Button } from '@/shared/ui/button'
+import { Input } from '@/shared/ui/input'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip'
 import { cn } from '@/lib/utils'
 import type { TopologyEdge as ApiTopologyEdge, TopologyNodeDetails } from '@/api/topologyService'
@@ -39,6 +40,8 @@ import {
 import {
   formatSpeed,
   buildTopologyFlowEdge,
+  buildTopologySearchVisibility,
+  applyTopologyEdgeSearchStyle,
   isTopologyOfflineStatus,
   normalizeSpeedToMbps,
   type TopologyFlowEdgeData,
@@ -63,6 +66,8 @@ type TopologyNodeData = {
   isCentral?: boolean
   details: TopologyNodeDetails
   handles: NodeHandleSpec[]
+  highlighted?: boolean
+  dimmed?: boolean
 }
 
 type TopologyEdgeData = TopologyFlowEdgeData
@@ -84,19 +89,36 @@ function apiEdgesToFlowEdges(
   visibleEdges: ApiTopologyEdge[],
   nodeStatusMap: Map<string, string>,
   edgeHandles: Map<string, { sourceHandle: string; targetHandle: string }>,
+  searchVisibility: ReturnType<typeof buildTopologySearchVisibility>,
 ): Edge[] {
   return visibleEdges.map((edge) => {
     const handles = edgeHandles.get(edge.id)
     const built = buildTopologyFlowEdge(edge, nodeStatusMap)
+    const highlighted = searchVisibility.highlightedEdgeIds.has(edge.id)
+    const dimmed = searchVisibility.dimmedEdgeIds.has(edge.id)
+    const styled = applyTopologyEdgeSearchStyle(built, highlighted, dimmed)
     return {
       id: edge.id,
       source: edge.source,
       target: edge.target,
       sourceHandle: handles?.sourceHandle,
       targetHandle: handles?.targetHandle,
-      ...built,
+      ...styled,
+      zIndex: highlighted ? 10 : dimmed ? 0 : 1,
     }
   })
+}
+
+function applyNodeSearchFlags(
+  data: TopologyNodeData,
+  nodeId: string,
+  searchVisibility: ReturnType<typeof buildTopologySearchVisibility>,
+): TopologyNodeData {
+  return {
+    ...data,
+    highlighted: searchVisibility.matchNodeIds.has(nodeId),
+    dimmed: searchVisibility.dimmedNodeIds.has(nodeId),
+  }
 }
 
 function displayHostname(data: TopologyNodeData) {
@@ -272,11 +294,13 @@ const TopologyDeviceNode = memo(function TopologyDeviceNode({ data }: NodeProps)
   const card = (
     <div
       className={cn(
-        'flex h-[96px] w-[200px] flex-col justify-center rounded-xl border px-3 py-2 shadow-md backdrop-blur-sm',
+        'flex h-[96px] w-[200px] flex-col justify-center rounded-xl border px-3 py-2 shadow-md backdrop-blur-sm transition-opacity',
         'border-border/70 bg-card/90',
         nodeData.isCentral && 'border-primary ring-1 ring-primary/50 bg-primary/5',
         !nodeData.isKnownDevice && 'border-dashed border-border/60 bg-muted/20',
         isOffline && 'border-danger/50 bg-danger/5 opacity-70',
+        nodeData.highlighted && 'ring-2 ring-primary ring-offset-1 ring-offset-background',
+        nodeData.dimmed && 'opacity-35',
       )}
     >
       {(nodeData.handles ?? []).map((handle) => (
@@ -408,6 +432,8 @@ const TopologyEdge = memo(function TopologyEdge({
 }: EdgeProps) {
   const edgeData = (data || {}) as TopologyEdgeData
   const isTrunk = Boolean(edgeData.isTrunk)
+  const isHighlighted = Boolean(edgeData.highlighted)
+  const isDimmed = Boolean(edgeData.dimmed)
 
   const [edgePath] = getSmoothStepPath({
     sourceX,
@@ -431,6 +457,18 @@ const TopologyEdge = memo(function TopologyEdge({
 
   return (
     <>
+      {isHighlighted ? (
+        <BaseEdge
+          id={`${id}-glow`}
+          path={edgePath}
+          interactionWidth={0}
+          style={{
+            stroke: '#3b82f6',
+            strokeWidth: ((style?.strokeWidth as number) || 2) + 8,
+            opacity: 0.25,
+          }}
+        />
+      ) : null}
       <BaseEdge
         id={id}
         path={edgePath}
@@ -439,14 +477,16 @@ const TopologyEdge = memo(function TopologyEdge({
         style={style}
       />
       <EdgeLabelRenderer>
-        <EdgeLabel x={sourceLabelPoint.x} y={sourceLabelPoint.y} text={sourcePort} variant="port" />
-        <EdgeLabel
-          x={centerLabelPoint.x}
-          y={centerLabelPoint.y}
-          text={centerLabel}
-          variant={isTrunk ? 'trunk' : 'center'}
-        />
-        <EdgeLabel x={targetLabelPoint.x} y={targetLabelPoint.y} text={targetPort} variant="port" />
+        <div className={cn(isDimmed && 'opacity-30')}>
+          <EdgeLabel x={sourceLabelPoint.x} y={sourceLabelPoint.y} text={sourcePort} variant="port" />
+          <EdgeLabel
+            x={centerLabelPoint.x}
+            y={centerLabelPoint.y}
+            text={centerLabel}
+            variant={isTrunk ? 'trunk' : 'center'}
+          />
+          <EdgeLabel x={targetLabelPoint.x} y={targetLabelPoint.y} text={targetPort} variant="port" />
+        </div>
       </EdgeLabelRenderer>
     </>
   )
@@ -457,6 +497,7 @@ const edgeTypes = { topologyEdge: TopologyEdge }
 
 export function TopologyPage() {
   const [selectedSwitchId, setSelectedSwitchId] = useState<string | null>(null)
+  const [search, setSearch] = useState('')
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
   const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null)
@@ -524,6 +565,15 @@ export function TopologyPage() {
     return `${nodeIds}::${edgeIds}`
   }, [activeData])
 
+  const searchVisibility = useMemo(() => {
+    if (!activeData?.nodes || !activeData?.edges) {
+      return buildTopologySearchVisibility([], [], search)
+    }
+    return buildTopologySearchVisibility(activeData.nodes, activeData.edges, search)
+  }, [activeData, search])
+
+  const searchMatchCount = searchVisibility.matchEdgeIds.size + searchVisibility.matchNodeIds.size
+
   useEffect(() => {
     if (prevViewKeyRef.current !== viewKey) {
       prevViewKeyRef.current = viewKey
@@ -532,6 +582,7 @@ export function TopologyPage() {
       pendingFitNodeIdsRef.current = []
       layoutInitializedRef.current = false
       initialViewportAppliedRef.current = false
+      setSearch('')
       setSaveStatus(layoutQuery.data ? 'saved' : 'idle')
     }
   }, [viewKey, layoutQuery.data])
@@ -586,21 +637,22 @@ export function TopologyPage() {
           const source = activeData.nodes.find((item) => item.id === node.id)
           if (!source) return node
           const nodeData = node.data as TopologyNodeData
+          const baseData = {
+            ...nodeData,
+            hostname: source.hostname,
+            label: source.label,
+            ip: source.ip,
+            mac: source.mac,
+            type: source.type,
+            status: source.status,
+            isKnownDevice: source.isKnownDevice,
+            isCentral: selectedSwitchId != null && source.id === selectedSwitchId,
+            details: source.details,
+            handles: nodeHandles.get(source.id) ?? nodeData.handles,
+          } satisfies TopologyNodeData
           return {
             ...node,
-            data: {
-              ...nodeData,
-              hostname: source.hostname,
-              label: source.label,
-              ip: source.ip,
-              mac: source.mac,
-              type: source.type,
-              status: source.status,
-              isKnownDevice: source.isKnownDevice,
-              isCentral: selectedSwitchId != null && source.id === selectedSwitchId,
-              details: source.details,
-              handles: nodeHandles.get(source.id) ?? nodeData.handles,
-            } satisfies TopologyNodeData,
+            data: applyNodeSearchFlags(baseData, source.id, searchVisibility),
           }
         }),
       )
@@ -612,14 +664,18 @@ export function TopologyPage() {
             const apiEdge = apiById.get(edge.id)!
             const handles = edgeHandles.get(edge.id)
             const built = buildTopologyFlowEdge(apiEdge, nodeStatusMap)
+            const highlighted = searchVisibility.highlightedEdgeIds.has(edge.id)
+            const dimmed = searchVisibility.dimmedEdgeIds.has(edge.id)
+            const styled = applyTopologyEdgeSearchStyle(built, highlighted, dimmed)
             return {
               ...edge,
               sourceHandle: handles?.sourceHandle ?? edge.sourceHandle,
               targetHandle: handles?.targetHandle ?? edge.targetHandle,
-              ...built,
+              ...styled,
               id: edge.id,
               source: edge.source,
               target: edge.target,
+              zIndex: highlighted ? 10 : dimmed ? 0 : 1,
             }
           })
       })
@@ -631,23 +687,27 @@ export function TopologyPage() {
       type: 'topologyDevice',
       position: positionMap[n.id] ?? { x: 0, y: 0 },
       draggable: true,
-      data: {
-        hostname: n.hostname,
-        label: n.label,
-        ip: n.ip,
-        mac: n.mac,
-        type: n.type,
-        status: n.status,
-        isKnownDevice: n.isKnownDevice,
-        isCentral: selectedSwitchId != null && n.id === selectedSwitchId,
-        details: n.details,
-        handles: nodeHandles.get(n.id) ?? [],
-      } satisfies TopologyNodeData,
+      data: applyNodeSearchFlags(
+        {
+          hostname: n.hostname,
+          label: n.label,
+          ip: n.ip,
+          mac: n.mac,
+          type: n.type,
+          status: n.status,
+          isKnownDevice: n.isKnownDevice,
+          isCentral: selectedSwitchId != null && n.id === selectedSwitchId,
+          details: n.details,
+          handles: nodeHandles.get(n.id) ?? [],
+        },
+        n.id,
+        searchVisibility,
+      ),
     }))
 
     const nodeStatusMap = buildNodeStatusMap(activeData.nodes)
 
-    const flowEdges: Edge[] = apiEdgesToFlowEdges(visibleEdges, nodeStatusMap, edgeHandles)
+    const flowEdges: Edge[] = apiEdgesToFlowEdges(visibleEdges, nodeStatusMap, edgeHandles, searchVisibility)
 
     const needsLayout = flowNodes.some((node) => !positionMap[node.id])
     let nextNodes = flowNodes
@@ -686,6 +746,7 @@ export function TopologyPage() {
     savedPositions,
     layoutQuery.isLoading,
     saveStatus,
+    searchVisibility,
     nodes.length,
     setNodes,
     setEdges,
@@ -720,6 +781,20 @@ export function TopologyPage() {
       initialViewportAppliedRef.current = true
     })
   }, [rfInstance, nodes.length, viewKey, savedLayoutExists, topologyStructureKey])
+
+  useEffect(() => {
+    if (!rfInstance || !search.trim() || searchMatchCount === 0) return
+    const nodeIds = [...searchVisibility.highlightedNodeIds]
+    if (nodeIds.length === 0) return
+    requestAnimationFrame(() => {
+      rfInstance.fitView({
+        nodes: nodeIds.map((id) => ({ id })),
+        padding: 0.25,
+        duration: 300,
+        maxZoom: 1.5,
+      })
+    })
+  }, [rfInstance, search, searchMatchCount, searchVisibility.highlightedNodeIds])
 
   const captureSessionPositions = useCallback(
     (nextNodes: Node[]) => {
@@ -862,7 +937,39 @@ export function TopologyPage() {
           ) : null}
 
           {nodes.length > 0 ? (
-            <div className="pointer-events-none absolute right-3 top-3 z-20">
+            <>
+              <div className="pointer-events-none absolute left-3 top-3 z-20">
+                <div className="pointer-events-auto flex w-72 flex-col gap-1 rounded-lg border border-border/70 bg-card/90 p-2 shadow-sm backdrop-blur-md">
+                  <div className="relative">
+                    <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      type="search"
+                      placeholder="Search connections, ports, devices..."
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                      className="h-8 border-border/60 bg-background/80 pl-8 pr-8 text-xs"
+                    />
+                    {search ? (
+                      <button
+                        type="button"
+                        className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:text-foreground"
+                        onClick={() => setSearch('')}
+                        aria-label="Clear search"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    ) : null}
+                  </div>
+                  {search.trim() ? (
+                    <span className="px-0.5 text-[10px] text-muted-foreground">
+                      {searchMatchCount > 0
+                        ? `${searchMatchCount} match${searchMatchCount === 1 ? '' : 'es'} found`
+                        : 'No matches'}
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+              <div className="pointer-events-none absolute right-3 top-3 z-20">
               <div className="pointer-events-auto flex flex-wrap items-center gap-2 rounded-lg border border-border/70 bg-card/90 px-2.5 py-1.5 text-xs font-medium text-foreground shadow-sm backdrop-blur-md">
                 <span className="text-muted-foreground">
                   {selectedSwitchId === null ? 'Level 2 · Full Topology' : 'Level 1 · Switch Neighbors'}
@@ -896,6 +1003,7 @@ export function TopologyPage() {
                 </Button>
               </div>
             </div>
+            </>
           ) : null}
 
           {nodes.length === 0 && !isLoadingActive ? (
