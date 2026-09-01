@@ -36,7 +36,10 @@ def verify_interface_up(executor: SSHMitigationExecutor, interface: str) -> tupl
 
     def _single_attempt() -> tuple[bool, str]:
         try:
-            output = executor.collector.run_command(cmd)
+            collector = executor.collector
+            if collector is None:
+                raise RuntimeError("SSH executor is not connected")
+            output = collector.run_command(cmd)
             snapshot = parse_interface_snapshot(output, safe_iface)
 
             # Check if interface is administratively UP (not down)
