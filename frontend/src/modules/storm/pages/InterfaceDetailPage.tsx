@@ -374,8 +374,6 @@ export function InterfaceDetailPage() {
     latestStat?.discards ??
     (latestStat?.rxDiscards ?? 0) + (latestStat?.txDiscards ?? 0)
 
-  const canManualRecover = latestIncident?.status === 'MITIGATED'
-
   return (
     <div className="np-page min-w-0">
       <div className="flex flex-wrap items-center gap-3">
@@ -416,7 +414,7 @@ export function InterfaceDetailPage() {
                   {mutations.manualShutdown.isPending ? 'Shutting down…' : 'Manual shutdown'}
                 </Button>
               ) : null}
-              {isUser && canManualRecover ? (
+              {isUser ? (
                 <Button
                   type="button"
                   variant="secondary"
@@ -446,10 +444,15 @@ export function InterfaceDetailPage() {
                     <span className="font-medium text-foreground">
                       {latestIncident.status}
                     </span>
-                    {!canManualRecover ? '. Manual recover becomes available at MITIGATED.' : null}
+                    . Manual recover is always available. Recovery is only permitted when the
+                    incident is in MITIGATED status.
                   </>
                 ) : (
-                  'No incident is currently associated with this interface. Manual recover appears after a successful mitigation reaches MITIGATED.'
+                  <>
+                    No incident is currently associated with this interface. Manual recover is
+                    always available. Recovery is only permitted when the incident is in MITIGATED
+                    status.
+                  </>
                 )}
               </div>
             ) : null}
