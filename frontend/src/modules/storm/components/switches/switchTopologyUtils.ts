@@ -41,6 +41,8 @@ export type SwitchEdgeData = {
   sourcePort?: string
   targetPort?: string
   operStatus?: string
+  highlighted?: boolean
+  dimmed?: boolean
 }
 
 export const LINK_SPEED_COLORS: Record<Exclude<SpeedCategory, 'DOWN'>, string> = {
@@ -648,11 +650,11 @@ export function buildSwitchGraph(
 
   const switchIds = new Set(switches.map((sw) => sw.id))
   const switchEdges = dedupeSwitchEdges(edges, switchIds)
-  const searchVisibility = buildSwitchSearchVisibility(switches, edges, searchQuery)
+  const searchVisibility = buildTopologySearchVisibility(switches, switchEdges, searchQuery)
 
   const nodes: Node<SwitchNodeData>[] = switches.map((sw) => {
-    const isMatch = searchVisibility.matchIds.has(sw.id)
-    const isDimmed = searchVisibility.dimmedIds.has(sw.id)
+    const isMatch = searchVisibility.matchNodeIds.has(sw.id)
+    const isDimmed = searchVisibility.dimmedNodeIds.has(sw.id)
     const display = resolveSwitchDisplay(sw)
 
     return {
@@ -670,7 +672,23 @@ export function buildSwitchGraph(
     }
   })
 
-  const flowEdges = switchEdges.map(toFlowEdge)
+  const flowEdges = switchEdges.map((edge) => {
+    const base = toFlowEdge(edge)
+    const highlighted = searchVisibility.highlightedEdgeIds.has(edge.id)
+    const dimmed = searchVisibility.dimmedEdgeIds.has(edge.id)
+    const strokeWidth = base.style?.strokeWidth ?? 2
+    return {
+      ...base,
+      data: { ...base.data, highlighted, dimmed },
+      style: {
+        ...base.style,
+        strokeWidth: highlighted ? strokeWidth + 2 : strokeWidth,
+        opacity: dimmed ? 0.12 : 1,
+      },
+      zIndex: highlighted ? 10 : dimmed ? 0 : 1,
+      animated: highlighted,
+    }
+  })
 
   const needsLayout = nodes.some((node) => !positionOverrides?.[node.id])
 

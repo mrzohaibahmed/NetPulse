@@ -38,6 +38,8 @@ export const SwitchEdge = memo(function SwitchEdge({
   const edgeData = (data || {}) as SwitchEdgeData
   const linkStyle = edgeData.linkStyle
   const isDown = linkStyle?.category === 'DOWN'
+  const isHighlighted = Boolean(edgeData.highlighted)
+  const isDimmed = Boolean(edgeData.dimmed)
 
   const [edgePath] = getSmoothStepPath({
     sourceX,
@@ -50,25 +52,40 @@ export const SwitchEdge = memo(function SwitchEdge({
   })
 
   const labelPoint = getPointOnPath(edgePath, 0.5)
-  const stroke = linkStyle?.color || '#94a3b8'
+  const stroke = isHighlighted ? '#3b82f6' : linkStyle?.color || '#94a3b8'
   const strokeDasharray = linkStyle?.strokeDasharray
   const label = edgeData.speedLabel || linkStyle?.label || 'Unknown'
+  const strokeWidth = (style?.strokeWidth as number | undefined) ?? linkStyle?.strokeWidth ?? 2
 
   return (
     <>
+      {isHighlighted ? (
+        <BaseEdge
+          id={`${id}-glow`}
+          path={edgePath}
+          interactionWidth={0}
+          style={{
+            stroke: '#3b82f6',
+            strokeWidth: strokeWidth + 8,
+            opacity: 0.25,
+          }}
+        />
+      ) : null}
       <BaseEdge
         id={id}
         path={edgePath}
         interactionWidth={20}
         style={{
           stroke,
-          strokeWidth: linkStyle?.strokeWidth ?? 2,
+          strokeWidth,
           strokeDasharray,
           ...style,
         }}
       />
       <EdgeLabelRenderer>
-        <SpeedLabel x={labelPoint.x} y={labelPoint.y} text={label} isDown={isDown} />
+        <div className={cn(isDimmed && 'opacity-30')}>
+          <SpeedLabel x={labelPoint.x} y={labelPoint.y} text={label} isDown={isDown} />
+        </div>
       </EdgeLabelRenderer>
     </>
   )

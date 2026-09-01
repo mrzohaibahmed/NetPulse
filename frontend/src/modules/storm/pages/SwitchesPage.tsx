@@ -1,16 +1,11 @@
-import { useState } from 'react'
-import { Search } from 'lucide-react'
-
 import { PageHeader } from '@/shared/components/PageHeader'
 import { LoadingState } from '@/shared/components/LoadingState'
 import { ErrorState } from '@/shared/components/ErrorState'
 import { Card, CardContent, CardHeader, CardTitle } from '@/shared/ui/card'
-import { Input } from '@/shared/ui/input'
 import { useTopologySwitches, useFullTopology } from '@/hooks/useTopologyData'
 import { SwitchTopology } from '@/modules/storm/components/switches/SwitchTopology'
 
 export function SwitchesPage() {
-  const [search, setSearch] = useState('')
   const switchesQuery = useTopologySwitches()
   const topologyQuery = useFullTopology(true)
 
@@ -53,23 +48,6 @@ export function SwitchesPage() {
         description="Switch inventory and switch-to-switch connectivity from CDP/LLDP discovery."
       />
 
-      <div className="max-w-md space-y-1.5">
-        <label className="text-xs font-medium text-muted-foreground" htmlFor="switch-search">
-          Search
-        </label>
-        <div className="relative">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            id="switch-search"
-            type="search"
-            placeholder="Search switches..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="pl-9"
-          />
-        </div>
-      </div>
-
       <Card variant="section" className="glass rounded-xl">
         <CardHeader className="pb-3">
           <CardTitle className="text-base">Switch topology</CardTitle>
@@ -86,7 +64,7 @@ export function SwitchesPage() {
                   Switch links could not be loaded. Showing switches without connections.
                 </p>
               ) : null}
-              <SwitchTopology switches={switches} edges={topologyEdges} searchQuery={search} />
+              <SwitchTopology switches={switches} edges={topologyEdges} />
             </div>
           )}
         </CardContent>

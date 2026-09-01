@@ -7,19 +7,21 @@ import {
   useEdgesState,
 } from '@xyflow/react'
 import type { Edge, Node, ReactFlowInstance } from '@xyflow/react'
-import { Loader2, Save } from 'lucide-react'
+import { Loader2, Save, Search, X } from 'lucide-react'
 import { toast } from 'sonner'
 import '@xyflow/react/dist/style.css'
 
 import type { TopologyEdge, TopologyNode } from '@/api/topologyService'
 import { useTopologyLayout, useSaveTopologyLayoutMutation } from '@/hooks/useTopologyData'
 import { Button } from '@/shared/ui/button'
+import { Input } from '@/shared/ui/input'
 import { cn } from '@/lib/utils'
 import { SwitchNode } from './SwitchNode'
 import { SwitchEdge } from './SwitchEdge'
 import { LinkSpeedLegend } from './LinkSpeedLegend'
 import {
   buildSwitchGraph,
+  buildTopologySearchVisibility,
   dedupeSwitchEdges,
   layoutPositionsFromSaved,
   mergeLayoutPositions,
@@ -35,7 +37,6 @@ type LayoutSaveStatus = 'idle' | 'saved' | 'unsaved' | 'saving' | 'error'
 interface SwitchTopologyProps {
   switches: TopologyNode[]
   edges: TopologyEdge[]
-  searchQuery?: string
 }
 
 function buildStructureKey(switches: TopologyNode[], edges: TopologyEdge[]) {
@@ -47,10 +48,11 @@ function buildStructureKey(switches: TopologyNode[], edges: TopologyEdge[]) {
   return `${[...switchIds].sort().join('|')}::${edgePairs}`
 }
 
-export function SwitchTopology({ switches, edges, searchQuery = '' }: SwitchTopologyProps) {
+export function SwitchTopology({ switches, edges }: SwitchTopologyProps) {
   const layoutQuery = useTopologyLayout(SWITCHES_LAYOUT_VIEW_KEY)
   const saveLayoutMutation = useSaveTopologyLayoutMutation()
 
+  const [search, setSearch] = useState('')
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([])
   const [flowEdges, setFlowEdges, onEdgesChange] = useEdgesState<Edge>([])
   const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null)
@@ -68,6 +70,15 @@ export function SwitchTopology({ switches, edges, searchQuery = '' }: SwitchTopo
 
   const structureKey = useMemo(() => buildStructureKey(switches, edges), [switches, edges])
   const savedLayoutExists = hasSavedLayout(savedPositions)
+
+  const searchVisibility = useMemo(() => {
+    const switchIds = new Set(switches.map((sw) => sw.id))
+    const switchEdges = dedupeSwitchEdges(edges, switchIds)
+    return buildTopologySearchVisibility(switches, switchEdges, search)
+  }, [switches, edges, search])
+
+  const searchMatchCount =
+    searchVisibility.matchEdgeIds.size + searchVisibility.matchNodeIds.size
 
   useEffect(() => {
     if (layoutQuery.isLoading) return
@@ -106,7 +117,7 @@ export function SwitchTopology({ switches, edges, searchQuery = '' }: SwitchTopo
     )
 
     if (!structureChanged && nodes.length > 0) {
-      const graph = buildSwitchGraph(switches, edges, positionMap, searchQuery)
+      const graph = buildSwitchGraph(switches, edges, positionMap, search)
       setNodes((current) =>
         current.map((node) => {
           const updated = graph.nodes.find((item) => item.id === node.id)
@@ -121,7 +132,7 @@ export function SwitchTopology({ switches, edges, searchQuery = '' }: SwitchTopo
       return
     }
 
-    const graph = buildSwitchGraph(switches, edges, positionMap, searchQuery)
+    const graph = buildSwitchGraph(switches, edges, positionMap, search)
 
     sessionPositionsRef.current = Object.fromEntries(
       graph.nodes.map((node) => [node.id, node.position]),
@@ -137,7 +148,7 @@ export function SwitchTopology({ switches, edges, searchQuery = '' }: SwitchTopo
     savedPositions,
     layoutQuery.isLoading,
     saveStatus,
-    searchQuery,
+    search,
     nodes.length,
     setNodes,
     setFlowEdges,
@@ -152,6 +163,20 @@ export function SwitchTopology({ switches, edges, searchQuery = '' }: SwitchTopo
     })
     return () => window.cancelAnimationFrame(frame)
   }, [rfInstance, nodes.length, structureKey])
+
+  useEffect(() => {
+    if (!rfInstance || !search.trim() || searchMatchCount === 0) return
+    const nodeIds = [...searchVisibility.highlightedNodeIds]
+    if (nodeIds.length === 0) return
+    requestAnimationFrame(() => {
+      rfInstance.fitView({
+        nodes: nodeIds.map((id) => ({ id })),
+        padding: 0.25,
+        duration: 300,
+        maxZoom: 1.5,
+      })
+    })
+  }, [rfInstance, search, searchMatchCount, searchVisibility.highlightedNodeIds])
 
   const onNodeDragStop = useCallback(() => {
     const currentNodes = rfInstance?.getNodes() ?? nodes
@@ -213,6 +238,37 @@ export function SwitchTopology({ switches, edges, searchQuery = '' }: SwitchTopo
     <div className="space-y-3">
       <LinkSpeedLegend />
       <div className="np-topology-canvas rounded-xl border border-border/60 bg-background/40">
+      <div className="pointer-events-none absolute left-3 top-3 z-20">
+        <div className="pointer-events-auto flex w-72 flex-col gap-1 rounded-lg border border-border/70 bg-card/90 p-2 shadow-sm backdrop-blur-md">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              type="search"
+              placeholder="Search connections, ports, switches..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="h-8 border-border/60 bg-background/80 pl-8 pr-8 text-xs"
+            />
+            {search ? (
+              <button
+                type="button"
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:text-foreground"
+                onClick={() => setSearch('')}
+                aria-label="Clear search"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            ) : null}
+          </div>
+          {search.trim() ? (
+            <span className="px-0.5 text-[10px] text-muted-foreground">
+              {searchMatchCount > 0
+                ? `${searchMatchCount} match${searchMatchCount === 1 ? '' : 'es'} found`
+                : 'No matches'}
+            </span>
+          ) : null}
+        </div>
+      </div>
       <div className="pointer-events-none absolute right-3 top-3 z-20">
         <div className="pointer-events-auto flex flex-wrap items-center gap-2 rounded-lg border border-border/70 bg-card/95 px-2.5 py-1.5 text-xs font-medium text-foreground shadow-sm backdrop-blur-md">
           <span
