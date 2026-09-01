@@ -95,6 +95,8 @@ function incident(status: StormIncident['status']): StormIncident {
     interface: 'Gi1/0/10',
     status,
     severity: 'HIGH',
+    trigger: {},
+    timeline: [],
     createdAt: '2026-09-01T10:00:00.000Z',
     updatedAt: '2026-09-01T10:00:00.000Z',
   }
