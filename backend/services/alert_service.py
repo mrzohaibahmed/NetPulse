@@ -1,5 +1,7 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Optional
+
+from pymongo import ReturnDocument
 
 from config.database import db
 from services.audit_service import log_audit
@@ -65,6 +67,209 @@ def _active_critical_offline_filter(device_id) -> dict:
 
 
 CRITICAL_OFFLINE_ALERT_THRESHOLD = 3
+# Minimum seconds between critical-offline email attempts (initial or retry).
+# Matches default pingInterval cadence to avoid hammering SMTP on failure.
+CRITICAL_OFFLINE_EMAIL_RETRY_COOLDOWN_SECONDS = 60
+
+
+def _build_critical_offline_message(
+    hostname: str,
+    ip_address: str,
+    scan_type: str,
+    consecutive_failures: int,
+) -> str:
+    return (
+        f"Critical device {hostname} ({ip_address}) transitioned to "
+        f"{STATUS_OFFLINE_CRITICAL} via {scan_type} scan "
+        f"(consecutiveFailures={consecutive_failures})."
+    )
+
+
+def _build_critical_offline_alert_doc(
+    device: dict,
+    *,
+    message: str,
+    scan_type: str,
+    cycle_id: str | None,
+    attempt_id: str | None,
+    consecutive_failures: int,
+    now: datetime,
+) -> dict[str, Any]:
+    device_id = device.get("_id")
+    return {
+        "deviceId": _normalize_alert_device_id(device_id),
+        "hostname": device.get("hostname", "unknown"),
+        "ipAddress": device.get("ipAddress", "unknown"),
+        "deviceType": device.get("deviceType") or device.get("type"),
+        "status": STATUS_OFFLINE_CRITICAL,
+        "message": message,
+        "scanType": scan_type,
+        "alertType": "Device Offline",
+        "category": "Device Monitoring",
+        "severity": "CRITICAL",
+        "emailSent": False,
+        "emailLastAttemptAt": now,
+        "acknowledged": False,
+        "dismissed": False,
+        "resolved": False,
+        "acknowledgedAt": None,
+        "dismissedAt": None,
+        "resolvedAt": None,
+        "createdAt": now,
+        "cycleId": cycle_id,
+        "attemptId": attempt_id,
+        "consecutiveFailuresAtAlert": int(consecutive_failures),
+    }
+
+
+def _claim_critical_offline_alert(
+    doc: dict[str, Any],
+    *,
+    device_id,
+    ip_address: str,
+) -> tuple[Any | None, bool, Any | None]:
+    """
+    Atomically create the active critical-offline alert.
+
+    Returns ``(alert_id, created, insert_result)``. ``created=True`` only when
+    this call inserted the document. DuplicateKeyError yields the existing alert id.
+    """
+    from pymongo.errors import DuplicateKeyError  # noqa: PLC0415
+
+    def _insert_or_existing():
+        try:
+            result = db.alerts.insert_one(doc)
+            return result.inserted_id, True, result
+        except DuplicateKeyError:
+            logger.info(
+                "Critical alert insert idempotent (DuplicateKey) | "
+                "deviceId=%s | ip=%s | attemptId=%s",
+                device_id,
+                ip_address,
+                doc.get("attemptId"),
+            )
+            existing = db.alerts.find_one(
+                _active_critical_offline_filter(device_id),
+            )
+            if existing:
+                return existing.get("_id"), False, None
+            return None, False, None
+
+    inserted_id, created, insert_result = with_mongo_retry(
+        _insert_or_existing,
+        action="critical_alert_insert",
+        device_id=device_id,
+        ip_address=ip_address,
+        idempotent=True,
+    )
+    return inserted_id, created, insert_result
+
+
+def _try_claim_email_retry(alert_id) -> bool:
+    """
+    Atomically claim a retry slot when ``emailSent`` is still false.
+
+    Uses ``emailLastAttemptAt`` plus cooldown so concurrent workers cannot
+    hammer SMTP or send duplicate retries in the same window.
+    """
+    now = utc_now()
+    cutoff = now - timedelta(seconds=CRITICAL_OFFLINE_EMAIL_RETRY_COOLDOWN_SECONDS)
+
+    def _claim():
+        return db.alerts.find_one_and_update(
+            {
+                "_id": alert_id,
+                "status": STATUS_OFFLINE_CRITICAL,
+                "emailSent": False,
+                "resolved": False,
+                "dismissed": False,
+                "$or": [
+                    {"emailLastAttemptAt": {"$exists": False}},
+                    {"emailLastAttemptAt": None},
+                    {"emailLastAttemptAt": {"$lte": cutoff}},
+                ],
+            },
+            {"$set": {"emailLastAttemptAt": now}},
+            return_document=ReturnDocument.AFTER,
+        )
+
+    try:
+        claimed = with_mongo_retry(
+            _claim,
+            action="critical_alert_email_retry_claim",
+            idempotent=True,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "Critical offline email retry claim failed | alertId=%s | %s",
+            alert_id,
+            exc,
+        )
+        return False
+    return claimed is not None
+
+
+def _deliver_critical_offline_email(
+    device: dict,
+    alert_id,
+    *,
+    scan_type: str,
+    retry: bool = False,
+) -> bool:
+    """
+    Send critical-offline SMTP and persist ``emailSent`` on success.
+
+    SMTP is not transactional with MongoDB. If ``send_email`` succeeds but the
+    ``emailSent`` update fails, a later cooldown retry may re-send — acceptable
+    trade-off without distributed transactions.
+    """
+    hostname = device.get("hostname", "unknown")
+    ip_address = device.get("ipAddress", "unknown")
+    if retry:
+        logger.info(
+            "retrying critical offline email | alertId=%s | deviceId=%s | ip=%s",
+            alert_id,
+            device.get("_id"),
+            ip_address,
+        )
+    else:
+        logger.info(
+            "critical offline email attempt | alertId=%s | deviceId=%s | ip=%s",
+            alert_id,
+            device.get("_id"),
+            ip_address,
+        )
+
+    try:
+        email_sent = send_critical_offline_alert(device, scan_type=scan_type)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "critical offline email failed; will retry | alertId=%s | deviceId=%s | "
+            "ip=%s | error=%s",
+            alert_id,
+            device.get("_id"),
+            ip_address,
+            exc,
+        )
+        return False
+
+    if email_sent:
+        mark_alert_email_sent(str(alert_id), True)
+        logger.info(
+            "critical offline email sent | alertId=%s | deviceId=%s | ip=%s",
+            alert_id,
+            device.get("_id"),
+            ip_address,
+        )
+        return True
+
+    logger.warning(
+        "critical offline email failed; will retry | alertId=%s | deviceId=%s | ip=%s",
+        alert_id,
+        device.get("_id"),
+        ip_address,
+    )
+    return False
 
 
 def resolve_critical_offline_alerts(device, *, cycle_id=None) -> int:
@@ -174,22 +379,18 @@ def maybe_send_critical_offline_alert(
     attempt_id: str | None = None,
 ):
     """
-    Email + alert insert for critical devices when failures reach the threshold.
+    Create/claim active critical-offline alert, then send or retry email.
 
-    Phase 7–8:
-      - Fire when consecutiveFailures >= 3 (recovers missed exactly-3 inserts).
-      - Unique partial index + DuplicateKeyError ⇒ at most one active alert.
-      - Retries are idempotent when the unique constraint is present.
+    Alert insert precedes SMTP. Only the insert owner sends the initial email.
+    Failed sends remain ``emailSent=false`` and are retried after cooldown
+    while the device stays critically offline.
     """
-    from pymongo.errors import DuplicateKeyError  # noqa: PLC0415
-
     if not device.get("critical"):
         return False
 
     if new_status != STATUS_OFFLINE_CRITICAL:
         return False
 
-    # Recover missed threshold: alert whenever failures >= 3 and none active.
     if int(consecutive_failures or 0) < CRITICAL_OFFLINE_ALERT_THRESHOLD:
         return False
 
@@ -197,26 +398,11 @@ def maybe_send_critical_offline_alert(
     hostname = device.get("hostname", "unknown")
     ip_address = device.get("ipAddress", "unknown")
 
-    existing = db.alerts.find_one(
-        _active_critical_offline_filter(device_id),
-        {"_id": 1},
-    )
-    if existing:
-        logger.info(
-            "Critical offline alert already active — skip duplicate | "
-            "deviceId=%s | ip=%s | alertId=%s | failures=%s | cycleId=%s",
-            device_id,
-            ip_address,
-            existing.get("_id"),
-            consecutive_failures,
-            cycle_id,
-        )
-        return False
-
-    message = (
-        f"Critical device {hostname} ({ip_address}) transitioned to "
-        f"{STATUS_OFFLINE_CRITICAL} via {scan_type} scan "
-        f"(consecutiveFailures={consecutive_failures})."
+    message = _build_critical_offline_message(
+        hostname,
+        ip_address,
+        scan_type,
+        int(consecutive_failures),
     )
 
     logger.warning(
@@ -231,103 +417,109 @@ def maybe_send_critical_offline_alert(
         attempt_id,
     )
 
-    email_sent = send_critical_offline_alert(device, scan_type=scan_type)
     now = utc_now()
-    doc = {
-        "deviceId": device_id,
-        "hostname": hostname,
-        "ipAddress": ip_address,
-        "deviceType": device.get("deviceType") or device.get("type"),
-        "status": STATUS_OFFLINE_CRITICAL,
-        "message": message,
-        "scanType": scan_type,
-        "alertType": "Device Offline",
-        "category": "Device Monitoring",
-        "severity": "CRITICAL",
-        "emailSent": bool(email_sent),
-        "acknowledged": False,
-        "dismissed": False,
-        "resolved": False,
-        "acknowledgedAt": None,
-        "dismissedAt": None,
-        "resolvedAt": None,
-        "createdAt": now,
-        "cycleId": cycle_id,
-        "attemptId": attempt_id,
-        "consecutiveFailuresAtAlert": int(consecutive_failures),
-    }
+    doc = _build_critical_offline_alert_doc(
+        device,
+        message=message,
+        scan_type=scan_type,
+        cycle_id=cycle_id,
+        attempt_id=attempt_id,
+        consecutive_failures=int(consecutive_failures),
+        now=now,
+    )
 
-    def _insert_or_existing():
+    try:
+        alert_id, created, insert_result = _claim_critical_offline_alert(
+            doc,
+            device_id=device_id,
+            ip_address=ip_address,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            "Failed to claim critical offline alert | deviceId=%s | ip=%s | error=%s",
+            device_id,
+            ip_address,
+            exc,
+        )
+        return False
+
+    if alert_id is None:
+        return False
+
+    if created:
+        if insert_result is not None:
+            try:
+                assert_insert_acknowledged(
+                    insert_result,
+                    action="critical_alert_insert",
+                    device_id=device_id,
+                    ip_address=ip_address,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "Critical alert insert acknowledgement failed | deviceId=%s | error=%s",
+                    device_id,
+                    exc,
+                )
+                return False
+        publish(
+            EVENT_ALERT_CREATED,
+            {
+                "deviceId": str(device_id) if device_id is not None else None,
+                "hostname": hostname,
+                "ipAddress": ip_address,
+                "status": STATUS_OFFLINE_CRITICAL,
+                "alertId": str(alert_id),
+                "cycleId": cycle_id,
+                "attemptId": attempt_id,
+            },
+        )
         try:
-            return db.alerts.insert_one(doc)
-        except DuplicateKeyError:
-            # Unique active-alert index: peer or prior retry already inserted.
-            logger.info(
-                "Critical alert insert idempotent (DuplicateKey) | "
-                "deviceId=%s | ip=%s | attemptId=%s",
+            send_critical_offline_whatsapp_alert(device, scan_type=scan_type)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "WhatsApp critical offline alert failed | deviceId=%s | ip=%s | error=%s",
                 device_id,
                 ip_address,
-                attempt_id,
+                exc,
             )
-            return None
-
-    try:
-        result = with_mongo_retry(
-            _insert_or_existing,
-            action="critical_alert_insert",
-            device_id=device_id,
-            ip_address=ip_address,
-            idempotent=True,
+        _deliver_critical_offline_email(
+            device,
+            alert_id,
+            scan_type=scan_type,
+            retry=False,
         )
-    except Exception as exc:  # noqa: BLE001
-        logger.error(
-            "Failed to insert critical offline alert | deviceId=%s | ip=%s | error=%s",
+        return True
+
+    # Existing active alert — retry only when email not yet delivered.
+    existing = db.alerts.find_one({"_id": alert_id})
+    if not existing:
+        return False
+
+    if existing.get("emailSent"):
+        logger.info(
+            "Critical offline alert already active — email sent | "
+            "deviceId=%s | ip=%s | alertId=%s | failures=%s | cycleId=%s",
             device_id,
             ip_address,
-            exc,
+            alert_id,
+            consecutive_failures,
+            cycle_id,
         )
         return False
 
-    if result is None:
+    if not device.get("monitor", True):
         return False
 
-    try:
-        assert_insert_acknowledged(
-            result,
-            action="critical_alert_insert",
-            device_id=device_id,
-            ip_address=ip_address,
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.error(
-            "Critical alert insert acknowledgement failed | deviceId=%s | error=%s",
-            device_id,
-            exc,
-        )
+    if not _try_claim_email_retry(alert_id):
         return False
 
-    publish(
-        EVENT_ALERT_CREATED,
-        {
-            "deviceId": str(device_id) if device_id is not None else None,
-            "hostname": hostname,
-            "ipAddress": ip_address,
-            "status": STATUS_OFFLINE_CRITICAL,
-            "alertId": str(result.inserted_id),
-            "cycleId": cycle_id,
-            "attemptId": attempt_id,
-        },
+    return _deliver_critical_offline_email(
+        device,
+        alert_id,
+        scan_type=scan_type,
+        retry=True,
     )
-    try:
-        send_critical_offline_whatsapp_alert(device, scan_type=scan_type)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "WhatsApp critical offline alert failed | deviceId=%s | ip=%s | error=%s",
-            device_id,
-            ip_address,
-            exc,
-        )
-    return True
 
 
 # ---------------------------------------------------------------------------

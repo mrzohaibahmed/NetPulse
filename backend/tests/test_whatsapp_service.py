@@ -10,6 +10,8 @@ import sys
 import unittest
 from unittest.mock import MagicMock, patch
 
+from pymongo.errors import DuplicateKeyError
+
 _mock_db_module = MagicMock()
 _mock_db_module.db = MagicMock()
 sys.modules.setdefault("config.database", _mock_db_module)
@@ -216,12 +218,13 @@ class WhatsAppAlertIntegrationTests(unittest.TestCase):
             "hostname": "sw1",
             "ipAddress": "10.0.0.1",
             "critical": True,
+            "monitor": True,
         }
-        mock_db.alerts.find_one.return_value = None
         insert_result = MagicMock()
         insert_result.acknowledged = True
         insert_result.inserted_id = ObjectId()
         mock_db.alerts.insert_one.return_value = insert_result
+        mock_db.alerts.find_one.return_value = None
 
         ok = maybe_send_critical_offline_alert(
             device,
@@ -240,13 +243,21 @@ class WhatsAppAlertIntegrationTests(unittest.TestCase):
 
         from services.alert_service import maybe_send_critical_offline_alert
 
-        mock_db.alerts.find_one.return_value = {"_id": ObjectId()}
+        mock_db.alerts.insert_one.side_effect = DuplicateKeyError("uniq")
+        mock_db.alerts.find_one.return_value = {
+            "_id": ObjectId(),
+            "emailSent": True,
+            "resolved": False,
+            "dismissed": False,
+            "status": "Offline (Critical)",
+        }
         ok = maybe_send_critical_offline_alert(
             {
                 "_id": ObjectId(),
                 "hostname": "sw1",
                 "ipAddress": "10.0.0.1",
                 "critical": True,
+                "monitor": True,
             },
             "Online",
             "Offline (Critical)",

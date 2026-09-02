@@ -234,9 +234,10 @@ class TestIdempotentHistory(unittest.TestCase):
 
 
 class TestAlertRecovery(unittest.TestCase):
+    @patch("services.alert_service.send_critical_offline_whatsapp_alert")
     @patch("services.alert_service.send_critical_offline_alert", return_value=True)
     @patch("services.alert_service.db")
-    def test_alerts_when_failures_above_threshold(self, mock_db, _email):
+    def test_alerts_when_failures_above_threshold(self, mock_db, mock_email, _wa):
         from services.alert_service import maybe_send_critical_offline_alert
 
         device = {
@@ -245,25 +246,33 @@ class TestAlertRecovery(unittest.TestCase):
             "ipAddress": "10.0.0.1",
             "critical": True,
             "deviceType": "Switch",
+            "monitor": True,
         }
-        mock_db.alerts.find_one.return_value = None
+        alert_id = ObjectId()
         insert_result = MagicMock()
         insert_result.acknowledged = True
-        insert_result.inserted_id = ObjectId()
+        insert_result.inserted_id = alert_id
         mock_db.alerts.insert_one.return_value = insert_result
+        mock_db.alerts.find_one.return_value = None
 
         ok = maybe_send_critical_offline_alert(
             device,
             "Online",
             "Offline (Critical)",
-            consecutive_failures=5,  # missed exactly-3
+            consecutive_failures=5,
         )
         self.assertTrue(ok)
         mock_db.alerts.insert_one.assert_called_once()
+        inserted = mock_db.alerts.insert_one.call_args[0][0]
+        self.assertFalse(inserted["emailSent"])
+        self.assertIn("emailLastAttemptAt", inserted)
+        mock_email.assert_called_once()
+        mock_db.alerts.update_one.assert_called()
 
+    @patch("services.alert_service.send_critical_offline_whatsapp_alert")
     @patch("services.alert_service.send_critical_offline_alert", return_value=True)
     @patch("services.alert_service.db")
-    def test_duplicate_key_on_insert_is_idempotent(self, mock_db, _email):
+    def test_duplicate_key_on_insert_is_idempotent(self, mock_db, mock_email, _wa):
         from services.alert_service import maybe_send_critical_offline_alert
 
         device = {
@@ -271,9 +280,23 @@ class TestAlertRecovery(unittest.TestCase):
             "hostname": "sw1",
             "ipAddress": "10.0.0.1",
             "critical": True,
+            "monitor": True,
         }
-        mock_db.alerts.find_one.return_value = None
+        existing_id = ObjectId()
         mock_db.alerts.insert_one.side_effect = DuplicateKeyError("uniq")
+        mock_db.alerts.find_one.side_effect = [
+            {
+                "_id": existing_id,
+                "emailSent": True,
+                "resolved": False,
+                "dismissed": False,
+                "status": "Offline (Critical)",
+            },
+            {
+                "_id": existing_id,
+                "emailSent": True,
+            },
+        ]
 
         ok = maybe_send_critical_offline_alert(
             device,
@@ -282,26 +305,36 @@ class TestAlertRecovery(unittest.TestCase):
             consecutive_failures=3,
         )
         self.assertFalse(ok)
+        mock_email.assert_not_called()
 
     @patch("services.alert_service.send_critical_offline_alert", return_value=True)
     @patch("services.alert_service.db")
-    def test_skips_when_active_exists(self, mock_db, _email):
+    def test_skips_when_active_exists_and_email_sent(self, mock_db, mock_email):
         from services.alert_service import maybe_send_critical_offline_alert
 
-        mock_db.alerts.find_one.return_value = {"_id": ObjectId()}
+        existing_id = ObjectId()
+        mock_db.alerts.insert_one.side_effect = DuplicateKeyError("uniq")
+        mock_db.alerts.find_one.return_value = {
+            "_id": existing_id,
+            "emailSent": True,
+            "resolved": False,
+            "dismissed": False,
+            "status": "Offline (Critical)",
+        }
         ok = maybe_send_critical_offline_alert(
             {
                 "_id": ObjectId(),
                 "hostname": "sw1",
                 "ipAddress": "10.0.0.1",
                 "critical": True,
+                "monitor": True,
             },
             "Online",
             "Offline (Critical)",
             consecutive_failures=3,
         )
         self.assertFalse(ok)
-        mock_db.alerts.insert_one.assert_not_called()
+        mock_email.assert_not_called()
 
 
 class TestMonitorLoopAbort(unittest.TestCase):
