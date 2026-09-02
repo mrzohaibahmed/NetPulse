@@ -119,10 +119,7 @@ export function DashboardPage() {
   if (dash.isLoading && !dash.summary) {
     return (
       <div className="np-page">
-        <PageHeader
-          title="Enterprise Dashboard"
-          description="Choose a workspace or monitor the overall health of your network."
-        />
+        <PageHeader title="Enterprise Dashboard" />
         <DashboardSkeleton />
       </div>
     )
@@ -147,7 +144,6 @@ export function DashboardPage() {
       <motion.div variants={fadeUp}>
         <PageHeader
           title="Enterprise Dashboard"
-          description="Choose a workspace or monitor the overall health of your network."
           actions={
             <Button type="button" variant="secondary" onClick={() => void dash.refetchAll()}>
               <RefreshCw className="mr-2 h-4 w-4" />
@@ -161,7 +157,6 @@ export function DashboardPage() {
         <ErrorState message={dash.error} onRetry={() => void dash.refetchAll()} className="py-4" />
       ) : null}
 
-      {/* Site Monitoring — ISP + server status by location */}
       <motion.div variants={fadeUp}>
         <SiteMonitoringSection sites={dash.siteMonitoring} isLoading={dash.isLoading} />
       </motion.div>

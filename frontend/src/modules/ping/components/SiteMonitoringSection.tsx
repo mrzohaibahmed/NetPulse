@@ -7,7 +7,6 @@ import {
 } from '@/modules/ping/components/IspConnectivitySection'
 import { formatMs, formatRelative } from '@/utils/format'
 import type { SiteMonitoringSite, SiteMonitoringServer } from '@/types'
-import { SectionHeading } from '@/shared/components/SectionHeading'
 import { EmptyState } from '@/shared/components/EmptyState'
 import { Card, CardContent } from '@/shared/ui/card'
 import { cn } from '@/lib/utils'
@@ -28,11 +27,6 @@ export function SiteMonitoringSection({ sites, isLoading }: SiteMonitoringSectio
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35 }}
     >
-      <SectionHeading
-        title="Site Monitoring"
-        description="ISP connectivity and server reachability grouped by location."
-      />
-
       {siteList.length === 0 && !isLoading ? (
         <EmptyState
           title="No sites configured"

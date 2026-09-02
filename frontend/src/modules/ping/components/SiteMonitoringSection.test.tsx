@@ -73,14 +73,13 @@ const sampleSites: SiteMonitoringSite[] = [
 ]
 
 describe('SiteMonitoringSection', () => {
-  it('renders site monitoring heading and all sites', () => {
+  it('renders all site panels', () => {
     render(
       <MemoryRouter>
         <SiteMonitoringSection sites={sampleSites} />
       </MemoryRouter>,
     )
 
-    expect(screen.getByText('Site Monitoring')).toBeInTheDocument()
     expect(screen.getByText('Mill')).toBeInTheDocument()
     expect(screen.getByText('Karachi')).toBeInTheDocument()
     expect(screen.getByText('Lahore')).toBeInTheDocument()

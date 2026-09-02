@@ -2,14 +2,14 @@ import { useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import {
   Bell,
+  Clock,
   LogOut,
   Moon,
   RefreshCw,
-  Search,
   Sun,
   User,
 } from 'lucide-react'
-import { useEffect, useState, useRef, type FormEvent } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { toast } from 'sonner'
 import { useAuth } from '@/shared/auth/AuthContext'
 import { useAlertsQuery, useHealthQuery, DASHBOARD_ACTIVE_ALERTS_LIMIT } from '@/hooks/queries'
@@ -27,7 +27,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/shared/ui/dropdown-menu'
-import { Input } from '@/shared/ui/input'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip'
 
 interface TopNavbarProps {
@@ -42,7 +41,7 @@ export function TopNavbar({ lastUpdated, monitoringOk }: TopNavbarProps) {
   const { theme, toggleTheme } = useTheme()
   const health = useHealthQuery()
   const alerts = useAlertsQuery('active', DASHBOARD_ACTIVE_ALERTS_LIMIT)
-  const [query, setQuery] = useState('')
+  const [now, setNow] = useState(() => new Date())
   const [refreshing, setRefreshing] = useState(false)
 
   const alertCount = alerts.data?.total ?? alerts.data?.count ?? 0
@@ -54,9 +53,8 @@ export function TopNavbar({ lastUpdated, monitoringOk }: TopNavbarProps) {
       : null
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search)
-    const q = params.get('q')
-    if (q) setQuery(q)
+    const id = window.setInterval(() => setNow(new Date()), 1000)
+    return () => window.clearInterval(id)
   }, [])
 
   const lastAlertIdRef = useRef<string | null>(null)
@@ -81,12 +79,6 @@ export function TopNavbar({ lastUpdated, monitoringOk }: TopNavbarProps) {
     }
   }, [alerts.data])
 
-  const onSearch = (event: FormEvent) => {
-    event.preventDefault()
-    const q = query.trim()
-    navigate(q ? `/devices?q=${encodeURIComponent(q)}` : '/devices')
-  }
-
   const onRefresh = async () => {
     setRefreshing(true)
     try {
@@ -97,20 +89,32 @@ export function TopNavbar({ lastUpdated, monitoringOk }: TopNavbarProps) {
   }
 
   const initials = (user?.username || 'U').slice(0, 2).toUpperCase()
+  const dateLabel = now.toLocaleDateString(undefined, {
+    weekday: 'short',
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  })
+  const timeLabel = now.toLocaleTimeString(undefined, {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  })
 
   return (
     <header className="sticky top-0 z-30 flex h-14 min-w-0 items-center gap-2 border-b border-border/80 bg-background/80 px-4 backdrop-blur-md sm:gap-3 md:h-16 md:px-6">
-      <form onSubmit={onSearch} className="relative ml-10 min-w-0 flex-1 md:ml-0 md:max-w-md">
-        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          type="search"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search devices…"
-          className="h-9 pl-9"
-          aria-label="Search devices"
-        />
-      </form>
+      <div
+        className="ml-10 flex min-w-0 items-center gap-2 rounded-lg border border-border/60 bg-card/60 px-2.5 py-1.5 text-xs md:ml-0"
+        aria-live="polite"
+        aria-label={`Current date and time: ${dateLabel}, ${timeLabel}`}
+      >
+        <Clock className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+        <span className="hidden truncate text-muted-foreground sm:inline">{dateLabel}</span>
+        <span className="hidden text-border sm:inline" aria-hidden>
+          ·
+        </span>
+        <span className="tabular-nums font-medium text-foreground">{timeLabel}</span>
+      </div>
 
       <div className="ml-auto flex items-center gap-1.5 sm:gap-2">
         <div className="mr-1 hidden items-center gap-2 rounded-lg border border-border/60 bg-card/60 px-2.5 py-1.5 text-xs lg:flex">
