@@ -52,6 +52,7 @@ class RecoveryReconciliationTests(unittest.TestCase):
         }
 
     # Scenario 2: MITIGATED + interface manually UP → RECONCILED
+    @patch("services.storm.recovery.reconciliation.notify_port_recovery")
     @patch("services.storm.recovery.reconciliation.record_recovery_history")
     @patch("services.storm.recovery.reconciliation.invalidate_pipeline_after_recovery")
     @patch("services.storm.recovery.reconciliation.append_timeline_event")
@@ -70,6 +71,7 @@ class RecoveryReconciliationTests(unittest.TestCase):
         mock_timeline,
         mock_invalidate,
         mock_record,
+        _mock_notify,
     ):
         mock_get_incident.return_value = self.incident
         mock_settings.return_value = {"stabilizationSeconds": 60}

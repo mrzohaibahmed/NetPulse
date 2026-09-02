@@ -946,24 +946,44 @@ def create_storm_recovery_alert(
     device: Optional[dict] = None,
     recovered_at: Optional[datetime] = None,
     email_sent: bool = False,
+    title: str = "Automatic Port Recovery",
+    message: Optional[str] = None,
+    recovery_source: Optional[str] = None,
 ) -> Optional[str]:
-    """INFO alert after verified automatic port recovery."""
+    """INFO alert after verified port recovery."""
     interface = (incident or {}).get("interface") or "unknown"
     duration = _recovery_duration_label(incident, recovered_at)
-    return _insert_storm_alert(
+    alert_message = message or (
+        "Storm conditions cleared.\n"
+        f"NetPulse automatically restored interface {interface}."
+    )
+    alert_id = _insert_storm_alert(
         incident=incident,
         device=device,
-        title="Automatic Port Recovery",
-        message=(
-            "Storm conditions cleared.\n"
-            f"NetPulse automatically restored interface {interface}."
-        ),
+        title=title,
+        message=alert_message,
         severity="INFO",
         action="NO_SHUTDOWN",
         status="RECOVERED",
         recovery_duration=duration,
         email_sent=email_sent,
     )
+    if alert_id and recovery_source:
+        try:
+            from bson import ObjectId  # noqa: PLC0415
+
+            if ObjectId.is_valid(alert_id):
+                db.alerts.update_one(
+                    {"_id": ObjectId(alert_id)},
+                    {"$set": {"recoverySource": recovery_source}},
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Failed to set recoverySource on alert | alertId=%s | %s",
+                alert_id,
+                exc,
+            )
+    return alert_id
 
 
 def create_storm_shutdown_failure_alert(

@@ -855,19 +855,24 @@ def send_storm_recovery_notification(
     reason: str = "Automatic recovery verified — port restored",
     operator: str = "SYSTEM",
     recovered_at: Optional[datetime] = None,
+    event_type: str = "Automatic Port Recovery",
+    recovery_source: Optional[str] = None,
 ) -> bool:
-    """Email after verified automatic recovery (port restored / MONITORING)."""
+    """Email after verified port recovery (port restored / MONITORING)."""
     duration = _recovery_duration_label(incident, recovered_at)
+    email_reason = reason
+    if recovery_source:
+        email_reason = f"{reason}\n\nRecovery source: {recovery_source}"
     return _dispatch_storm_email(
         kind="recovery",
         subject=SUBJECT_RECOVERY,
         incident=incident,
         banner_color="#15803d",
         banner_label="INFO",
-        event_type="Automatic Port Recovery",
+        event_type=event_type,
         action_performed="NO SHUTDOWN (Restore)",
         action_status="RECOVERED",
-        reason=reason,
+        reason=email_reason,
         verification_result=verification_result if verification_result is not None else {"success": True},
         operator=operator,
         recovery_duration=duration,

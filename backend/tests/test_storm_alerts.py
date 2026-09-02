@@ -530,12 +530,9 @@ class StormAlertEngineIntegrationTests(unittest.TestCase):
         ), patch(
             "services.storm.recovery.post_recovery.invalidate_pipeline_after_recovery",
         ), patch(
-            "services.alert_service.create_storm_recovery_alert",
-            return_value="alert-rec-1",
-        ) as mock_alert, patch(
-            "services.email_service.send_storm_recovery_notification",
-            side_effect=RuntimeError("SMTP down"),
-        ) as mock_email, patch(
+            "services.storm.recovery.engine.notify_port_recovery",
+            return_value={"notified": True, "alert_id": "alert-rec-1", "email_sent": False},
+        ) as mock_notify, patch(
             "services.alert_service.mark_alert_email_sent",
         ):
             res = execute_recovery(
@@ -545,8 +542,7 @@ class StormAlertEngineIntegrationTests(unittest.TestCase):
             )
 
         self.assertTrue(res["success"])
-        mock_alert.assert_called_once()
-        mock_email.assert_called_once()
+        mock_notify.assert_called_once()
 
     @patch("services.storm.recovery.engine.record_recovery_history")
     @patch("services.storm.recovery.engine.append_timeline_event")

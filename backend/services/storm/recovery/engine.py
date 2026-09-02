@@ -16,6 +16,12 @@ from services.storm.lock_service import LockService
 from services.storm.mitigation.ssh_executor import SSHMitigationExecutor
 from services.storm.mitigation.strategy import NoShutdownRecoveryStrategy
 from services.storm.recovery.audit import record_recovery_history
+from services.storm.recovery.notifications import (
+    RECOVERY_SOURCE_AUTOMATIC,
+    RECOVERY_SOURCE_MANUAL,
+    RECOVERY_SOURCE_OPERATOR,
+    notify_port_recovery,
+)
 from services.storm.recovery.policy import validate_recovery_policy
 from services.storm.recovery.verifier import (
     collect_post_recovery_stats,
@@ -177,58 +183,23 @@ def execute_recovery(
                 retry_count=retry_count,
             )
 
-            # Automatic (SYSTEM) verified recovery only — never block the workflow.
-            # Alert creation and email delivery are independent operations.
-            if str(operator).upper() == "SYSTEM":
-                refreshed = get_incident(incident_id) or incident
-                alert_id = None
-                try:
-                    from services.alert_service import (  # noqa: PLC0415
-                        create_storm_recovery_alert,
-                    )
-
-                    alert_id = create_storm_recovery_alert(
-                        refreshed,
-                        device=device,
-                        recovered_at=now,
-                    )
-                except Exception as alert_exc:  # noqa: BLE001
-                    logger.warning(
-                        "Storm recovery alert failed | incident=%s | %s",
-                        incident_id,
-                        alert_exc,
-                    )
-
-                try:
-                    from services.email_service import (  # noqa: PLC0415
-                        send_storm_recovery_notification,
-                    )
-                    from services.alert_service import (  # noqa: PLC0415
-                        mark_alert_email_sent,
-                    )
-
-                    email_sent = send_storm_recovery_notification(
-                        refreshed,
-                        verification_result={
-                            "success": True,
-                            "output": verification_output,
-                            "stats": stats,
-                        },
-                        reason=(
-                            "Automatic recovery verified — port restored "
-                            "(stabilization monitoring started)"
-                        ),
-                        operator=operator,
-                        recovered_at=now,
-                    )
-                    if alert_id:
-                        mark_alert_email_sent(alert_id, bool(email_sent))
-                except Exception as mail_exc:  # noqa: BLE001
-                    logger.warning(
-                        "Storm recovery email failed | incident=%s | %s",
-                        incident_id,
-                        mail_exc,
-                    )
+            recovery_source = (
+                RECOVERY_SOURCE_AUTOMATIC
+                if str(operator).upper() == "SYSTEM"
+                else RECOVERY_SOURCE_OPERATOR
+            )
+            notify_port_recovery(
+                incident_id,
+                source=recovery_source,
+                operator=operator,
+                device=device,
+                verification_result={
+                    "success": True,
+                    "output": verification_output,
+                    "stats": stats,
+                },
+                recovered_at=now,
+            )
 
             return {
                 "success": True,
@@ -685,6 +656,19 @@ def execute_manual_recovery(
             },
             retry_count=0,
             **_manual_override_meta(operator, execution_checks="PASSED"),
+        )
+
+        notify_port_recovery(
+            incident_id,
+            source=RECOVERY_SOURCE_MANUAL,
+            operator=operator,
+            device=device,
+            verification_result={
+                "success": True,
+                "output": verification_output,
+                "stats": stats,
+            },
+            recovered_at=now,
         )
 
         logger.info(

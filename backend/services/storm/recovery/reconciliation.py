@@ -14,6 +14,10 @@ from services.settings_service import get_settings
 from services.storm.incident import append_timeline_event, get_incident
 from services.storm.lock_service import LockService
 from services.storm.recovery.audit import record_recovery_history
+from services.storm.recovery.notifications import (
+    RECOVERY_SOURCE_RECONCILIATION,
+    notify_port_recovery,
+)
 from services.storm.recovery.post_recovery import invalidate_pipeline_after_recovery
 from utils.monitor_logger import get_monitor_logger
 
@@ -233,6 +237,18 @@ def reconcile_mitigated_incident(
         recovery_status=RECONCILED_STATUS,
         verification_result=verification_result,
         retry_count=int(incident.get("recoveryRetryCount") or 0),
+    )
+
+    notify_port_recovery(
+        incident_id,
+        source=RECOVERY_SOURCE_RECONCILIATION,
+        operator=operator,
+        verification_result=verification_result,
+        recovered_at=now,
+        reason=(
+            "Interface already administratively UP — reconciled into "
+            "stabilization monitoring"
+        ),
     )
 
     logger.info(
