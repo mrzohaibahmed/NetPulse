@@ -1,6 +1,6 @@
 import { motion } from 'framer-motion'
 import { Globe, Wifi, WifiOff } from 'lucide-react'
-import { DEFAULT_SITE_LOCATION, ispSlotIdsForLocation } from '@/modules/ping/constants/locations'
+import { DEFAULT_SITE_LOCATION, canonicalSiteLocation, ispSlotIdsForLocation } from '@/modules/ping/constants/locations'
 import { formatMs, formatRelative } from '@/utils/format'
 import type { IspConnection } from '@/types'
 import { SectionHeading } from '@/shared/components/SectionHeading'
@@ -14,12 +14,12 @@ export function normalizeIspSlotsForLocation(
   location: string = DEFAULT_SITE_LOCATION,
 ): IspConnection[] {
   const slotIds = ispSlotIdsForLocation(location)
-  const locationKey = location || DEFAULT_SITE_LOCATION
+  const locationKey = canonicalSiteLocation(location) || DEFAULT_SITE_LOCATION
   const byId = new Map((isps ?? []).map((isp) => [isp.id, isp]))
 
   return slotIds.map((id, index) => {
     const existing = byId.get(id)
-    if (existing && (existing.location || DEFAULT_SITE_LOCATION) === locationKey) {
+    if (existing && (canonicalSiteLocation(existing.location) || DEFAULT_SITE_LOCATION) === locationKey) {
       return existing
     }
     return {
@@ -37,7 +37,7 @@ export function normalizeIspSlotsForLocation(
   })
 }
 
-/** Backward-compatible Mill-only normalization for settings and legacy tests. */
+/** Backward-compatible Mills-site normalization for settings and legacy tests. */
 export function normalizeIspSlots(isps: IspConnection[] | undefined): IspConnection[] {
   return normalizeIspSlotsForLocation(isps, DEFAULT_SITE_LOCATION)
 }

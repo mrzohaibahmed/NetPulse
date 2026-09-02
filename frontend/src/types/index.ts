@@ -59,7 +59,7 @@ export interface Device {
   pingInterval?: number | null
   pingTimeoutMs?: number | null
   pingRetries?: number | null
-  /** Optional site/location for dashboard grouping (e.g. Mill, Karachi, Lahore). */
+  /** Optional site/location for dashboard grouping (e.g. Mills, Karachi, Lahore). */
   location?: string | null
   createdAt: string
   updatedAt: string

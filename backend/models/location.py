@@ -3,11 +3,21 @@
 from __future__ import annotations
 
 # Initial supported locations; additional values are allowed for future sites.
-SITE_LOCATIONS: tuple[str, ...] = ("Mill", "Karachi", "Lahore")
+SITE_LOCATIONS: tuple[str, ...] = ("Mills", "Karachi", "Lahore")
 
-DEFAULT_SITE_LOCATION = "Mill"
+DEFAULT_SITE_LOCATION = "Mills"
 
 ISPS_PER_SITE = 3
+
+
+def canonical_site_location(value: str | None) -> str | None:
+    """Normalize site names, including legacy Mill -> Mills."""
+    normalized = normalize_location(value)
+    if normalized is None:
+        return None
+    if normalized.lower() == "mill":
+        return "Mills"
+    return normalized
 
 
 def normalize_location(value: str | None) -> str | None:
@@ -25,13 +35,13 @@ def validate_location(value: str | None) -> str | None:
         return None
     if len(normalized) > 64:
         raise ValueError("location must be 64 characters or fewer")
-    return normalized
+    return canonical_site_location(normalized)
 
 
 def isp_slot_ids_for_location(location: str) -> tuple[str, ...]:
     """Return the three ISP slot ids for a site."""
-    key = (location or DEFAULT_SITE_LOCATION).strip().lower().replace(" ", "-")
-    if key == "mill":
+    key = (canonical_site_location(location) or DEFAULT_SITE_LOCATION).strip().lower().replace(" ", "-")
+    if key in ("mill", "mills"):
         return ("isp-1", "isp-2", "isp-3")
     return tuple(f"{key}-isp-{index}" for index in range(1, ISPS_PER_SITE + 1))
 

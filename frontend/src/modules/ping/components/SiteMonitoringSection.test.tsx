@@ -6,13 +6,13 @@ import type { SiteMonitoringSite } from '@/types'
 
 const sampleSites: SiteMonitoringSite[] = [
   {
-    name: 'Mill',
+    name: 'Mills',
     isps: [
       {
         id: 'isp-1',
         name: 'Multinet',
         target: '8.8.8.8',
-        location: 'Mill',
+        location: 'Mills',
         monitor: true,
         status: 'Online',
         responseTime: 52.4,
@@ -24,7 +24,7 @@ const sampleSites: SiteMonitoringSite[] = [
         id: 'isp-2',
         name: 'CyberNet',
         target: '1.1.1.1',
-        location: 'Mill',
+        location: 'Mills',
         monitor: true,
         status: 'Online',
         responseTime: 71.9,
@@ -36,7 +36,7 @@ const sampleSites: SiteMonitoringSite[] = [
         id: 'isp-3',
         name: 'Wateen',
         target: '9.9.9.9',
-        location: 'Mill',
+        location: 'Mills',
         monitor: true,
         status: 'Online',
         responseTime: 42.3,
@@ -48,13 +48,13 @@ const sampleSites: SiteMonitoringSite[] = [
     servers: [
       {
         id: 'server-1',
-        hostname: 'Mill Firewall',
+        hostname: 'Mills Firewall',
         ipAddress: '192.168.1.10',
         deviceType: 'Server',
         status: 'Online',
         responseTime: 5.0,
         lastSeen: '2026-08-10T08:00:00Z',
-        location: 'Mill',
+        location: 'Mills',
         monitor: true,
         critical: false,
       },
@@ -80,7 +80,7 @@ describe('SiteMonitoringSection', () => {
       </MemoryRouter>,
     )
 
-    expect(screen.getByText('Mill')).toBeInTheDocument()
+    expect(screen.getByText('Mills')).toBeInTheDocument()
     expect(screen.getByText('Karachi')).toBeInTheDocument()
     expect(screen.getByText('Lahore')).toBeInTheDocument()
   })
@@ -95,7 +95,7 @@ describe('SiteMonitoringSection', () => {
     expect(screen.getByText('Multinet')).toBeInTheDocument()
     expect(screen.getByText('CyberNet')).toBeInTheDocument()
     expect(screen.getByText('Wateen')).toBeInTheDocument()
-    expect(screen.getByText('Mill Firewall')).toBeInTheDocument()
+    expect(screen.getByText('Mills Firewall')).toBeInTheDocument()
     expect(screen.getByText('192.168.1.10')).toBeInTheDocument()
     expect(screen.getAllByText('ISP Connectivity')).toHaveLength(3)
     expect(screen.getAllByText('Server Monitoring')).toHaveLength(3)

@@ -76,7 +76,12 @@ def build_device_filter():
                 ]
             })
         else:
-            query["location"] = location
+            canonical = validate_location(location) or location
+            if canonical == "Mills":
+                query["$and"] = query.get("$and", [])
+                query["$and"].append({"$or": [{"location": "Mills"}, {"location": "Mill"}]})
+            else:
+                query["location"] = canonical
 
     search = (request.args.get("q") or "").strip()
     if search:

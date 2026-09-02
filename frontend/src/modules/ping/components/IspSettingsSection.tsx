@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Globe, Radar, Save } from 'lucide-react'
 import { useIspMutations, useIspsQuery } from '@/hooks/queries'
 import { normalizeIspSlotsForLocation } from '@/modules/ping/components/IspConnectivitySection'
-import { SITE_LOCATIONS } from '@/modules/ping/constants/locations'
+import { DEFAULT_SITE_LOCATION, SITE_LOCATIONS } from '@/modules/ping/constants/locations'
 import { StatusBadge } from '@/shared/components/StatusBadge'
 import { Button } from '@/shared/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/shared/ui/card'
@@ -32,7 +32,7 @@ function draftFromIsp(isp: IspConnection): IspDraft {
     name: isp.name,
     target: isp.target,
     monitor: isp.monitor,
-    location: isp.location || 'Mill',
+    location: isp.location || DEFAULT_SITE_LOCATION,
   }
 }
 

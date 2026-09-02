@@ -27,7 +27,7 @@ def _sample_isp(**overrides):
         "_id": "isp-1",
         "name": "Multinet",
         "target": "8.8.8.8",
-        "location": "Mill",
+        "location": "Mills",
         "monitor": True,
         "status": STATUS_ONLINE,
         "consecutiveFailures": 0,

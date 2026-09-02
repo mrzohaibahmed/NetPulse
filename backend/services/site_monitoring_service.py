@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from models.location import DEFAULT_SITE_LOCATION, SITE_LOCATIONS, isp_slot_ids_for_location
+from models.location import (
+    DEFAULT_SITE_LOCATION,
+    SITE_LOCATIONS,
+    canonical_site_location,
+    isp_slot_ids_for_location,
+)
 from services.isp_service import list_isp_connections
 from utils.serializers import format_datetime, get_device_type, serialize_isp_connection
 
@@ -38,12 +43,12 @@ def _serialize_site_server(device: dict) -> dict:
 
 def _normalize_site_isps(isps: list[dict], location: str) -> list[dict]:
     """Return up to three ISP records for a site, preserving slot order."""
-    location_key = location or DEFAULT_SITE_LOCATION
+    location_key = canonical_site_location(location) or DEFAULT_SITE_LOCATION
     by_id = {isp["_id"]: isp for isp in isps}
     normalized: list[dict] = []
     for index, slot_id in enumerate(isp_slot_ids_for_location(location_key), start=1):
         existing = by_id.get(slot_id)
-        if existing and (existing.get("location") or DEFAULT_SITE_LOCATION) == location_key:
+        if existing and (canonical_site_location(existing.get("location")) or DEFAULT_SITE_LOCATION) == location_key:
             normalized.append(serialize_isp_connection(existing))
             continue
         normalized.append({
@@ -68,9 +73,9 @@ def _normalize_site_isps(isps: list[dict], location: str) -> list[dict]:
 def _ordered_site_names(*, isps: list[dict], servers: list[dict]) -> list[str]:
     discovered: set[str] = set(SITE_LOCATIONS)
     for isp in isps:
-        discovered.add(isp.get("location") or DEFAULT_SITE_LOCATION)
+        discovered.add(canonical_site_location(isp.get("location")) or DEFAULT_SITE_LOCATION)
     for server in servers:
-        location = server.get("location")
+        location = canonical_site_location(server.get("location"))
         if location:
             discovered.add(location)
 
@@ -94,7 +99,7 @@ def build_site_monitoring_payload(db) -> dict:
         site_servers = [
             _serialize_site_server(server)
             for server in servers
-            if server.get("location") == site_name
+            if canonical_site_location(server.get("location")) == site_name
         ]
         sites.append({
             "name": site_name,
