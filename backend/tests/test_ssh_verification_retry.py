@@ -245,34 +245,35 @@ class EnsureExecPromptTests(unittest.TestCase):
 
 
 class SSHExecutorConfigSyncTests(unittest.TestCase):
-    def _executor(self) -> SSHMitigationExecutor:
+    def _executor(self) -> tuple[SSHMitigationExecutor, MagicMock]:
         executor = SSHMitigationExecutor.__new__(SSHMitigationExecutor)
         executor.device = {"hostname": "sw1", "ipAddress": "10.0.0.1"}
         executor.creds = MagicMock()
         executor.creds.host = "10.0.0.1"
-        executor.collector = MagicMock(spec=SSHInterfaceCollector)
-        return executor
+        collector = MagicMock(spec=SSHInterfaceCollector)
+        executor.collector = collector
+        return executor, collector
 
     def test_config_batch_syncs_exec_before_returning(self):
-        executor = self._executor()
-        executor.collector.run_command.return_value = "OK"
+        executor, collector = self._executor()
+        collector.run_command.return_value = "OK"
 
         cmds = ["configure terminal", "interface Gi1/0/10", "shutdown", "end"]
         executor.execute_commands(cmds, "Gi1/0/10")
 
-        executor.collector.mark_entering_config_mode.assert_called_once()
-        executor.collector.ensure_exec_prompt.assert_called_once()
+        collector.mark_entering_config_mode.assert_called_once()
+        collector.ensure_exec_prompt.assert_called_once()
 
     def test_show_only_batch_skips_exec_sync(self):
-        executor = self._executor()
-        executor.collector.run_command.return_value = "interface Gi1/0/10\n shutdown\n"
+        executor, collector = self._executor()
+        collector.run_command.return_value = "interface Gi1/0/10\n shutdown\n"
 
         executor.execute_commands(
             ["show running-config interface Gi1/0/10"],
             "Gi1/0/10",
         )
 
-        executor.collector.ensure_exec_prompt.assert_not_called()
+        collector.ensure_exec_prompt.assert_not_called()
 
 
 class MitigationVerifierRetryTests(unittest.TestCase):
