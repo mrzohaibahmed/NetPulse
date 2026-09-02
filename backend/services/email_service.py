@@ -352,6 +352,83 @@ def send_critical_offline_alert(device, scan_type="Automatic"):
     return send_email(subject, body_text, body_html)
 
 
+def send_isp_offline_alert(isp: dict, *, consecutive_failures: int) -> bool:
+    """Send one ISP offline notification email."""
+    name = isp.get("name", "Unknown ISP")
+    location = isp.get("location") or "Unknown"
+    target = (isp.get("target") or "").strip() or "Unknown"
+    detected_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+    subject = f"[CRITICAL] ISP Offline - {name} - {location}"
+    body_text = (
+        "ISP Offline\n\n"
+        f"ISP: {name}\n"
+        f"Location: {location}\n"
+        f"Monitoring Target: {target}\n"
+        "Status: Offline\n"
+        f"Consecutive Failures: {consecutive_failures}\n"
+        f"Detected At: {detected_at}\n"
+    )
+    body_html = f"""
+    <html>
+      <body style="font-family: Arial, sans-serif; color: #132033;">
+        <h2 style="color: #c23b3b;">ISP Offline</h2>
+        <table cellpadding="6" cellspacing="0" style="border-collapse: collapse;">
+          <tr><td><strong>ISP</strong></td><td>{html.escape(str(name))}</td></tr>
+          <tr><td><strong>Location</strong></td><td>{html.escape(str(location))}</td></tr>
+          <tr><td><strong>Monitoring Target</strong></td><td>{html.escape(str(target))}</td></tr>
+          <tr><td><strong>Status</strong></td><td>Offline</td></tr>
+          <tr><td><strong>Consecutive Failures</strong></td><td>{consecutive_failures}</td></tr>
+          <tr><td><strong>Detected At</strong></td><td>{detected_at}</td></tr>
+        </table>
+      </body>
+    </html>
+  """
+    return send_email(subject, body_text, body_html)
+
+
+def send_isp_recovery_alert(
+    isp: dict,
+    alert: dict,
+    *,
+    scan_type: str = "Automatic",
+) -> bool:
+    """Send one ISP recovery notification email for a resolved incident."""
+    name = isp.get("name", "Unknown ISP")
+    location = isp.get("location") or "Unknown"
+    target = (isp.get("target") or "").strip() or "Unknown"
+    recovered_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    incident_id = str(alert.get("_id") or "")
+
+    subject = f"[RECOVERED] ISP Recovered - {name} - {location}"
+    body_text = (
+        "ISP Recovered\n\n"
+        f"ISP: {name}\n"
+        f"Location: {location}\n"
+        f"Monitoring Target: {target}\n"
+        "Status: Online\n"
+        f"Recovered At: {recovered_at}\n"
+        f"Previous Incident: {incident_id}\n"
+        f"Scan type: {scan_type}\n"
+    )
+    body_html = f"""
+    <html>
+      <body style="font-family: Arial, sans-serif; color: #132033;">
+        <h2 style="color: #1f7a4d;">ISP Recovered</h2>
+        <table cellpadding="6" cellspacing="0" style="border-collapse: collapse;">
+          <tr><td><strong>ISP</strong></td><td>{html.escape(str(name))}</td></tr>
+          <tr><td><strong>Location</strong></td><td>{html.escape(str(location))}</td></tr>
+          <tr><td><strong>Monitoring Target</strong></td><td>{html.escape(str(target))}</td></tr>
+          <tr><td><strong>Status</strong></td><td>Online</td></tr>
+          <tr><td><strong>Recovered At</strong></td><td>{recovered_at}</td></tr>
+          <tr><td><strong>Previous Incident</strong></td><td>{html.escape(incident_id)}</td></tr>
+        </table>
+      </body>
+    </html>
+  """
+    return send_email(subject, body_text, body_html)
+
+
 # ---------------------------------------------------------------------------
 # Storm protection notifications
 # ---------------------------------------------------------------------------

@@ -11,6 +11,7 @@ from pymongo.errors import DuplicateKeyError
 
 from config.database import db
 from models.device import create_device, normalize_device_credentials
+from models.location import validate_location
 from services.audit_service import log_audit
 from services.discovery.identity_management import ownership_for_device_edit
 from utils.auth import require_auth
@@ -123,6 +124,14 @@ def add_device():
                 "message": str(error),
             }), 400
 
+        try:
+            location = validate_location(data.get("location"))
+        except ValueError as error:
+            return jsonify({
+                "success": False,
+                "message": str(error),
+            }), 400
+
         device = create_device(
             hostname=data["hostname"].strip(),
             ip_address=data["ipAddress"].strip(),
@@ -133,6 +142,7 @@ def add_device():
             ping_timeout_ms=_optional_int(data.get("pingTimeoutMs")),
             ping_retries=_optional_int(data.get("pingRetries")),
             credentials=credentials,
+            location=location,
         )
 
         # Manually created devices should lock identity fields so background
@@ -407,6 +417,7 @@ def update_device(device_id):
             "pingInterval",
             "pingTimeoutMs",
             "pingRetries",
+            "location",
         ]
 
         update_data = {}
@@ -465,6 +476,15 @@ def update_device(device_id):
                     update_data[key] = None
                 else:
                     update_data[key] = int(update_data[key])
+
+        if "location" in update_data:
+            try:
+                update_data["location"] = validate_location(update_data.get("location"))
+            except ValueError as error:
+                return jsonify({
+                    "success": False,
+                    "message": str(error),
+                }), 400
 
         # Enabling monitor without a schedule: due immediately for first check.
         if "monitor" in update_data and bool(update_data["monitor"]):

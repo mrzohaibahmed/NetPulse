@@ -211,6 +211,7 @@ def serialize_isp_connection(isp):
         "consecutiveFailures": isp.get("consecutiveFailures", 0),
         "lastPingAttemptId": isp.get("lastPingAttemptId"),
         "lastPingStartedAt": format_datetime(isp.get("lastPingStartedAt")),
+        "location": isp.get("location"),
         "createdAt": format_datetime(isp.get("createdAt")),
         "updatedAt": format_datetime(isp.get("updatedAt")),
     }
@@ -232,6 +233,7 @@ def serialize_device(device):
         "pingInterval": device.get("pingInterval"),
         "pingTimeoutMs": device.get("pingTimeoutMs"),
         "pingRetries": device.get("pingRetries"),
+        "location": device.get("location"),
         "createdAt": format_datetime(device.get("createdAt")),
         "updatedAt": format_datetime(device.get("updatedAt")),
         # Optional auto-classification fields (absent on older documents).

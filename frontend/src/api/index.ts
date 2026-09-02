@@ -27,6 +27,7 @@ import type {
   ConfirmationResult,
   ScanActivityChartPoint,
   SafetyResult,
+  SiteMonitoringResponse,
   StormConfig,
   StormIncident,
   PrepareResult,
@@ -277,6 +278,9 @@ export const getRecentHistory = () =>
   apiRequest<{ success: boolean; count: number; history: PingHistory[] }>(
     '/api/dashboard/recent-history',
   )
+
+export const getSiteMonitoring = () =>
+  apiRequest<SiteMonitoringResponse>('/api/dashboard/site-monitoring')
 
 export const getDeviceStatus = () =>
   apiRequest<{ success: boolean; count: number; devices: DeviceStatusRow[] }>(

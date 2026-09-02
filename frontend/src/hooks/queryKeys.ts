@@ -5,6 +5,7 @@ export const queryKeys = {
     summary: ['dashboard', 'summary'] as const,
     deviceMetrics: ['dashboard', 'device-metrics'] as const,
     recentHistory: ['dashboard', 'recent-history'] as const,
+    siteMonitoring: ['dashboard', 'site-monitoring'] as const,
   },
   alerts: (status?: string) => ['alerts', status ?? 'all'] as const,
   devices: (params: object) => ['devices', params] as const,

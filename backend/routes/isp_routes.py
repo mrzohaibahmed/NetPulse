@@ -65,6 +65,7 @@ def create_isp():
                 name=name,
                 target=data.get("target") or "",
                 monitor=bool(data.get("monitor", False)),
+                location=data.get("location") or "",
             )
         except ValueError as error:
             return jsonify({
@@ -105,6 +106,7 @@ def update_isp(isp_id):
                 name=data["name"] if "name" in data else None,
                 target=data["target"] if "target" in data else None,
                 monitor=data["monitor"] if "monitor" in data else None,
+                location=data["location"] if "location" in data else None,
             )
         except ValueError as error:
             return jsonify({

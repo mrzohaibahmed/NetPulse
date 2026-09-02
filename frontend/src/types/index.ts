@@ -59,6 +59,8 @@ export interface Device {
   pingInterval?: number | null
   pingTimeoutMs?: number | null
   pingRetries?: number | null
+  /** Optional site/location for dashboard grouping (e.g. Mill, Karachi, Lahore). */
+  location?: string | null
   createdAt: string
   updatedAt: string
   /** Auto-detected hardware / OUI vendor (optional; older docs may omit). */
@@ -86,6 +88,7 @@ export interface DevicePayload {
   pingInterval?: number | null
   pingTimeoutMs?: number | null
   pingRetries?: number | null
+  location?: string | null
   /**
    * Per-device credentials update/creation payload.
    * Backend expects this nested under `credentials` and normalizes partial updates.
@@ -141,6 +144,7 @@ export interface IspConnection {
   consecutiveFailures?: number
   lastPingAttemptId?: string | null
   lastPingStartedAt?: string | null
+  location?: string | null
   createdAt: string
   updatedAt: string
 }
@@ -149,6 +153,32 @@ export interface IspConnectionPayload {
   name: string
   target?: string
   monitor?: boolean
+  location?: string | null
+}
+
+export interface SiteMonitoringServer {
+  id: string
+  hostname: string
+  ipAddress: string
+  deviceType: string
+  status: DeviceStatus
+  responseTime: number | null
+  lastSeen: string | null
+  lastCheckedAt?: string | null
+  location?: string | null
+  monitor: boolean
+  critical: boolean
+}
+
+export interface SiteMonitoringSite {
+  name: string
+  isps: IspConnection[]
+  servers: SiteMonitoringServer[]
+}
+
+export interface SiteMonitoringResponse {
+  success: boolean
+  sites: SiteMonitoringSite[]
 }
 
 export interface DashboardSummary {

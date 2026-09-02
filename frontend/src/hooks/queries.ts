@@ -31,6 +31,7 @@ import {
   getInterfaces,
   getNetworkHint,
   getRecentHistory,
+  getSiteMonitoring,
   getRiskResults,
   getSafetyResults,
   getSettings,
@@ -123,6 +124,15 @@ export function useIspsQuery() {
   })
 }
 
+export function useSiteMonitoringQuery() {
+  return useQuery({
+    queryKey: queryKeys.dashboard.siteMonitoring,
+    queryFn: async () => (await getSiteMonitoring()).sites,
+    refetchInterval: DASHBOARD_INTERVAL,
+    retry: 1,
+  })
+}
+
 export function useIspMutations() {
   const qc = useQueryClient()
 
@@ -131,6 +141,7 @@ export function useIspMutations() {
     // Do not await full dashboard refetch — it triggers many parallel requests
     // and can make Save appear to time out even after PUT succeeded.
     void qc.invalidateQueries({ queryKey: queryKeys.dashboard.all })
+    void qc.invalidateQueries({ queryKey: queryKeys.dashboard.siteMonitoring })
     return qc.invalidateQueries({ queryKey: queryKeys.isps })
   }
 
@@ -177,18 +188,25 @@ export function useDashboardQuery() {
     queryFn: async () => (await getRecentHistory()).history,
     refetchInterval: DASHBOARD_INTERVAL,
   })
+  const siteMonitoring = useQuery({
+    queryKey: queryKeys.dashboard.siteMonitoring,
+    queryFn: async () => (await getSiteMonitoring()).sites,
+    refetchInterval: DASHBOARD_INTERVAL,
+  })
   const alertsQuery = useAlertsQuery('active', DASHBOARD_ACTIVE_ALERTS_LIMIT)
 
   const isLoading =
     summary.isLoading ||
     deviceMetrics.isLoading ||
     history.isLoading ||
+    siteMonitoring.isLoading ||
     alertsQuery.isLoading
 
   const error =
     summary.error ||
     deviceMetrics.error ||
     history.error ||
+    siteMonitoring.error ||
     alertsQuery.error
 
   const refetchAll = async () => {
@@ -196,6 +214,7 @@ export function useDashboardQuery() {
       summary.refetch(),
       deviceMetrics.refetch(),
       history.refetch(),
+      siteMonitoring.refetch(),
       alertsQuery.refetch(),
     ])
   }
@@ -204,6 +223,7 @@ export function useDashboardQuery() {
     summary.dataUpdatedAt,
     deviceMetrics.dataUpdatedAt,
     history.dataUpdatedAt,
+    siteMonitoring.dataUpdatedAt,
     alertsQuery.dataUpdatedAt,
   )
 
@@ -219,6 +239,7 @@ export function useDashboardQuery() {
       : null,
     deviceMetrics: metrics,
     history: history.data ?? [],
+    siteMonitoring: siteMonitoring.data ?? [],
     alerts: alertsQuery.data?.data ?? [],
     isLoading,
     error: error instanceof Error ? error.message : error ? String(error) : null,

@@ -1,22 +1,32 @@
 import { motion } from 'framer-motion'
 import { Globe, Wifi, WifiOff } from 'lucide-react'
+import { DEFAULT_SITE_LOCATION, ispSlotIdsForLocation } from '@/modules/ping/constants/locations'
 import { formatMs, formatRelative } from '@/utils/format'
 import type { IspConnection } from '@/types'
 import { SectionHeading } from '@/shared/components/SectionHeading'
 import { Card, CardContent } from '@/shared/ui/card'
 import { cn } from '@/lib/utils'
 
-export const ISP_SLOT_IDS = ['isp-1', 'isp-2', 'isp-3'] as const
+export const ISP_SLOT_IDS = ispSlotIdsForLocation(DEFAULT_SITE_LOCATION)
 
-export function normalizeIspSlots(isps: IspConnection[] | undefined): IspConnection[] {
+export function normalizeIspSlotsForLocation(
+  isps: IspConnection[] | undefined,
+  location: string = DEFAULT_SITE_LOCATION,
+): IspConnection[] {
+  const slotIds = ispSlotIdsForLocation(location)
+  const locationKey = location || DEFAULT_SITE_LOCATION
   const byId = new Map((isps ?? []).map((isp) => [isp.id, isp]))
-  return ISP_SLOT_IDS.map((id, index) => {
+
+  return slotIds.map((id, index) => {
     const existing = byId.get(id)
-    if (existing) return existing
+    if (existing && (existing.location || DEFAULT_SITE_LOCATION) === locationKey) {
+      return existing
+    }
     return {
       id,
       name: `ISP ${index + 1}`,
       target: '',
+      location: locationKey,
       monitor: false,
       status: 'Unknown',
       responseTime: null,
@@ -25,6 +35,11 @@ export function normalizeIspSlots(isps: IspConnection[] | undefined): IspConnect
       updatedAt: '',
     }
   })
+}
+
+/** Backward-compatible Mill-only normalization for settings and legacy tests. */
+export function normalizeIspSlots(isps: IspConnection[] | undefined): IspConnection[] {
+  return normalizeIspSlotsForLocation(isps, DEFAULT_SITE_LOCATION)
 }
 
 export function ispLatencyLabel(isp: IspConnection): string {
@@ -61,7 +76,7 @@ export function IspConnectivitySection({ isps, isLoading }: IspConnectivitySecti
   )
 }
 
-function IspStatusCard({ isp, isLoading }: { isp: IspConnection; isLoading?: boolean }) {
+export function IspStatusCard({ isp, isLoading }: { isp: IspConnection; isLoading?: boolean }) {
   const online = isp.status === 'Online'
   const offline = isp.status !== 'Online'
 
@@ -82,8 +97,7 @@ function IspStatusCard({ isp, isLoading }: { isp: IspConnection; isLoading?: boo
         )}
       />
       <CardContent className="flex items-center justify-between gap-3 p-3.5">
-        {/* Left Column: Icon + ISP Name & IP address */}
-        <div className="flex items-center gap-3 min-w-0">
+        <div className="flex min-w-0 items-center gap-3">
           <div
             className={cn(
               'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
@@ -92,34 +106,35 @@ function IspStatusCard({ isp, isLoading }: { isp: IspConnection; isLoading?: boo
               !online && !offline && 'bg-secondary text-muted-foreground',
             )}
           >
-            {online ? <Wifi className="h-4 w-4" /> : offline ? <WifiOff className="h-4 w-4" /> : <Globe className="h-4 w-4" />}
+            {online ? (
+              <Wifi className="h-4 w-4" />
+            ) : offline ? (
+              <WifiOff className="h-4 w-4" />
+            ) : (
+              <Globe className="h-4 w-4" />
+            )}
           </div>
           <div className="min-w-0">
-            <p className="truncate text-base font-bold tracking-tight text-foreground">
-              {isp.name}
-            </p>
+            <p className="truncate text-base font-bold tracking-tight text-foreground">{isp.name}</p>
             {isp.target ? (
-              <p className="truncate text-xs font-mono text-muted-foreground">
-                {isp.target}
-              </p>
+              <p className="truncate text-xs font-mono text-muted-foreground">{isp.target}</p>
             ) : (
               <p className="text-xs text-muted-foreground">No target configured</p>
             )}
           </div>
         </div>
 
-        {/* Right Column: Latency & Last seen text (Right-aligned) */}
-        <div className="flex flex-col items-end justify-center text-right shrink-0">
+        <div className="flex shrink-0 flex-col items-end justify-center text-right">
           <p
             className={cn(
-              'text-lg font-bold tracking-tight leading-tight',
+              'text-lg font-bold leading-tight tracking-tight',
               online && 'text-foreground',
               offline && 'text-muted-foreground',
             )}
           >
             {isLoading && !isp.lastCheckedAt ? 'Checking…' : ispLatencyLabel(isp)}
           </p>
-          <p className="text-[10px] text-muted-foreground mt-0.5">
+          <p className="mt-0.5 text-[10px] text-muted-foreground">
             Last seen:{' '}
             <span className="font-medium text-foreground">
               {isp.lastSeen ? formatRelative(isp.lastSeen) : '—'}

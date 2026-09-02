@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Eye, EyeOff } from 'lucide-react'
 import { DEFAULT_DEVICE_TYPE, DEVICE_TYPES } from '@/modules/ping/constants/devices'
+import { SITE_LOCATIONS } from '@/modules/ping/constants/locations'
 import type { Device, DevicePayload } from '@/types'
 import { useDeviceMutations } from '@/hooks/queries'
 import { Button } from '@/shared/ui/button'
@@ -39,7 +40,6 @@ const schema = z.object({
   deviceType: z.string().trim().min(1, 'Device type is required'),
   vendor: z.string().trim(),
   username: z.string().trim(),
-  // SSH password is required for new devices; on edits it is optional.
   password: z.string(),
   enableSecret: z.string(),
   critical: z.boolean(),
@@ -47,6 +47,7 @@ const schema = z.object({
   pingInterval: z.number().min(5).nullable().optional(),
   pingTimeoutMs: z.number().min(100).nullable().optional(),
   pingRetries: z.number().min(1).nullable().optional(),
+  location: z.string().trim().optional(),
 })
 
 type FormValues = z.infer<typeof schema>
@@ -76,6 +77,7 @@ export function DeviceFormDialog({ open, onOpenChange, device }: DeviceFormDialo
       pingInterval: null,
       pingTimeoutMs: null,
       pingRetries: null,
+      location: '',
     },
   })
 
@@ -95,6 +97,7 @@ export function DeviceFormDialog({ open, onOpenChange, device }: DeviceFormDialo
         pingInterval: device.pingInterval ?? null,
         pingTimeoutMs: device.pingTimeoutMs ?? null,
         pingRetries: device.pingRetries ?? null,
+        location: device.location ?? '',
       })
     } else {
       form.reset({
@@ -110,6 +113,7 @@ export function DeviceFormDialog({ open, onOpenChange, device }: DeviceFormDialo
         pingInterval: null,
         pingTimeoutMs: null,
         pingRetries: null,
+        location: '',
       })
     }
     setShowPassword(false)
@@ -122,21 +126,19 @@ export function DeviceFormDialog({ open, onOpenChange, device }: DeviceFormDialo
     const nextEnableSecret = values.enableSecret.trim()
     const nextUsername = values.username.trim()
 
-    if (!device && !nextUsername) {
-      form.setError('username', { type: 'manual', message: 'SSH username is required for new devices' })
-      return
-    }
-    if (!device && !nextPassword) {
-      form.setError('password', { type: 'manual', message: 'SSH password is required for new devices' })
-      return
-    }
-
-    const credentialsPayload = {
-      sshUsername: values.username.trim(),
-      sshVendor: values.vendor.trim(),
-      ...(nextPassword ? { sshPassword: nextPassword } : {}),
-      ...(nextEnableSecret ? { sshSecret: nextEnableSecret } : {}),
-    }
+    const credentialsPayload = device
+      ? {
+          sshUsername: nextUsername,
+          sshVendor: values.vendor.trim(),
+          ...(nextPassword ? { sshPassword: nextPassword } : {}),
+          ...(nextEnableSecret ? { sshSecret: nextEnableSecret } : {}),
+        }
+      : {
+          ...(nextUsername ? { sshUsername: nextUsername } : {}),
+          ...(values.vendor.trim() ? { sshVendor: values.vendor.trim() } : {}),
+          ...(nextPassword ? { sshPassword: nextPassword } : {}),
+          ...(nextEnableSecret ? { sshSecret: nextEnableSecret } : {}),
+        }
 
     const payload: DevicePayload = {
       hostname: values.hostname,
@@ -147,7 +149,11 @@ export function DeviceFormDialog({ open, onOpenChange, device }: DeviceFormDialo
       pingInterval: values.pingInterval ?? null,
       pingTimeoutMs: values.pingTimeoutMs ?? null,
       pingRetries: values.pingRetries ?? null,
-      credentials: credentialsPayload,
+      location: values.location?.trim() ? values.location.trim() : null,
+    }
+
+    if (device || Object.keys(credentialsPayload).length > 0) {
+      payload.credentials = credentialsPayload
     }
 
     if (device) {
@@ -232,11 +238,37 @@ export function DeviceFormDialog({ open, onOpenChange, device }: DeviceFormDialo
                 </p>
               ) : null}
             </div>
+
+            <div className="space-y-1.5">
+              <Label>Location</Label>
+              <Select
+                value={form.watch('location') || '__none__'}
+                onValueChange={(value) =>
+                  form.setValue('location', value === '__none__' ? '' : value)
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select location (optional)" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">Not set</SelectItem>
+                  {SITE_LOCATIONS.map((location) => (
+                    <SelectItem key={location} value={location}>
+                      {location}
+                    </SelectItem>
+                  ))}
+                  {device?.location &&
+                  !SITE_LOCATIONS.includes(device.location as (typeof SITE_LOCATIONS)[number]) ? (
+                    <SelectItem value={device.location}>{device.location}</SelectItem>
+                  ) : null}
+                </SelectContent>
+              </Select>
+            </div>
           </fieldset>
 
           <fieldset className="space-y-3 rounded-xl border border-border/60 bg-secondary/20 p-4">
             <legend className="px-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-              SSH credentials
+              SSH credentials (optional)
             </legend>
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
@@ -253,7 +285,7 @@ export function DeviceFormDialog({ open, onOpenChange, device }: DeviceFormDialo
                   id="ssh-username"
                   autoComplete="username"
                   {...form.register('username')}
-                  placeholder="Enter SSH username"
+                  placeholder="Optional SSH username"
                 />
                 {form.formState.errors.username ? (
                   <p className="text-xs text-danger">{form.formState.errors.username.message}</p>
@@ -274,7 +306,9 @@ export function DeviceFormDialog({ open, onOpenChange, device }: DeviceFormDialo
                   type={showPassword ? 'text' : 'password'}
                   autoComplete={device ? 'new-password' : 'current-password'}
                   {...form.register('password')}
-                  placeholder={device ? 'Leave blank to keep current password' : 'Enter SSH password'}
+                  placeholder={
+                    device ? 'Leave blank to keep current password' : 'Optional SSH password'
+                  }
                   className="pr-10"
                 />
                 <Button

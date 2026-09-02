@@ -149,3 +149,26 @@ def ensure_monitoring_idempotency_indexes() -> None:
             "Failed to ensure Storm Confirmed unique index: %s",
             exc,
         )
+
+    # At most one active ISP offline alert per ISP connection.
+    try:
+        db.alerts.create_index(
+            [("ispId", ASCENDING)],
+            unique=True,
+            name="uniq_alerts_active_isp_offline",
+            partialFilterExpression={
+                "alertType": "ISP Offline",
+                "resolved": False,
+                "dismissed": False,
+                "ispId": {"$exists": True},
+            },
+        )
+        logger.info("Active ISP offline alert unique index ensured")
+    except OperationFailure as exc:
+        logger.error(
+            "Failed to ensure active ISP offline unique index "
+            "(resolve duplicate active alerts if present): %s",
+            exc,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to ensure ISP offline alert unique index: %s", exc)

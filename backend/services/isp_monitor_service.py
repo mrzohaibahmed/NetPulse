@@ -278,6 +278,29 @@ def apply_isp_ping_result(
         ping_started_at,
         ping_completed_at,
     )
+
+    if disposition in ("applied", "idempotent"):
+        from services.isp_alert_service import (  # noqa: PLC0415
+            maybe_send_isp_offline_alert,
+            resolve_isp_offline_alerts,
+        )
+
+        consecutive = int(updated.get("consecutiveFailures") or 0)
+        if result.get("success"):
+            resolve_isp_offline_alerts(
+                updated,
+                scan_type=scan_type,
+                cycle_id=cycle_id,
+            )
+        else:
+            maybe_send_isp_offline_alert(
+                updated,
+                consecutive_failures=consecutive,
+                scan_type=scan_type,
+                cycle_id=cycle_id,
+                attempt_id=attempt_id,
+            )
+
     return new_status
 
 

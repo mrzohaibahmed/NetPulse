@@ -457,6 +457,26 @@ def response_time_chart():
         }), 500
 
 
+@dashboard_bp.route("/dashboard/site-monitoring", methods=["GET"])
+@require_auth()
+def dashboard_site_monitoring():
+    """Grouped ISP and server monitoring by site/location."""
+    try:
+        from services.site_monitoring_service import build_site_monitoring_payload  # noqa: PLC0415
+
+        payload = build_site_monitoring_payload(db)
+        return jsonify({
+            "success": True,
+            **payload,
+        }), 200
+    except Exception as error:
+        return jsonify({
+            "success": False,
+            "message": "Failed to get site monitoring data",
+            "error": str(error),
+        }), 500
+
+
 @dashboard_bp.route("/dashboard/charts/scan-activity", methods=["GET"])
 @require_auth()
 def scan_activity_chart():

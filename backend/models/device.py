@@ -12,6 +12,7 @@ def create_device(
     ping_timeout_ms=None,
     ping_retries=None,
     credentials=None,
+    location=None,
 ):
     now = utc_now()
 
@@ -39,6 +40,9 @@ def create_device(
 
     if credentials:
         document["credentials"] = credentials
+
+    if location:
+        document["location"] = location
 
     return document
 

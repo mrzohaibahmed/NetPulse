@@ -8,10 +8,14 @@ from pymongo.errors import DuplicateKeyError
 
 from config.database import db
 from models.isp_connection import (
-    DEFAULT_ISP_SLOTS,
     MAX_ISP_CONNECTIONS,
     create_isp_connection,
     default_isp_connections,
+)
+from models.location import (
+    DEFAULT_SITE_LOCATION,
+    isp_slot_ids_for_location,
+    validate_location,
 )
 from utils.monitor_logger import get_monitor_logger
 from utils.utc import utc_now
@@ -39,15 +43,35 @@ def validate_target(target: str) -> str:
 
 
 def ensure_isp_connections() -> None:
-    """Seed three default ISP slots when the collection is empty."""
-    if db.ispConnections.estimated_document_count() > 0:
+    """Seed default ISP slots and migrate legacy records without location."""
+    existing = list(db.ispConnections.find({}))
+    if not existing:
+        docs = default_isp_connections()
+        try:
+            db.ispConnections.insert_many(docs, ordered=True)
+            logger.info("[ISP] Seeded %s default ISP connection slots", len(docs))
+        except DuplicateKeyError:
+            logger.info("[ISP] Default ISP slots already present")
         return
-    docs = default_isp_connections()
-    try:
-        db.ispConnections.insert_many(docs, ordered=True)
-        logger.info("[ISP] Seeded %s default ISP connection slots", len(docs))
-    except DuplicateKeyError:
-        logger.info("[ISP] Default ISP slots already present")
+
+    for doc in existing:
+        if not doc.get("location"):
+            db.ispConnections.update_one(
+                {"_id": doc["_id"]},
+                {"$set": {"location": DEFAULT_SITE_LOCATION, "updatedAt": utc_now()}},
+            )
+
+    existing_ids = {doc["_id"] for doc in existing}
+    missing_docs = []
+    for doc in default_isp_connections():
+        if doc["_id"] not in existing_ids:
+            missing_docs.append(doc)
+    if missing_docs:
+        try:
+            db.ispConnections.insert_many(missing_docs, ordered=True)
+            logger.info("[ISP] Seeded %s additional ISP slots", len(missing_docs))
+        except DuplicateKeyError:
+            logger.info("[ISP] Additional ISP slots already present")
 
 
 def count_isp_connections() -> int:
@@ -63,23 +87,30 @@ def get_isp_connection(isp_id: str) -> dict | None:
     return db.ispConnections.find_one({"_id": isp_id})
 
 
-def next_available_slot() -> str | None:
+def next_available_slot(location: str = DEFAULT_SITE_LOCATION) -> str | None:
+    location = validate_location(location) or DEFAULT_SITE_LOCATION
     existing = {doc["_id"] for doc in db.ispConnections.find({}, {"_id": 1})}
-    for slot in DEFAULT_ISP_SLOTS:
+    for slot in isp_slot_ids_for_location(location):
         if slot not in existing:
             return slot
     if len(existing) < MAX_ISP_CONNECTIONS:
-        # Allow non-slot ids when under cap (admin-created).
-        return f"isp-{len(existing) + 1}"
+        return f"{location.lower().replace(' ', '-')}-isp-extra-{len(existing) + 1}"
     return None
 
 
-def create_isp_record(*, name: str, target: str = "", monitor: bool = False) -> dict:
+def create_isp_record(
+    *,
+    name: str,
+    target: str = "",
+    monitor: bool = False,
+    location: str = DEFAULT_SITE_LOCATION,
+) -> dict:
     if count_isp_connections() >= MAX_ISP_CONNECTIONS:
         raise ValueError(f"Maximum of {MAX_ISP_CONNECTIONS} ISP connections allowed")
 
     normalized_target = validate_target(target)
-    slot = next_available_slot()
+    normalized_location = validate_location(location) or DEFAULT_SITE_LOCATION
+    slot = next_available_slot(normalized_location)
     if slot is None:
         raise ValueError(f"Maximum of {MAX_ISP_CONNECTIONS} ISP connections allowed")
 
@@ -88,6 +119,7 @@ def create_isp_record(*, name: str, target: str = "", monitor: bool = False) -> 
         name=name,
         target=normalized_target,
         monitor=monitor,
+        location=normalized_location,
     )
     db.ispConnections.insert_one(doc)
     return doc
@@ -99,18 +131,29 @@ def update_isp_record(
     name: str | None = None,
     target: str | None = None,
     monitor: bool | None = None,
+    location: str | None = None,
 ) -> dict | None:
     existing = get_isp_connection(isp_id)
     if existing is None:
-        if isp_id not in DEFAULT_ISP_SLOTS:
-            return None
-        slot_index = DEFAULT_ISP_SLOTS.index(isp_id) + 1
+        slot_location = DEFAULT_SITE_LOCATION
+        if isp_id in isp_slot_ids_for_location(DEFAULT_SITE_LOCATION):
+            slot_index = isp_slot_ids_for_location(DEFAULT_SITE_LOCATION).index(isp_id) + 1
+        else:
+            for candidate in ("Karachi", "Lahore"):
+                slots = isp_slot_ids_for_location(candidate)
+                if isp_id in slots:
+                    slot_location = candidate
+                    slot_index = slots.index(isp_id) + 1
+                    break
+            else:
+                return None
         cleaned_name = (name or "").strip() or f"ISP {slot_index}"
         doc = create_isp_connection(
             isp_id=isp_id,
             name=cleaned_name,
             target=validate_target(target or ""),
             monitor=bool(monitor) if monitor is not None else False,
+            location=validate_location(location) or slot_location,
         )
         db.ispConnections.insert_one(doc)
         return doc
@@ -125,6 +168,8 @@ def update_isp_record(
         update["target"] = validate_target(target)
     if monitor is not None:
         update["monitor"] = bool(monitor)
+    if location is not None:
+        update["location"] = validate_location(location) or DEFAULT_SITE_LOCATION
 
     db.ispConnections.update_one({"_id": isp_id}, {"$set": update})
     return get_isp_connection(isp_id)
