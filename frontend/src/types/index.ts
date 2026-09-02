@@ -660,6 +660,7 @@ export interface PaginationParams {
   state?: string
   safetyStatus?: string
   network?: string
+  location?: string
 }
 
 export interface InterfaceNeighbor {

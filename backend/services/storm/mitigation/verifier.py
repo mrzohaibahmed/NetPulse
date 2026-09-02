@@ -37,6 +37,9 @@ def verify_mitigation(
 
     def _single_attempt() -> tuple[bool, str]:
         try:
+            collector = executor.collector
+            if collector is not None:
+                collector.ensure_exec_prompt(settle_seconds=0.0)
             outputs = executor.execute_commands(commands, interface)
             output_text = "\n".join(outputs)
             success = strategy.verify_output(output_text, vendor)

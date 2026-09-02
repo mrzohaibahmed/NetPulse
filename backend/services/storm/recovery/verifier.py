@@ -7,8 +7,9 @@ from __future__ import annotations
 from typing import Any
 
 from services.storm.diagnostics.snapshots import parse_interface_snapshot
+from services.storm.mitigation.strategy import NoShutdownRecoveryStrategy
 from services.storm.mitigation.ssh_executor import SSHMitigationExecutor
-from services.storm.ssh_verification_retry import verify_with_bounded_retry
+from services.storm.mitigation.verifier import verify_mitigation
 from utils.monitor_logger import get_monitor_logger
 
 logger = get_monitor_logger("storm.recovery.verifier")
@@ -18,41 +19,23 @@ def verify_interface_up(executor: SSHMitigationExecutor, interface: str) -> tupl
     """
     Verify that the recovered interface is administratively UP.
 
+    Uses the same running-config verification as the NO_SHUTDOWN mitigation
+    strategy so recovery and shutdown paths share one reliable check.
+
     Returns
     -------
     (bool, str)
         Tuple of (is_up, raw_cli_output)
     """
-    vendor = (executor.creds.vendor or "cisco_ios").lower()
-    from utils.ssh_security import assert_safe_interface_name  # noqa: PLC0415
-
-    safe_iface = assert_safe_interface_name(interface)
-    if "juniper" in vendor or "junos" in vendor:
-        cmd = f"show interfaces {safe_iface}"
-    else:
-        cmd = f"show interfaces {safe_iface}"
-
-    logger.info("Verifying interface up | host=%s | command=%s", executor.creds.host, cmd)
-
-    def _single_attempt() -> tuple[bool, str]:
-        try:
-            collector = executor.collector
-            if collector is None:
-                raise RuntimeError("SSH executor is not connected")
-            collector.ensure_exec_prompt(settle_seconds=0.0)
-            output = collector.run_command(cmd)
-            snapshot = parse_interface_snapshot(output, safe_iface)
-
-            # Check if interface is administratively UP (not down)
-            is_up = bool(snapshot.get("available") and snapshot.get("adminStatus") == "up")
-            return is_up, output
-        except Exception as exc:
-            logger.error("Verification command failed | %s | %s", interface, exc)
-            return False, f"CLI command error: {exc}"
-
-    return verify_with_bounded_retry(
-        label="recovery:interface_up",
-        attempt_fn=_single_attempt,
+    logger.info(
+        "Verifying interface up | host=%s | interface=%s",
+        executor.creds.host,
+        interface,
+    )
+    return verify_mitigation(
+        executor,
+        NoShutdownRecoveryStrategy(),
+        interface,
     )
 
 

@@ -64,6 +64,20 @@ def build_device_filter():
         query["$and"] = query.get("$and", [])
         query["$and"].append({"ipAddress": pattern})
 
+    location = (request.args.get("location") or "").strip()
+    if location and location.lower() != "all":
+        if location.lower() in ("none", "unassigned", "__none__"):
+            query["$and"] = query.get("$and", [])
+            query["$and"].append({
+                "$or": [
+                    {"location": {"$exists": False}},
+                    {"location": None},
+                    {"location": ""},
+                ]
+            })
+        else:
+            query["location"] = location
+
     search = (request.args.get("q") or "").strip()
     if search:
         pattern = re.compile(re.escape(search), re.IGNORECASE)

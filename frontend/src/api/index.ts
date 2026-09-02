@@ -90,6 +90,9 @@ function toQuery(params: PaginationParams = {}): string {
   if ((params as any).network && (params as any).network !== 'all') {
     search.set('network', (params as any).network)
   }
+  if (params.location && params.location !== 'all') {
+    search.set('location', params.location)
+  }
 
   const query = search.toString()
   return query ? `?${query}` : ''

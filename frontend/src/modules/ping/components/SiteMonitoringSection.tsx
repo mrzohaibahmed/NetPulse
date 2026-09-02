@@ -40,7 +40,7 @@ export function SiteMonitoringSection({ sites, isLoading }: SiteMonitoringSectio
           icon={Globe}
         />
       ) : (
-        <div className="space-y-8">
+        <div className="grid gap-4 lg:grid-cols-3">
           {siteList.map((site) => (
             <SitePanel key={site.name} site={site} isLoading={isLoading} />
           ))}
@@ -54,41 +54,43 @@ function SitePanel({ site, isLoading }: { site: SiteMonitoringSite; isLoading?: 
   const isps = normalizeIspSlotsForLocation(site.isps, site.name)
 
   return (
-    <section className="space-y-4" aria-label={`${site.name} monitoring`}>
-      <div className="border-b border-border/70 pb-2">
-        <h3 className="text-sm font-bold uppercase tracking-widest text-foreground">{site.name}</h3>
-      </div>
-
-      <div className="space-y-3">
-        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-          ISP Connectivity
-        </p>
-        <div className="grid gap-4 md:grid-cols-3">
-          {isps.map((isp) => (
-            <IspStatusCard key={isp.id} isp={isp} isLoading={isLoading} />
-          ))}
+    <Card className="glass h-full border-border/70" aria-label={`${site.name} monitoring`}>
+      <CardContent className="flex h-full flex-col gap-4 p-4">
+        <div className="border-b border-border/70 pb-2">
+          <h3 className="text-sm font-bold uppercase tracking-widest text-foreground">{site.name}</h3>
         </div>
-      </div>
 
-      <div className="space-y-3">
-        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-          Server Monitoring
-        </p>
-        {site.servers.length === 0 ? (
-          <Card className="glass border-dashed border-border/70">
-            <CardContent className="p-4 text-sm text-muted-foreground">
-              No server devices configured
-            </CardContent>
-          </Card>
-        ) : (
-          <div className="grid gap-4 md:grid-cols-3">
-            {site.servers.map((server) => (
-              <ServerStatusCard key={server.id} server={server} isLoading={isLoading} />
+        <div className="space-y-3">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            ISP Connectivity
+          </p>
+          <div className="grid gap-4">
+            {isps.map((isp) => (
+              <IspStatusCard key={isp.id} isp={isp} isLoading={isLoading} />
             ))}
           </div>
-        )}
-      </div>
-    </section>
+        </div>
+
+        <div className="space-y-3">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            Server Monitoring
+          </p>
+          {site.servers.length === 0 ? (
+            <Card className="border-dashed border-border/70 bg-secondary/10 shadow-none">
+              <CardContent className="p-4 text-sm text-muted-foreground">
+                No server devices configured
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="grid gap-4">
+              {site.servers.map((server) => (
+                <ServerStatusCard key={server.id} server={server} isLoading={isLoading} />
+              ))}
+            </div>
+          )}
+        </div>
+      </CardContent>
+    </Card>
   )
 }
 

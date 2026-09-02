@@ -468,14 +468,24 @@ class SSHInterfaceCollector:
         if self._shell is None:
             raise SSHCollectorError("SSH shell is not connected")
 
+        prompt_timeout = min(10.0, float(self.credentials.timeout))
         prompt_line = self._read_session_prompt()
         if _is_config_submode_prompt(prompt_line):
             self._run_command("end", wait=0.5, require_exec_prompt=True)
+        elif _is_exec_mode_prompt_line(prompt_line):
+            self._privileged_confirmed = True
+            if settle_seconds > 0:
+                time.sleep(settle_seconds)
+            self._drain(timeout=0.2)
+            return
 
         self._drain(timeout=0.2)
         self._shell.send("\n")
         time.sleep(0.4)
-        output = self._read_until_prompt(timeout=5.0, require_exec_prompt=True)
+        output = self._read_until_prompt(
+            timeout=prompt_timeout,
+            require_exec_prompt=True,
+        )
         if not _looks_like_exec_prompt(output):
             raise SSHCollectorError(
                 f"Privileged exec prompt not confirmed on {self.credentials.host} "

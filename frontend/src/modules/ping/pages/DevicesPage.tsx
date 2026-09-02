@@ -36,6 +36,7 @@ import {
 } from '@/hooks/queries'
 import { deviceTypeIcon } from '@/lib/device-icons'
 import { displayDeviceType, DEVICE_TYPES } from '@/modules/ping/constants/devices'
+import { SITE_LOCATIONS } from '@/modules/ping/constants/locations'
 import { formatMs, formatRelative } from '@/utils/format'
 import type { Device } from '@/types'
 import { getDevices, updateDevice } from '@/api'
@@ -115,6 +116,10 @@ export function DevicesPage() {
     const network = searchParams.get('network')
     return network && network.trim() ? network : 'all'
   })
+  const [locationFilter, setLocationFilter] = useState(() => {
+    const location = searchParams.get('location')
+    return location && location.trim() ? location : 'all'
+  })
   const [page, setPage] = useState(1)
   const [limit, setLimit] = useState(DEFAULT_LIMIT)
   const [sorting, setSorting] = useState<SortingState>([])
@@ -190,7 +195,7 @@ export function DevicesPage() {
 
   useEffect(() => {
     setPage(1)
-  }, [debouncedQuery, statusFilter, typeFilter, criticalFilter, networkFilter, limit])
+  }, [debouncedQuery, statusFilter, typeFilter, criticalFilter, networkFilter, locationFilter, limit])
 
   useEffect(() => {
     const q = searchParams.get('q')
@@ -205,6 +210,8 @@ export function DevicesPage() {
     if (critical != null && nextCritical !== criticalFilter) setCriticalFilter(nextCritical)
     const network = searchParams.get('network')
     if (network != null && network !== networkFilter) setNetworkFilter(network || 'all')
+    const location = searchParams.get('location')
+    if (location != null && location !== locationFilter) setLocationFilter(location || 'all')
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams])
 
@@ -225,6 +232,7 @@ export function DevicesPage() {
     critical:
       criticalFilter === 'critical' ? true : criticalFilter === 'non-critical' ? false : undefined,
     network: networkFilter !== 'all' ? networkFilter : undefined,
+    location: locationFilter !== 'all' ? locationFilter : undefined,
   })
 
   const networksQuery = useDeviceNetworksQuery()
@@ -606,21 +614,22 @@ export function DevicesPage() {
               Filters
             </CardTitle>
             <CardDescription>
-              Narrow the inventory by hostname, IP, type, status, or critical flag.
+              Narrow the inventory by hostname, IP, type, status, location, or critical flag.
             </CardDescription>
           </CardHeader>
           <CardContent>
             <div className="flex flex-wrap items-end gap-3">
-              <div className="min-w-[220px] flex-1 space-y-1.5">
+              <div className="w-[160px] space-y-1.5">
                 <label className="text-xs font-medium text-muted-foreground" htmlFor="device-search">
                   Search
                 </label>
                 <Input
                   id="device-search"
                   type="search"
-                  placeholder="Search hostname, IP, or type…"
+                  placeholder="Hostname or IP…"
                   value={query}
                   onChange={(e) => onSearchChange(e.target.value)}
+                  className="h-9"
                 />
               </div>
               <div className="space-y-1.5">
@@ -682,6 +691,32 @@ export function DevicesPage() {
                     <SelectItem value="all">All devices</SelectItem>
                     <SelectItem value="critical">Critical only</SelectItem>
                     <SelectItem value="non-critical">Non-critical only</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">Location</label>
+                <Select
+                  value={locationFilter}
+                  onValueChange={(val) => {
+                    setLocationFilter(val)
+                    const next = new URLSearchParams(searchParams)
+                    if (val === 'all') next.delete('location')
+                    else next.set('location', val)
+                    setSearchParams(next, { replace: true })
+                  }}
+                >
+                  <SelectTrigger className="h-9 w-[140px]">
+                    <SelectValue placeholder="Location" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All locations</SelectItem>
+                    {SITE_LOCATIONS.map((location) => (
+                      <SelectItem key={location} value={location}>
+                        {location}
+                      </SelectItem>
+                    ))}
+                    <SelectItem value="__none__">Not set</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

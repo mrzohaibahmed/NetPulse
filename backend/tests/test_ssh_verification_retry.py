@@ -215,13 +215,33 @@ class EnsureExecPromptTests(unittest.TestCase):
         collector = _collector()
         collector._shell = MagicMock()
 
-        with patch.object(collector, "_read_session_prompt", return_value="Switch#"), patch.object(
+        with patch.object(collector, "_read_session_prompt", return_value=None), patch.object(
             collector,
             "_read_until_prompt",
             return_value="partial output without prompt",
         ), patch.object(collector, "_drain", return_value=""):
             with self.assertRaises(SSHCollectorError):
                 collector.ensure_exec_prompt(settle_seconds=0.0)
+
+    @patch("services.interface_collection.ssh_collector.time.sleep")
+    def test_skips_reprompt_when_already_at_exec(self, mock_sleep):
+        collector = _collector()
+        collector._shell = MagicMock()
+
+        with patch.object(
+            collector,
+            "_read_session_prompt",
+            return_value="Switch#",
+        ), patch.object(collector, "_run_command") as mock_run, patch.object(
+            collector,
+            "_drain",
+            return_value="",
+        ):
+            collector.ensure_exec_prompt(settle_seconds=0.25)
+
+        mock_run.assert_not_called()
+        self.assertTrue(collector._privileged_confirmed)
+        mock_sleep.assert_called_once_with(0.25)
 
 
 class SSHExecutorConfigSyncTests(unittest.TestCase):
@@ -310,32 +330,32 @@ class RecoveryVerifierRetryTests(unittest.TestCase):
 
     @patch("services.storm.ssh_verification_retry.time.sleep")
     def test_retry_succeeds_when_admin_up_on_second_attempt(self, mock_sleep):
-        outputs = iter(
+        show_outputs = iter(
             [
-                "",
-                "GigabitEthernet1/0/10 is up, line protocol is up\n",
+                "interface GigabitEthernet1/0/10\n shutdown\n",
+                "interface GigabitEthernet1/0/10\n description recovered\n",
             ]
         )
-        self.executor.collector.run_command.side_effect = lambda cmd, wait=0.4: next(outputs)
+        self.executor.execute_commands.side_effect = lambda cmds, iface: [next(show_outputs)]
 
         ok, output = verify_interface_up(self.executor, self.interface)
 
         self.assertTrue(ok)
-        self.assertIn("line protocol is up", output)
-        self.assertEqual(self.executor.collector.run_command.call_count, 2)
+        self.assertNotIn("\n shutdown", output.lower())
+        self.assertEqual(self.executor.execute_commands.call_count, 2)
         self.assertEqual(self.executor.collector.ensure_exec_prompt.call_count, 2)
         self.assertEqual(mock_sleep.call_count, 2)
 
     @patch("services.storm.ssh_verification_retry.time.sleep")
     def test_consistent_down_state_fails(self, mock_sleep):
-        self.executor.collector.run_command.return_value = (
-            "GigabitEthernet1/0/10 is administratively down, line protocol is down\n"
-        )
+        self.executor.execute_commands.return_value = [
+            "interface GigabitEthernet1/0/10\n shutdown\n",
+        ]
 
         ok, _ = verify_interface_up(self.executor, self.interface)
 
         self.assertFalse(ok)
-        self.assertEqual(self.executor.collector.run_command.call_count, MAX_VERIFICATION_ATTEMPTS)
+        self.assertEqual(self.executor.execute_commands.call_count, MAX_VERIFICATION_ATTEMPTS)
 
 
 class MitigationEngineIntegrationTests(unittest.TestCase):
@@ -600,8 +620,8 @@ class RecoveryEngineIntegrationTests(unittest.TestCase):
 
         show_outputs = iter(
             [
-                "",
-                "GigabitEthernet1/0/10 is up, line protocol is up\n",
+                "interface GigabitEthernet1/0/10\n shutdown\n",
+                "interface GigabitEthernet1/0/10\n description recovered\n",
             ]
         )
         config_done = {"value": False}
@@ -610,7 +630,7 @@ class RecoveryEngineIntegrationTests(unittest.TestCase):
             if cmd.strip().lower() == "no shutdown":
                 config_done["value"] = True
                 return "Switch(config-if)#"
-            if cmd.strip().lower().startswith("show interfaces"):
+            if cmd.strip().lower().startswith("show running-config interface"):
                 self.assertTrue(config_done["value"])
                 return next(show_outputs)
             return "OK"
@@ -636,7 +656,7 @@ class RecoveryEngineIntegrationTests(unittest.TestCase):
         show_count = sum(
             1
             for call in executor.collector.run_command.call_args_list
-            if call.args[0].strip().lower().startswith("show interfaces")
+            if call.args[0].strip().lower().startswith("show running-config interface")
         )
         self.assertEqual(no_shutdown_count, 1)
         self.assertEqual(show_count, 2)

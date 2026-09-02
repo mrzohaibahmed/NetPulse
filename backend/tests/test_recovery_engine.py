@@ -48,6 +48,22 @@ class RecoveryEngineTests(unittest.TestCase):
             },
         }
 
+    def _ssh_executor(self, mock_ssh: MagicMock) -> MagicMock:
+        executor = MagicMock()
+        mock_ssh.return_value.__enter__.return_value = executor
+        executor.creds.vendor = "cisco_ios"
+        executor.collector = MagicMock()
+        return executor
+
+    @staticmethod
+    def _execute_commands_side_effect(verify_output: str):
+        def _side_effect(cmds, iface):
+            if any(cmd.lower().startswith("show") for cmd in cmds):
+                return [verify_output]
+            return ["OK"] * len(cmds)
+
+        return _side_effect
+
     def test_state_machine_transitions(self):
         """Verify the state machine logic transitions cleanly."""
         # MITIGATED -> WAITING
@@ -294,11 +310,10 @@ class RecoveryEngineTests(unittest.TestCase):
         mock_acquire_locks.return_value = ("recovery:device", "recovery:interface")
         mock_collect_stats.return_value = {"adminStatus": "up", "operStatus": "up"}
 
-        mock_collector = MagicMock()
-        mock_ssh.return_value.__enter__.return_value = mock_collector
-        # Mock verification CLI output showing interface up (admin status up)
-        mock_collector.creds.vendor = "cisco_ios"
-        mock_collector.collector.run_command.return_value = "GigabitEthernet1/0/10 is up, line protocol is up\n admin status is up"
+        mock_collector = self._ssh_executor(mock_ssh)
+        mock_collector.execute_commands.side_effect = self._execute_commands_side_effect(
+            "interface GigabitEthernet1/0/10\n description recovered\n"
+        )
 
         res = execute_recovery(self.incident_id, force=False, operator="admin")
         self.assertTrue(res["success"])
@@ -323,6 +338,7 @@ class RecoveryEngineTests(unittest.TestCase):
         self.assertEqual(mock_invalidate.call_args[0][1], self.interface)
         self.assertNotIn("advance_generation", mock_invalidate.call_args.kwargs)
 
+    @patch("services.storm.ssh_verification_retry.time.sleep")
     @patch("services.storm.recovery.engine.LockService.release_recovery_locks")
     @patch("services.storm.recovery.engine.LockService.acquire_recovery_locks")
     @patch("services.storm.recovery.engine.get_incident")
@@ -337,6 +353,7 @@ class RecoveryEngineTests(unittest.TestCase):
         mock_get_incident,
         mock_acquire_locks,
         mock_release_locks,
+        _mock_sleep,
     ):
         """Test verification failure increments retry count and updates state."""
         mock_get_incident.return_value = self.incident_doc
@@ -347,11 +364,10 @@ class RecoveryEngineTests(unittest.TestCase):
         mock_db_fn.return_value = fake_db
         mock_acquire_locks.return_value = ("recovery:device", "recovery:interface")
 
-        mock_collector = MagicMock()
-        mock_ssh.return_value.__enter__.return_value = mock_collector
-        mock_collector.creds.vendor = "cisco_ios"
-        # admin status is down! (verification fails)
-        mock_collector.collector.run_command.return_value = "GigabitEthernet1/0/10 is administratively down\n admin status is down"
+        mock_collector = self._ssh_executor(mock_ssh)
+        mock_collector.execute_commands.side_effect = self._execute_commands_side_effect(
+            "interface GigabitEthernet1/0/10\n shutdown\n"
+        )
 
         res = execute_recovery(self.incident_id, force=False, operator="admin")
         self.assertFalse(res["success"])
@@ -379,6 +395,7 @@ class RecoveryEngineTests(unittest.TestCase):
             if "status" in set_fields:
                 self.assertNotEqual(set_fields["status"], "RECOVERY_FAILED")
 
+    @patch("services.storm.ssh_verification_retry.time.sleep")
     @patch("services.storm.recovery.engine.LockService.release_recovery_locks")
     @patch("services.storm.recovery.engine.LockService.acquire_recovery_locks")
     @patch("services.storm.recovery.engine.get_incident")
@@ -393,6 +410,7 @@ class RecoveryEngineTests(unittest.TestCase):
         mock_get_incident,
         mock_acquire_locks,
         mock_release_locks,
+        _mock_sleep,
     ):
         """Failed recovery with retries remaining must keep status MITIGATED."""
         mock_get_incident.return_value = self.incident_doc  # status MITIGATED
@@ -403,11 +421,9 @@ class RecoveryEngineTests(unittest.TestCase):
         mock_db_fn.return_value = fake_db
         mock_acquire_locks.return_value = ("recovery:device", "recovery:interface")
 
-        mock_collector = MagicMock()
-        mock_ssh.return_value.__enter__.return_value = mock_collector
-        mock_collector.creds.vendor = "cisco_ios"
-        mock_collector.collector.run_command.return_value = (
-            "GigabitEthernet1/0/10 is administratively down\n admin status is down"
+        mock_collector = self._ssh_executor(mock_ssh)
+        mock_collector.execute_commands.side_effect = self._execute_commands_side_effect(
+            "interface GigabitEthernet1/0/10\n shutdown\n"
         )
 
         res = execute_recovery(self.incident_id, force=False, operator="admin")
@@ -426,6 +442,7 @@ class RecoveryEngineTests(unittest.TestCase):
             "soft-failure must not rewrite incident status; leave MITIGATED",
         )
 
+    @patch("services.storm.ssh_verification_retry.time.sleep")
     @patch("services.storm.recovery.engine.LockService.release_recovery_locks")
     @patch("services.storm.recovery.engine.LockService.acquire_recovery_locks")
     @patch("services.storm.recovery.engine.get_incident")
@@ -440,6 +457,7 @@ class RecoveryEngineTests(unittest.TestCase):
         mock_get_incident,
         mock_acquire_locks,
         mock_release_locks,
+        _mock_sleep,
     ):
         """Test that exceeding retry limit updates status to RECOVERY_FAILED."""
         # Setup incident with 2 existing failed retries (max is 3)
@@ -453,10 +471,10 @@ class RecoveryEngineTests(unittest.TestCase):
         mock_db_fn.return_value = fake_db
         mock_acquire_locks.return_value = ("recovery:device", "recovery:interface")
 
-        mock_collector = MagicMock()
-        mock_ssh.return_value.__enter__.return_value = mock_collector
-        mock_collector.creds.vendor = "cisco_ios"
-        mock_collector.collector.run_command.return_value = "admin status is down"
+        mock_collector = self._ssh_executor(mock_ssh)
+        mock_collector.execute_commands.side_effect = self._execute_commands_side_effect(
+            "interface GigabitEthernet1/0/10\n shutdown\n"
+        )
 
         res = execute_recovery(self.incident_id, force=False, operator="admin")
         self.assertFalse(res["success"])
