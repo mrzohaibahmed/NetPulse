@@ -8,11 +8,9 @@ import {
 import { formatMs, formatRelative } from '@/utils/format'
 import type { SiteMonitoringSite, SiteMonitoringServer } from '@/types'
 import { SectionHeading } from '@/shared/components/SectionHeading'
-import { StatusBadge } from '@/shared/components/StatusBadge'
 import { EmptyState } from '@/shared/components/EmptyState'
 import { Card, CardContent } from '@/shared/ui/card'
 import { cn } from '@/lib/utils'
-import { statusTone } from '@/lib/status'
 
 interface SiteMonitoringSectionProps {
   sites: SiteMonitoringSite[] | undefined
@@ -106,15 +104,14 @@ function ServerStatusCard({
   server: SiteMonitoringServer
   isLoading?: boolean
 }) {
-  const tone = statusTone(server.status)
-  const online = tone === 'online'
-  const offline = tone === 'offline'
+  const online = server.status === 'Online'
+  const offline = server.status !== 'Online'
 
   return (
-    <Link to={`/devices/${server.id}`} className="block h-full">
+    <Link to={`/devices/${server.id}`} className="block">
       <Card
         className={cn(
-          'glass relative h-full overflow-hidden border-border/70 transition-shadow hover:shadow-md',
+          'glass relative overflow-hidden border-border/70 transition-shadow hover:shadow-md',
           online && 'border-success/30 shadow-success/5',
           offline && 'border-danger/40 shadow-danger/10 ring-1 ring-danger/20',
         )}
@@ -127,40 +124,37 @@ function ServerStatusCard({
             !online && !offline && 'bg-muted-foreground/30',
           )}
         />
-        <CardContent className="flex flex-col gap-3 p-3.5">
-          <div className="flex items-start justify-between gap-3">
-            <div className="flex min-w-0 items-center gap-3">
-              <div
-                className={cn(
-                  'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
-                  online && 'bg-success/15 text-success',
-                  offline && 'bg-danger/15 text-danger',
-                  !online && !offline && 'bg-secondary text-muted-foreground',
-                )}
-              >
-                <Server className="h-4 w-4" />
-              </div>
-              <div className="min-w-0">
-                <p className="truncate text-base font-bold tracking-tight text-foreground">
-                  {server.hostname}
-                </p>
-                <p className="truncate text-xs font-mono text-muted-foreground">{server.ipAddress}</p>
-              </div>
+        <CardContent className="flex items-center justify-between gap-3 p-3.5">
+          <div className="flex min-w-0 items-center gap-3">
+            <div
+              className={cn(
+                'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
+                online && 'bg-success/15 text-success',
+                offline && 'bg-danger/15 text-danger',
+                !online && !offline && 'bg-secondary text-muted-foreground',
+              )}
+            >
+              <Server className="h-4 w-4" />
             </div>
-            <StatusBadge status={server.status} pulse={online} />
+            <div className="min-w-0">
+              <p className="truncate text-base font-bold tracking-tight text-foreground">
+                {server.hostname}
+              </p>
+              <p className="truncate text-xs font-mono text-muted-foreground">{server.ipAddress}</p>
+            </div>
           </div>
 
-          <div className="flex items-end justify-between gap-3">
+          <div className="flex shrink-0 flex-col items-end justify-center text-right">
             <p
               className={cn(
-                'text-lg font-bold tracking-tight leading-tight',
+                'text-lg font-bold leading-tight tracking-tight',
                 online && 'text-foreground',
                 offline && 'text-muted-foreground',
               )}
             >
               {isLoading && !server.lastCheckedAt ? 'Checking…' : serverLatencyLabel(server)}
             </p>
-            <p className="text-[10px] text-muted-foreground">
+            <p className="mt-0.5 text-[10px] text-muted-foreground">
               Last seen:{' '}
               <span className="font-medium text-foreground">
                 {server.lastSeen ? formatRelative(server.lastSeen) : '—'}
