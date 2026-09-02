@@ -23,7 +23,7 @@ import { useAuth } from '@/shared/auth/AuthContext'
 import { useDashboardQuery, useHealthQuery, useIspsQuery } from '@/hooks/queries'
 import { computeNetworkHealth, healthColor } from '@/lib/health'
 import { formatDateTime, formatMs, formatPercent, formatRelative } from '@/utils/format'
-import type { AlertItem, PingHistory } from '@/types'
+import type { AlertItem } from '@/types'
 import { HealthGauge } from '@/shared/components/HealthGauge'
 import { StatusBadge } from '@/shared/components/StatusBadge'
 import { EmptyState } from '@/shared/components/EmptyState'
@@ -67,61 +67,6 @@ function isHighPriorityAlert(alert: AlertItem): boolean {
   return alertSeverityRank(alert) >= 3
 }
 
-type ActivityItem = {
-  id: string
-  kind: 'status' | 'storm' | 'alert' | 'scan'
-  title: string
-  detail: string
-  timestamp: string
-  href?: string
-}
-
-function buildRecentActivity(
-  history: PingHistory[],
-  alerts: AlertItem[],
-): ActivityItem[] {
-  const items: ActivityItem[] = []
-
-  for (const row of history) {
-    items.push({
-      id: `hist-${row._id}`,
-      kind: row.status === 'Online' ? 'scan' : 'status',
-      title: `${row.hostname} · ${row.status}`,
-      detail: `${row.ipAddress} · ${row.scanType}${row.responseTime != null ? ` · ${formatMs(row.responseTime)}` : ''}`,
-      timestamp: row.timestamp,
-      href: row.deviceId ? `/devices/${row.deviceId}` : '/history',
-    })
-  }
-
-  for (const alert of alerts) {
-    const storm = isStormAlert(alert)
-    items.push({
-      id: `alert-${alert._id}`,
-      kind: storm ? 'storm' : 'alert',
-      title: alert.title || alert.message || `${alert.hostname} alert`,
-      detail: [
-        alert.hostname,
-        alert.interface,
-        alert.incidentId ? `Incident ${alert.incidentId}` : null,
-        alert.action,
-      ]
-        .filter(Boolean)
-        .join(' · '),
-      timestamp: alert.createdAt,
-      href: storm && alert.incidentId
-        ? `/storm?incident=${encodeURIComponent(alert.incidentId)}`
-        : storm
-          ? '/storm'
-          : '/alerts',
-    })
-  }
-
-  return items
-    .filter((item) => Boolean(item.timestamp))
-    .sort((a, b) => String(b.timestamp).localeCompare(String(a.timestamp)))
-    .slice(0, 8)
-}
-
 const fadeUp = {
   hidden: { opacity: 0, y: 12 },
   show: { opacity: 1, y: 0 },
@@ -154,11 +99,6 @@ export function DashboardPage() {
       monitoredSwitches,
     }
   }, [dash.alerts, dash.deviceMetrics])
-
-  const recentActivity = useMemo(
-    () => buildRecentActivity(dash.history, dash.alerts),
-    [dash.history, dash.alerts],
-  )
 
   const criticalAlerts = useMemo(() => {
     return [...dash.alerts]
@@ -394,62 +334,7 @@ export function DashboardPage() {
         </div>
       </motion.section>
 
-      {/* Row 3 — Recent Activity */}
-      <motion.section variants={fadeUp} className="space-y-4" aria-label="Recent activity">
-        <SectionHeading
-          title="Recent Activity"
-          description="Latest device status changes, scans, and storm-related events."
-        />
-        <Card className="glass">
-          <CardContent className="p-0">
-            {recentActivity.length === 0 ? (
-              <div className="p-6">
-                <EmptyState title="No recent activity" description="History and alerts will appear here." />
-              </div>
-            ) : (
-              <ul className="divide-y divide-border/60">
-                {recentActivity.map((item) => (
-                  <li key={item.id}>
-                    <Link
-                      to={item.href || '/'}
-                      className="flex items-start gap-3 px-5 py-3.5 transition-colors hover:bg-secondary/40"
-                    >
-                      <span
-                        className={cn(
-                          'mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg',
-                          item.kind === 'storm' && 'bg-violet-500/15 text-violet-300',
-                          item.kind === 'alert' && 'bg-danger/15 text-danger',
-                          item.kind === 'status' && 'bg-warning/15 text-warning',
-                          item.kind === 'scan' && 'bg-success/15 text-success',
-                        )}
-                      >
-                        {item.kind === 'storm' ? (
-                          <Shield className="h-4 w-4" />
-                        ) : item.kind === 'alert' ? (
-                          <Bell className="h-4 w-4" />
-                        ) : item.kind === 'status' ? (
-                          <WifiOff className="h-4 w-4" />
-                        ) : (
-                          <Activity className="h-4 w-4" />
-                        )}
-                      </span>
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-semibold">{item.title}</p>
-                        <p className="truncate text-xs text-muted-foreground">{item.detail}</p>
-                      </div>
-                      <span className="shrink-0 text-xs text-muted-foreground">
-                        {formatRelative(item.timestamp)}
-                      </span>
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </CardContent>
-        </Card>
-      </motion.section>
-
-      {/* Row 4 — Critical Alerts */}
+      {/* Row 3 — Critical Alerts */}
       <motion.section variants={fadeUp} className="space-y-4" aria-label="Critical alerts">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <SectionHeading
@@ -526,7 +411,7 @@ export function DashboardPage() {
         </Card>
       </motion.section>
 
-      {/* Row 5 — Quick Actions */}
+      {/* Row 4 — Quick Actions */}
       <motion.section variants={fadeUp} className="space-y-4" aria-label="Quick actions">
         <SectionHeading
           title="Quick Actions"
