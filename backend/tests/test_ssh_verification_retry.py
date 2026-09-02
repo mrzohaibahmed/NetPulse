@@ -19,12 +19,14 @@ from services.interface_collection.ssh_collector import (
     SSHInterfaceCollector,
 )
 from services.storm.mitigation.engine import execute_mitigation
+from services.storm.mitigation.ssh_executor import SSHMitigationExecutor
 from services.storm.mitigation.strategy import ShutdownInterfaceStrategy
 from services.storm.mitigation.verifier import verify_mitigation
 from services.storm.recovery.engine import execute_recovery
 from services.storm.recovery.verifier import verify_interface_up
 from services.storm.ssh_verification_retry import (
     MAX_VERIFICATION_ATTEMPTS,
+    POST_CONFIG_VERIFICATION_SETTLE_SECONDS,
     VERIFICATION_RETRY_DELAY_SECONDS,
     verify_with_bounded_retry,
 )
@@ -57,7 +59,9 @@ class VerifyWithBoundedRetryTests(unittest.TestCase):
         ok, output = verify_with_bounded_retry(label="test", attempt_fn=attempt_fn)
         self.assertTrue(ok)
         self.assertEqual(output, "good output")
-        mock_sleep.assert_called_once_with(VERIFICATION_RETRY_DELAY_SECONDS)
+        mock_sleep.assert_any_call(POST_CONFIG_VERIFICATION_SETTLE_SECONDS)
+        mock_sleep.assert_any_call(VERIFICATION_RETRY_DELAY_SECONDS)
+        self.assertEqual(mock_sleep.call_count, 2)
 
     @patch("services.storm.ssh_verification_retry.time.sleep")
     def test_fails_after_all_attempts(self, mock_sleep):
@@ -67,7 +71,8 @@ class VerifyWithBoundedRetryTests(unittest.TestCase):
         ok, output = verify_with_bounded_retry(label="test", attempt_fn=attempt_fn)
         self.assertFalse(ok)
         self.assertEqual(output, "still wrong")
-        self.assertEqual(mock_sleep.call_count, MAX_VERIFICATION_ATTEMPTS - 1)
+        # initial settle + retry delays between attempts
+        self.assertEqual(mock_sleep.call_count, MAX_VERIFICATION_ATTEMPTS)
 
     @patch("services.storm.ssh_verification_retry.time.sleep")
     def test_empty_output_is_not_success(self, mock_sleep):
@@ -76,7 +81,7 @@ class VerifyWithBoundedRetryTests(unittest.TestCase):
 
         ok, _ = verify_with_bounded_retry(label="test", attempt_fn=attempt_fn)
         self.assertFalse(ok)
-        self.assertEqual(mock_sleep.call_count, MAX_VERIFICATION_ATTEMPTS - 1)
+        self.assertEqual(mock_sleep.call_count, MAX_VERIFICATION_ATTEMPTS)
 
 
 class ReadUntilPromptTests(unittest.TestCase):
@@ -125,6 +130,41 @@ class ReadUntilPromptTests(unittest.TestCase):
         self.assertIn("Switch#", output)
 
     @patch("services.interface_collection.ssh_collector.time.sleep")
+    def test_end_waits_for_exec_prompt_not_config_submode(self, _mock_sleep):
+        """end must not complete while the session is still at (config-if)#."""
+        collector = _collector()
+        shell = MagicMock()
+        collector._shell = shell
+
+        recv_ready_values = [True, False, False, True, False, False, False, False]
+        recv_payloads = [
+            b"Switch(config-if)# ",
+            b"Switch# ",
+        ]
+        recv_ready_iter = iter(recv_ready_values)
+        recv_iter = iter(recv_payloads)
+
+        shell.recv_ready.side_effect = lambda: next(recv_ready_iter, False)
+        shell.recv.side_effect = lambda _size: next(recv_iter, b"")
+
+        output = collector._read_until_prompt(timeout=5.0, require_exec_prompt=True)
+
+        self.assertIn("Switch#", output)
+        self.assertNotIn("(config-if)#", output.split("Switch#")[-1])
+
+    @patch("services.interface_collection.ssh_collector.time.sleep")
+    def test_config_submode_prompt_accepted_without_exec_requirement(self, _mock_sleep):
+        collector = _collector()
+        shell = MagicMock()
+        collector._shell = shell
+        shell.recv_ready.side_effect = [True, False, False, False, False, False]
+        shell.recv.side_effect = [b"Switch(config-if)# "]
+
+        output = collector._read_until_prompt(timeout=5.0, require_exec_prompt=False)
+
+        self.assertIn("(config-if)#", output)
+
+    @patch("services.interface_collection.ssh_collector.time.sleep")
     def test_hard_timeout_still_applies(self, mock_sleep):
         collector = _collector()
         shell = MagicMock()
@@ -139,6 +179,80 @@ class ReadUntilPromptTests(unittest.TestCase):
 
         self.assertEqual(output, "")
         self.assertTrue(mock_sleep.called)
+
+
+class EnsureExecPromptTests(unittest.TestCase):
+    @patch("services.interface_collection.ssh_collector.time.sleep")
+    def test_sends_end_when_still_in_config_submode(self, _mock_sleep):
+        collector = _collector()
+        shell = MagicMock()
+        collector._shell = shell
+
+        with patch.object(
+            collector,
+            "_read_session_prompt",
+            side_effect=["Switch(config-if)#", "Switch#"],
+        ), patch.object(
+            collector,
+            "_run_command",
+            return_value="Switch#",
+        ) as mock_run, patch.object(
+            collector,
+            "_read_until_prompt",
+            return_value="Switch# ",
+        ), patch.object(
+            collector,
+            "_drain",
+            return_value="",
+        ):
+            collector.ensure_exec_prompt(settle_seconds=0.0)
+
+        mock_run.assert_called_once_with("end", wait=0.5, require_exec_prompt=True)
+        self.assertTrue(collector._privileged_confirmed)
+
+    @patch("services.interface_collection.ssh_collector.time.sleep")
+    def test_raises_when_exec_prompt_missing(self, _mock_sleep):
+        collector = _collector()
+        collector._shell = MagicMock()
+
+        with patch.object(collector, "_read_session_prompt", return_value="Switch#"), patch.object(
+            collector,
+            "_read_until_prompt",
+            return_value="partial output without prompt",
+        ), patch.object(collector, "_drain", return_value=""):
+            with self.assertRaises(SSHCollectorError):
+                collector.ensure_exec_prompt(settle_seconds=0.0)
+
+
+class SSHExecutorConfigSyncTests(unittest.TestCase):
+    def _executor(self) -> SSHMitigationExecutor:
+        executor = SSHMitigationExecutor.__new__(SSHMitigationExecutor)
+        executor.device = {"hostname": "sw1", "ipAddress": "10.0.0.1"}
+        executor.creds = MagicMock()
+        executor.creds.host = "10.0.0.1"
+        executor.collector = MagicMock(spec=SSHInterfaceCollector)
+        return executor
+
+    def test_config_batch_syncs_exec_before_returning(self):
+        executor = self._executor()
+        executor.collector.run_command.return_value = "OK"
+
+        cmds = ["configure terminal", "interface Gi1/0/10", "shutdown", "end"]
+        executor.execute_commands(cmds, "Gi1/0/10")
+
+        executor.collector.mark_entering_config_mode.assert_called_once()
+        executor.collector.ensure_exec_prompt.assert_called_once()
+
+    def test_show_only_batch_skips_exec_sync(self):
+        executor = self._executor()
+        executor.collector.run_command.return_value = "interface Gi1/0/10\n shutdown\n"
+
+        executor.execute_commands(
+            ["show running-config interface Gi1/0/10"],
+            "Gi1/0/10",
+        )
+
+        executor.collector.ensure_exec_prompt.assert_not_called()
 
 
 class MitigationVerifierRetryTests(unittest.TestCase):
@@ -172,7 +286,7 @@ class MitigationVerifierRetryTests(unittest.TestCase):
         self.assertTrue(ok)
         self.assertIn("shutdown", output)
         self.assertEqual(self.executor.execute_commands.call_count, 2)
-        mock_sleep.assert_called_once()
+        self.assertEqual(mock_sleep.call_count, 2)
 
     @patch("services.storm.ssh_verification_retry.time.sleep")
     def test_all_show_attempts_fail(self, mock_sleep):
@@ -209,7 +323,8 @@ class RecoveryVerifierRetryTests(unittest.TestCase):
         self.assertTrue(ok)
         self.assertIn("line protocol is up", output)
         self.assertEqual(self.executor.collector.run_command.call_count, 2)
-        mock_sleep.assert_called_once()
+        self.assertEqual(self.executor.collector.ensure_exec_prompt.call_count, 2)
+        self.assertEqual(mock_sleep.call_count, 2)
 
     @patch("services.storm.ssh_verification_retry.time.sleep")
     def test_consistent_down_state_fails(self, mock_sleep):

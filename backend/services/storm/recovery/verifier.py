@@ -39,6 +39,7 @@ def verify_interface_up(executor: SSHMitigationExecutor, interface: str) -> tupl
             collector = executor.collector
             if collector is None:
                 raise RuntimeError("SSH executor is not connected")
+            collector.ensure_exec_prompt(settle_seconds=0.0)
             output = collector.run_command(cmd)
             snapshot = parse_interface_snapshot(output, safe_iface)
 

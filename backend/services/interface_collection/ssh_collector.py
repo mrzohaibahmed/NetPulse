@@ -443,9 +443,48 @@ class SSHInterfaceCollector:
 
         return outputs
 
-    def run_command(self, command: str, wait: float = 0.4) -> str:
+    def run_command(self, command: str, wait: float | None = None) -> str:
         """Public helper to run a single CLI command on the open session."""
-        return self._run_command(command, wait=wait)
+        if wait is None:
+            wait = 1.5 if command.strip().lower().startswith("show ") else 0.4
+        require_exec = _command_requires_exec_prompt(command)
+        return self._run_command(
+            command,
+            wait=wait,
+            require_exec_prompt=require_exec,
+        )
+
+    def mark_entering_config_mode(self) -> None:
+        """Config submode invalidates cached privileged-exec confirmation."""
+        self._privileged_confirmed = False
+
+    def ensure_exec_prompt(self, *, settle_seconds: float = 0.5) -> None:
+        """
+        Return the session to privileged exec mode before read-only verification.
+
+        Sends end when still in config submode, elicits the exec prompt, then
+        allows a short settle window so running-config reflects recent changes.
+        """
+        if self._shell is None:
+            raise SSHCollectorError("SSH shell is not connected")
+
+        prompt_line = self._read_session_prompt()
+        if _is_config_submode_prompt(prompt_line):
+            self._run_command("end", wait=0.5, require_exec_prompt=True)
+
+        self._drain(timeout=0.2)
+        self._shell.send("\n")
+        time.sleep(0.4)
+        output = self._read_until_prompt(timeout=5.0, require_exec_prompt=True)
+        if not _looks_like_exec_prompt(output):
+            raise SSHCollectorError(
+                f"Privileged exec prompt not confirmed on {self.credentials.host} "
+                "before verification"
+            )
+        self._privileged_confirmed = True
+        if settle_seconds > 0:
+            time.sleep(settle_seconds)
+        self._drain(timeout=0.2)
 
     # ------------------------------------------------------------------
     # Session helpers
@@ -541,7 +580,13 @@ class SSHInterfaceCollector:
             buffer += self._drain(timeout=1.5)
         return buffer
 
-    def _run_command(self, command: str, wait: float = 0.4) -> str:
+    def _run_command(
+        self,
+        command: str,
+        wait: float = 0.4,
+        *,
+        require_exec_prompt: bool = False,
+    ) -> str:
         if self._shell is None:
             raise SSHCollectorError("SSH shell is not connected")
 
@@ -550,10 +595,18 @@ class SSHInterfaceCollector:
         self._shell.send(command + "\n")
         time.sleep(wait)
 
-        output = self._read_until_prompt(timeout=self.credentials.timeout)
+        output = self._read_until_prompt(
+            timeout=self.credentials.timeout,
+            require_exec_prompt=require_exec_prompt,
+        )
         return _strip_command_echo(output, command)
 
-    def _read_until_prompt(self, timeout: float) -> str:
+    def _read_until_prompt(
+        self,
+        timeout: float,
+        *,
+        require_exec_prompt: bool = False,
+    ) -> str:
         """Read shell output until an IOS/Junos-like prompt or timeout."""
         if self._shell is None:
             return ""
@@ -570,7 +623,12 @@ class SSHInterfaceCollector:
                     text = data.decode("latin-1", errors="ignore")
                 chunks.append(text)
                 combined = "".join(chunks)
-                if _looks_like_prompt(combined):
+                prompt_seen = (
+                    _looks_like_exec_prompt(combined)
+                    if require_exec_prompt
+                    else _looks_like_prompt(combined)
+                )
+                if prompt_seen:
                     # Small grace read for trailing bytes
                     time.sleep(0.15)
                     if self._shell.recv_ready():
@@ -595,6 +653,37 @@ class SSHInterfaceCollector:
             else:
                 time.sleep(0.05)
         return "".join(chunks)
+
+
+def _is_config_submode_prompt(line: str | None) -> bool:
+    """True for Cisco configuration-mode prompts such as (config)# or (config-if)#."""
+    if not line:
+        return False
+    return "(config" in line.lower()
+
+
+def _is_exec_mode_prompt_line(line: str | None) -> bool:
+    """True when the prompt is outside configuration submode."""
+    if not line:
+        return False
+    if line.lower().endswith("password:"):
+        return False
+    if _is_config_submode_prompt(line):
+        return False
+    return line.endswith("#") or line.endswith(">")
+
+
+def _looks_like_exec_prompt(text: str) -> bool:
+    """Heuristic: last line is a non-config CLI prompt."""
+    return _is_exec_mode_prompt_line(_extract_prompt_line(text))
+
+
+def _command_requires_exec_prompt(command: str) -> bool:
+    """Commands that must finish at privileged exec, not config submode."""
+    cmd = command.strip().lower()
+    if cmd.startswith("show "):
+        return True
+    return cmd in {"end", "exit"}
 
 
 def _extract_prompt_line(text: str) -> str | None:

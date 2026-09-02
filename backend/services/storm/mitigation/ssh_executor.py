@@ -111,10 +111,14 @@ class SSHMitigationExecutor:
             raise RuntimeError("SSH executor is not connected")
 
         results = []
+        had_config = False
         for cmd in commands:
             assert_safe_mitigation_command(cmd, interface)
             cmd_lower = cmd.strip().lower()
+            if cmd_lower in {"configure terminal", "configure"}:
+                self.collector.mark_entering_config_mode()
             if not cmd_lower.startswith("show "):
+                had_config = True
                 self.collector.assert_privileged_mode()
             try:
                 logger.info(
@@ -123,10 +127,14 @@ class SSHMitigationExecutor:
                     cmd,
                 )
                 output = self.collector.run_command(cmd)
-                check_for_errors(output)
+                if not cmd_lower.startswith("show "):
+                    check_for_errors(output)
                 results.append(output)
             except Exception as exc:
                 raise RuntimeError(
                     f"Command execution failed on '{cmd}': {exc}"
                 ) from exc
+
+        if had_config:
+            self.collector.ensure_exec_prompt()
         return results

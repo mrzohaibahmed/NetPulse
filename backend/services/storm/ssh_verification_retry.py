@@ -14,8 +14,9 @@ from utils.monitor_logger import get_monitor_logger
 
 logger = get_monitor_logger("storm.ssh_verification")
 
-MAX_VERIFICATION_ATTEMPTS = 3
-VERIFICATION_RETRY_DELAY_SECONDS = 0.5
+MAX_VERIFICATION_ATTEMPTS = 5
+VERIFICATION_RETRY_DELAY_SECONDS = 1.0
+POST_CONFIG_VERIFICATION_SETTLE_SECONDS = 0.5
 
 
 def verify_with_bounded_retry(
@@ -30,6 +31,9 @@ def verify_with_bounded_retry(
     ``(confirmed, raw_output)`` without executing configuration commands.
     """
     last_output = ""
+    if POST_CONFIG_VERIFICATION_SETTLE_SECONDS > 0:
+        time.sleep(POST_CONFIG_VERIFICATION_SETTLE_SECONDS)
+
     for attempt in range(1, MAX_VERIFICATION_ATTEMPTS + 1):
         confirmed, output = attempt_fn()
         last_output = output
