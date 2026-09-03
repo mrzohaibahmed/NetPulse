@@ -51,6 +51,8 @@ export interface Device {
   deviceType: string
   critical: boolean
   monitor: boolean
+  /** When true and deviceType is Server, include on Site Monitoring dashboard. */
+  showOnDashboard: boolean
   status: DeviceStatus
   lastSeen: string | null
   lastCheckedAt?: string | null
@@ -85,6 +87,7 @@ export interface DevicePayload {
   deviceType: string
   critical?: boolean
   monitor?: boolean
+  showOnDashboard?: boolean
   pingInterval?: number | null
   pingTimeoutMs?: number | null
   pingRetries?: number | null
@@ -167,6 +170,7 @@ export interface SiteMonitoringServer {
   lastCheckedAt?: string | null
   location?: string | null
   monitor: boolean
+  showOnDashboard?: boolean
   critical: boolean
 }
 

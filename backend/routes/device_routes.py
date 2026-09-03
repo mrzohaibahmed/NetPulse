@@ -151,12 +151,18 @@ def add_device():
                 "message": str(error),
             }), 400
 
+        device_type = data["deviceType"].strip()
+        show_on_dashboard = bool(data.get("showOnDashboard", False))
+        if device_type.lower() != "server":
+            show_on_dashboard = False
+
         device = create_device(
             hostname=data["hostname"].strip(),
             ip_address=data["ipAddress"].strip(),
-            device_type=data["deviceType"].strip(),
+            device_type=device_type,
             critical=bool(data.get("critical", False)),
             monitor=bool(data.get("monitor", True)),
+            show_on_dashboard=show_on_dashboard,
             ping_interval=_optional_int(data.get("pingInterval")),
             ping_timeout_ms=_optional_int(data.get("pingTimeoutMs")),
             ping_retries=_optional_int(data.get("pingRetries")),
@@ -433,6 +439,7 @@ def update_device(device_id):
             "deviceType",
             "critical",
             "monitor",
+            "showOnDashboard",
             "pingInterval",
             "pingTimeoutMs",
             "pingRetries",
@@ -443,6 +450,18 @@ def update_device(device_id):
         for field in allowed_fields:
             if field in data:
                 update_data[field] = data[field]
+
+        if "showOnDashboard" in update_data:
+            update_data["showOnDashboard"] = bool(update_data["showOnDashboard"])
+
+        next_device_type = str(
+            update_data.get("deviceType", device.get("deviceType") or device.get("type") or "")
+        ).strip()
+        if next_device_type.lower() != "server":
+            update_data["showOnDashboard"] = False
+        elif "showOnDashboard" not in update_data and "deviceType" in update_data:
+            # Switching into Server without an explicit flag stays off the dashboard.
+            update_data["showOnDashboard"] = False
 
         if "credentials" in data:
             try:

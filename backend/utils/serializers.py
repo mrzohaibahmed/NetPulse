@@ -225,6 +225,8 @@ def serialize_device(device):
         "deviceType": get_device_type(device),
         "critical": device.get("critical", False),
         "monitor": device.get("monitor", True),
+        # Legacy documents without this field keep appearing on the dashboard.
+        "showOnDashboard": bool(device["showOnDashboard"]) if "showOnDashboard" in device else True,
         "status": device.get("status", "Unknown"),
         "lastSeen": format_datetime(device.get("lastSeen")),
         "lastCheckedAt": format_datetime(device.get("lastCheckedAt")),

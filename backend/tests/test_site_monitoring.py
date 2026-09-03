@@ -50,6 +50,7 @@ class DeviceLocationModelTests(unittest.TestCase):
         )
         self.assertEqual(doc["location"], "Mills")
         self.assertEqual(doc["deviceType"], "Server")
+        self.assertFalse(doc["showOnDashboard"])
 
     def test_create_device_without_location(self):
         doc = create_device(
@@ -58,6 +59,16 @@ class DeviceLocationModelTests(unittest.TestCase):
             device_type="Switch",
         )
         self.assertNotIn("location", doc)
+
+    def test_create_device_show_on_dashboard_opt_in(self):
+        doc = create_device(
+            hostname="Dashboard Server",
+            ip_address="192.168.1.20",
+            device_type="Server",
+            location="Karachi",
+            show_on_dashboard=True,
+        )
+        self.assertTrue(doc["showOnDashboard"])
 
 
 class SiteMonitoringServiceTests(unittest.TestCase):
@@ -163,6 +174,21 @@ class SiteMonitoringServiceTests(unittest.TestCase):
         self.assertEqual(lahore_servers[0]["hostname"], "Lahore AV")
 
     @patch("services.site_monitoring_service.list_isp_connections")
+    def test_dashboard_query_filters_show_on_dashboard(self, mock_list_isps):
+        from services.site_monitoring_service import (
+            _DASHBOARD_SERVER_MATCH,
+            build_site_monitoring_payload,
+        )
+
+        mock_list_isps.return_value = []
+        mock_db = MagicMock()
+        mock_db.devices.find.return_value.sort.return_value = []
+
+        build_site_monitoring_payload(mock_db)
+
+        mock_db.devices.find.assert_called_once_with(_DASHBOARD_SERVER_MATCH)
+
+    @patch("services.site_monitoring_service.list_isp_connections")
     def test_groups_legacy_mill_location_under_mills(self, mock_list_isps):
         from services.site_monitoring_service import build_site_monitoring_payload
 
@@ -189,6 +215,7 @@ class SiteMonitoringServiceTests(unittest.TestCase):
 
         self.assertEqual(len(mills["servers"]), 1)
         self.assertEqual(mills["servers"][0]["hostname"], "Legacy Mills Firewall")
+        self.assertTrue(mills["servers"][0]["showOnDashboard"])
 
     @patch("services.site_monitoring_service.list_isp_connections")
     def test_isp_and_server_data_are_independent(self, mock_list_isps):

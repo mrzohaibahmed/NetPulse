@@ -24,6 +24,21 @@ _SERVER_TYPE_MATCH = {
     }
 }
 
+# Opt-in dashboard visibility. Legacy docs without the field still appear.
+_SHOW_ON_DASHBOARD_MATCH = {
+    "$or": [
+        {"showOnDashboard": True},
+        {"showOnDashboard": {"$exists": False}},
+    ]
+}
+
+_DASHBOARD_SERVER_MATCH = {
+    "$and": [
+        _SERVER_TYPE_MATCH,
+        _SHOW_ON_DASHBOARD_MATCH,
+    ]
+}
+
 
 def _serialize_site_server(device: dict) -> dict:
     return {
@@ -37,6 +52,9 @@ def _serialize_site_server(device: dict) -> dict:
         "lastCheckedAt": format_datetime(device.get("lastCheckedAt")),
         "location": device.get("location"),
         "monitor": bool(device.get("monitor", True)),
+        "showOnDashboard": (
+            bool(device["showOnDashboard"]) if "showOnDashboard" in device else True
+        ),
         "critical": bool(device.get("critical", False)),
     }
 
@@ -91,7 +109,7 @@ def _ordered_site_names(*, isps: list[dict], servers: list[dict]) -> list[str]:
 def build_site_monitoring_payload(db) -> dict:
     """Build grouped ISP + server monitoring data in a single query pass."""
     isps = list_isp_connections()
-    servers = list(db.devices.find(_SERVER_TYPE_MATCH).sort("hostname", 1))
+    servers = list(db.devices.find(_DASHBOARD_SERVER_MATCH).sort("hostname", 1))
 
     sites = []
     for site_name in _ordered_site_names(isps=isps, servers=servers):

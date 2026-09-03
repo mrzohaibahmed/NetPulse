@@ -44,6 +44,7 @@ const schema = z.object({
   enableSecret: z.string(),
   critical: z.boolean(),
   monitor: z.boolean(),
+  showOnDashboard: z.boolean(),
   pingInterval: z.number().min(5).nullable().optional(),
   pingTimeoutMs: z.number().min(100).nullable().optional(),
   pingRetries: z.number().min(1).nullable().optional(),
@@ -74,6 +75,7 @@ export function DeviceFormDialog({ open, onOpenChange, device }: DeviceFormDialo
       enableSecret: '',
       critical: false,
       monitor: true,
+      showOnDashboard: false,
       pingInterval: null,
       pingTimeoutMs: null,
       pingRetries: null,
@@ -94,6 +96,8 @@ export function DeviceFormDialog({ open, onOpenChange, device }: DeviceFormDialo
         enableSecret: '',
         critical: device.critical,
         monitor: device.monitor,
+        // Legacy devices without the field already appear on the dashboard.
+        showOnDashboard: device.showOnDashboard ?? true,
         pingInterval: device.pingInterval ?? null,
         pingTimeoutMs: device.pingTimeoutMs ?? null,
         pingRetries: device.pingRetries ?? null,
@@ -110,6 +114,7 @@ export function DeviceFormDialog({ open, onOpenChange, device }: DeviceFormDialo
         enableSecret: '',
         critical: false,
         monitor: true,
+        showOnDashboard: false,
         pingInterval: null,
         pingTimeoutMs: null,
         pingRetries: null,
@@ -140,12 +145,14 @@ export function DeviceFormDialog({ open, onOpenChange, device }: DeviceFormDialo
           ...(nextEnableSecret ? { sshSecret: nextEnableSecret } : {}),
         }
 
+    const isServer = values.deviceType.trim().toLowerCase() === 'server'
     const payload: DevicePayload = {
       hostname: values.hostname,
       ipAddress: values.ipAddress,
       deviceType: values.deviceType,
       critical: values.critical,
       monitor: values.monitor,
+      showOnDashboard: isServer ? values.showOnDashboard : false,
       pingInterval: values.pingInterval ?? null,
       pingTimeoutMs: values.pingTimeoutMs ?? null,
       pingRetries: values.pingRetries ?? null,
@@ -165,6 +172,8 @@ export function DeviceFormDialog({ open, onOpenChange, device }: DeviceFormDialo
   })
 
   const saving = create.isPending || update.isPending
+  const selectedDeviceType = form.watch('deviceType')
+  const isServerType = selectedDeviceType.trim().toLowerCase() === 'server'
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -417,7 +426,23 @@ export function DeviceFormDialog({ open, onOpenChange, device }: DeviceFormDialo
                 />
                 Mark as critical
               </label>
+              {isServerType ? (
+                <label className="flex items-center gap-2 text-sm">
+                  <Checkbox
+                    checked={form.watch('showOnDashboard')}
+                    onCheckedChange={(checked) =>
+                      form.setValue('showOnDashboard', Boolean(checked))
+                    }
+                  />
+                  Show on dashboard
+                </label>
+              ) : null}
             </div>
+            {isServerType ? (
+              <p className="text-xs text-muted-foreground">
+                When enabled, this server appears under Site Monitoring for the selected location.
+              </p>
+            ) : null}
           </fieldset>
 
           <DialogFooter>
