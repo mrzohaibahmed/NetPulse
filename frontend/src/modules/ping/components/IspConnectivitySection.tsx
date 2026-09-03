@@ -76,9 +76,81 @@ export function IspConnectivitySection({ isps, isLoading }: IspConnectivitySecti
   )
 }
 
-export function IspStatusCard({ isp, isLoading }: { isp: IspConnection; isLoading?: boolean }) {
+export function IspStatusCard({
+  isp,
+  isLoading,
+  compact = false,
+}: {
+  isp: IspConnection
+  isLoading?: boolean
+  compact?: boolean
+}) {
   const online = isp.status === 'Online'
   const offline = isp.status !== 'Online'
+  const latency = isLoading && !isp.lastCheckedAt ? 'Checking…' : ispLatencyLabel(isp)
+  const lastSeen = isp.lastSeen ? formatRelative(isp.lastSeen) : '—'
+
+  if (compact) {
+    return (
+      <Card
+        className={cn(
+          'glass relative min-w-0 overflow-hidden border-border/70 transition-shadow hover:shadow-md',
+          online && 'border-success/30 shadow-success/5',
+          offline && 'border-danger/40 shadow-danger/10 ring-1 ring-danger/20',
+        )}
+      >
+        <div
+          className={cn(
+            'pointer-events-none absolute inset-x-0 top-0 h-0.5',
+            online && 'bg-success',
+            offline && 'bg-danger',
+            !online && !offline && 'bg-muted-foreground/30',
+          )}
+        />
+        <CardContent className="space-y-1.5 px-2.5 py-2">
+          <div className="flex min-w-0 items-center gap-1.5">
+            <div
+              className={cn(
+                'flex h-5 w-5 shrink-0 items-center justify-center rounded-md',
+                online && 'bg-success/15 text-success',
+                offline && 'bg-danger/15 text-danger',
+                !online && !offline && 'bg-secondary text-muted-foreground',
+              )}
+            >
+              {online ? (
+                <Wifi className="h-3 w-3" />
+              ) : offline ? (
+                <WifiOff className="h-3 w-3" />
+              ) : (
+                <Globe className="h-3 w-3" />
+              )}
+            </div>
+            <p className="truncate text-xs font-bold leading-tight tracking-tight text-foreground">
+              {isp.name}
+            </p>
+          </div>
+          <p className="truncate font-mono text-[10px] leading-tight text-muted-foreground">
+            {isp.target || 'No target'}
+          </p>
+          <div className="min-w-0">
+            <p
+              className={cn(
+                'truncate text-sm font-bold leading-tight tracking-tight',
+                online && 'text-foreground',
+                offline && 'text-muted-foreground',
+              )}
+            >
+              {latency}
+            </p>
+            <p className="truncate text-[9px] leading-tight text-muted-foreground">
+              Seen{' '}
+              <span className="font-medium text-foreground">{lastSeen}</span>
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+    )
+  }
 
   return (
     <Card
@@ -132,13 +204,11 @@ export function IspStatusCard({ isp, isLoading }: { isp: IspConnection; isLoadin
               offline && 'text-muted-foreground',
             )}
           >
-            {isLoading && !isp.lastCheckedAt ? 'Checking…' : ispLatencyLabel(isp)}
+            {latency}
           </p>
           <p className="mt-0.5 text-[10px] text-muted-foreground">
             Last seen:{' '}
-            <span className="font-medium text-foreground">
-              {isp.lastSeen ? formatRelative(isp.lastSeen) : '—'}
-            </span>
+            <span className="font-medium text-foreground">{lastSeen}</span>
           </p>
         </div>
       </CardContent>

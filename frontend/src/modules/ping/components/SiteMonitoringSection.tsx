@@ -58,9 +58,9 @@ function SitePanel({ site, isLoading }: { site: SiteMonitoringSite; isLoading?: 
           <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
             ISP Connectivity
           </p>
-          <div className="grid gap-4">
+          <div className="grid grid-cols-3 gap-2">
             {isps.map((isp) => (
-              <IspStatusCard key={isp.id} isp={isp} isLoading={isLoading} />
+              <IspStatusCard key={isp.id} isp={isp} isLoading={isLoading} compact />
             ))}
           </div>
         </div>
