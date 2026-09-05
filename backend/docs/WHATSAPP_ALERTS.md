@@ -110,7 +110,7 @@ This sends a test message using the critical alert template and sample values. I
 | Event | Trigger | Channel |
 |-------|---------|---------|
 | Critical device offline | Existing `maybe_send_critical_offline_alert` after alert insert | Email (unchanged) + WhatsApp |
-| Critical device recovery | Existing `resolve_critical_offline_alerts` when alerts are resolved | WhatsApp only (no recovery email today) |
+| Critical device recovery | Existing `resolve_critical_offline_alerts` when alerts are resolved | Email + WhatsApp + Device Recovered alert |
 
 WhatsApp is **not** sent on every failed ping — only when NetPulse’s existing offline confirmation and critical alert logic fires.
 

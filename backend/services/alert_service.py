@@ -8,6 +8,7 @@ from services.audit_service import log_audit
 from services.email_service import (
     _recovery_duration_label,
     _risk_score_from_incident,
+    send_critical_device_recovery_alert,
     send_critical_offline_alert,
     send_storm_confirmed_notification,
 )
@@ -25,13 +26,16 @@ from services.monitor_events import (
     EVENT_ALERT_RESOLVED,
     publish,
 )
-from services.ping_service import STATUS_OFFLINE_CRITICAL
+from services.ping_service import STATUS_OFFLINE_CRITICAL, STATUS_ONLINE
 from utils.monitor_logger import get_monitor_logger
 from utils.utc import utc_now
 
 logger = get_monitor_logger("alert")
 
 ALERT_TYPE_STORM = "Storm Protection"
+ALERT_TYPE_DEVICE_OFFLINE = "Device Offline"
+ALERT_TYPE_DEVICE_RECOVERED = "Device Recovered"
+CATEGORY_DEVICE_MONITORING = "Device Monitoring"
 CATEGORY_STORM = "Storm Protection"
 GENERATED_BY_SYSTEM = "SYSTEM"
 STORM_CONFIRMED_TITLE = "Storm Confirmed"
@@ -104,11 +108,12 @@ def _build_critical_offline_alert_doc(
         "status": STATUS_OFFLINE_CRITICAL,
         "message": message,
         "scanType": scan_type,
-        "alertType": "Device Offline",
-        "category": "Device Monitoring",
+        "alertType": ALERT_TYPE_DEVICE_OFFLINE,
+        "category": CATEGORY_DEVICE_MONITORING,
         "severity": "CRITICAL",
         "emailSent": False,
         "emailLastAttemptAt": now,
+        "recoveryEmailSent": False,
         "acknowledged": False,
         "dismissed": False,
         "resolved": False,
@@ -272,20 +277,229 @@ def _deliver_critical_offline_email(
     return False
 
 
-def resolve_critical_offline_alerts(device, *, cycle_id=None) -> int:
+def _build_critical_recovery_message(hostname: str, ip_address: str, scan_type: str) -> str:
+    return (
+        f"Critical device {hostname} ({ip_address}) recovered to "
+        f"{STATUS_ONLINE} via {scan_type} scan."
+    )
+
+
+def _build_critical_recovery_alert_doc(
+    device: dict,
+    *,
+    message: str,
+    scan_type: str,
+    cycle_id: str | None,
+    offline_alert: dict | None,
+    now: datetime,
+) -> dict[str, Any]:
+    device_id = device.get("_id")
+    return {
+        "deviceId": _normalize_alert_device_id(device_id),
+        "hostname": device.get("hostname", "unknown"),
+        "ipAddress": device.get("ipAddress", "unknown"),
+        "deviceType": device.get("deviceType") or device.get("type"),
+        "status": STATUS_ONLINE,
+        "message": message,
+        "title": "Critical Device Recovered",
+        "scanType": scan_type,
+        "alertType": ALERT_TYPE_DEVICE_RECOVERED,
+        "category": CATEGORY_DEVICE_MONITORING,
+        "severity": "INFO",
+        "emailSent": False,
+        "acknowledged": False,
+        "dismissed": False,
+        "resolved": False,
+        "acknowledgedAt": None,
+        "dismissedAt": None,
+        "resolvedAt": None,
+        "createdAt": now,
+        "cycleId": cycle_id,
+        "relatedOfflineAlertId": (
+            offline_alert.get("_id") if isinstance(offline_alert, dict) else None
+        ),
+        "generatedBy": GENERATED_BY_SYSTEM,
+    }
+
+
+def _create_critical_recovery_alert(
+    device: dict,
+    *,
+    scan_type: str,
+    cycle_id: str | None,
+    offline_alert: dict | None,
+) -> Any | None:
+    """Insert a Device Recovered alert. Returns alert id or None."""
+    device_id = device.get("_id")
+    hostname = device.get("hostname", "unknown")
+    ip_address = device.get("ipAddress", "unknown")
+    now = utc_now()
+    message = _build_critical_recovery_message(hostname, ip_address, scan_type)
+    doc = _build_critical_recovery_alert_doc(
+        device,
+        message=message,
+        scan_type=scan_type,
+        cycle_id=cycle_id,
+        offline_alert=offline_alert,
+        now=now,
+    )
+
+    try:
+        result = with_mongo_retry(
+            lambda: db.alerts.insert_one(doc),
+            action="critical_recovery_alert_insert",
+            device_id=device_id,
+            ip_address=ip_address,
+            idempotent=False,
+        )
+        assert_insert_acknowledged(
+            result,
+            action="critical_recovery_alert_insert",
+            device_id=device_id,
+            ip_address=ip_address,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            "Failed to create critical recovery alert | deviceId=%s | ip=%s | error=%s",
+            device_id,
+            ip_address,
+            exc,
+        )
+        return None
+
+    alert_id = result.inserted_id
+    publish(
+        EVENT_ALERT_CREATED,
+        {
+            "deviceId": str(device_id) if device_id is not None else None,
+            "hostname": hostname,
+            "ipAddress": ip_address,
+            "status": STATUS_ONLINE,
+            "alertId": str(alert_id),
+            "alertType": ALERT_TYPE_DEVICE_RECOVERED,
+            "cycleId": cycle_id,
+        },
+    )
+    logger.info(
+        "Critical recovery alert created | deviceId=%s | hostname=%s | ip=%s | alertId=%s",
+        device_id,
+        hostname,
+        ip_address,
+        alert_id,
+    )
+    return alert_id
+
+
+def _deliver_critical_recovery_email(
+    device: dict,
+    offline_alert: dict,
+    recovery_alert_id,
+    *,
+    scan_type: str,
+) -> bool:
+    """Send recovery SMTP and mark both offline + recovery alert email flags."""
+    hostname = device.get("hostname", "unknown")
+    ip_address = device.get("ipAddress", "unknown")
+    offline_alert_id = offline_alert.get("_id")
+
+    logger.info(
+        "critical recovery email attempt | offlineAlertId=%s | recoveryAlertId=%s | "
+        "deviceId=%s | ip=%s",
+        offline_alert_id,
+        recovery_alert_id,
+        device.get("_id"),
+        ip_address,
+    )
+
+    try:
+        email_sent = send_critical_device_recovery_alert(
+            device,
+            offline_alert,
+            scan_type=scan_type,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "critical recovery email failed | offlineAlertId=%s | deviceId=%s | "
+            "ip=%s | error=%s",
+            offline_alert_id,
+            device.get("_id"),
+            ip_address,
+            exc,
+        )
+        return False
+
+    if not email_sent:
+        logger.warning(
+            "critical recovery email failed | offlineAlertId=%s | deviceId=%s | ip=%s",
+            offline_alert_id,
+            device.get("_id"),
+            ip_address,
+        )
+        return False
+
+    try:
+        if offline_alert_id is not None:
+            db.alerts.update_one(
+                {"_id": offline_alert_id},
+                {"$set": {"recoveryEmailSent": True}},
+            )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "Failed to set recoveryEmailSent | offlineAlertId=%s | %s",
+            offline_alert_id,
+            exc,
+        )
+
+    if recovery_alert_id is not None:
+        mark_alert_email_sent(str(recovery_alert_id), True)
+
+    logger.info(
+        "critical recovery email sent | offlineAlertId=%s | recoveryAlertId=%s | "
+        "deviceId=%s | hostname=%s | ip=%s",
+        offline_alert_id,
+        recovery_alert_id,
+        device.get("_id"),
+        hostname,
+        ip_address,
+    )
+    return True
+
+
+def resolve_critical_offline_alerts(
+    device,
+    *,
+    scan_type: str = "Automatic",
+    cycle_id=None,
+) -> int:
     """
     Mark active Offline (Critical) alerts as recovered when the device is Online.
 
+    Creates a Device Recovered alert and sends recovery email + WhatsApp.
     Never deletes alerts. Idempotent under concurrent / repeated recoveries.
     """
     device_id = device.get("_id")
     hostname = device.get("hostname", "unknown")
     ip_address = device.get("ipAddress", "unknown")
     now = utc_now()
+    alert_filter = _active_critical_offline_filter(device_id)
+
+    try:
+        active_alerts = list(db.alerts.find(alert_filter))
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            "Failed to load critical alerts for recovery | deviceId=%s | ip=%s | error=%s",
+            device_id,
+            ip_address,
+            exc,
+        )
+        return 0
+
+    if not active_alerts:
+        return 0
 
     def _update():
         return db.alerts.update_many(
-            _active_critical_offline_filter(device_id),
+            alert_filter,
             {
                 "$set": {
                     "resolved": True,
@@ -321,50 +535,80 @@ def resolve_critical_offline_alerts(device, *, cycle_id=None) -> int:
         return 0
 
     modified = int(result.modified_count or 0)
-    if modified:
-        logger.info(
-            "Critical alerts resolved on recovery | deviceId=%s | hostname=%s | "
-            "ip=%s | count=%s | cycleId=%s",
-            device_id,
-            hostname,
-            ip_address,
-            modified,
-            cycle_id,
-        )
-        publish(
-            EVENT_ALERT_RESOLVED,
-            {
-                "deviceId": str(device_id) if device_id is not None else None,
+    if not modified:
+        return 0
+
+    logger.info(
+        "Critical alerts resolved on recovery | deviceId=%s | hostname=%s | "
+        "ip=%s | count=%s | cycleId=%s",
+        device_id,
+        hostname,
+        ip_address,
+        modified,
+        cycle_id,
+    )
+    publish(
+        EVENT_ALERT_RESOLVED,
+        {
+            "deviceId": str(device_id) if device_id is not None else None,
+            "hostname": hostname,
+            "ipAddress": ip_address,
+            "status": STATUS_OFFLINE_CRITICAL,
+            "resolvedCount": modified,
+            "cycleId": cycle_id,
+        },
+    )
+    try:
+        log_audit(
+            action="critical_offline_alert_resolved",
+            entity_type="device",
+            entity_id=str(device_id) if device_id is not None else None,
+            details={
                 "hostname": hostname,
                 "ipAddress": ip_address,
-                "status": STATUS_OFFLINE_CRITICAL,
                 "resolvedCount": modified,
                 "cycleId": cycle_id,
             },
         )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Audit log failed for alert resolve: %s", exc)
+
+    # One recovery alert + email per resolved offline incident (usually one).
+    for offline_alert in active_alerts:
+        if offline_alert.get("recoveryEmailSent"):
+            continue
+        recovery_alert_id = _create_critical_recovery_alert(
+            device,
+            scan_type=scan_type,
+            cycle_id=cycle_id,
+            offline_alert=offline_alert,
+        )
         try:
-            log_audit(
-                action="critical_offline_alert_resolved",
-                entity_type="device",
-                entity_id=str(device_id) if device_id is not None else None,
-                details={
-                    "hostname": hostname,
-                    "ipAddress": ip_address,
-                    "resolvedCount": modified,
-                    "cycleId": cycle_id,
-                },
+            _deliver_critical_recovery_email(
+                device,
+                offline_alert,
+                recovery_alert_id,
+                scan_type=scan_type,
             )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Audit log failed for alert resolve: %s", exc)
-        try:
-            send_device_recovery_whatsapp_alert(device)
         except Exception as exc:  # noqa: BLE001
             logger.warning(
-                "WhatsApp recovery alert failed | deviceId=%s | ip=%s | error=%s",
+                "Critical recovery email failed | deviceId=%s | ip=%s | "
+                "offlineAlertId=%s | error=%s",
                 device_id,
                 ip_address,
+                offline_alert.get("_id"),
                 exc,
             )
+
+    try:
+        send_device_recovery_whatsapp_alert(device)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "WhatsApp recovery alert failed | deviceId=%s | ip=%s | error=%s",
+            device_id,
+            ip_address,
+            exc,
+        )
     return modified
 
 

@@ -9,11 +9,22 @@ apply_ping_result → maybe_send_critical_offline_alert → send_critical_offlin
 from __future__ import annotations
 
 import copy
+import os
+import sys
 import threading
 import unittest
 from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+
+# Stub MongoDB before importing services that touch config.database.
+_mock_db_module = MagicMock()
+_mock_db_module.db = MagicMock()
+sys.modules.setdefault("config.database", _mock_db_module)
+
+os.environ.setdefault("JWT_SECRET", "netpulse-test-jwt-secret-do-not-use-in-production-32c+")
+os.environ.setdefault("FLASK_DEBUG", "true")
+os.environ.setdefault("NETPULSE_ENV", "development")
 
 from bson import ObjectId
 from pymongo.errors import DuplicateKeyError
@@ -168,11 +179,18 @@ class _FakeAlertsCollection:
         for doc in self.docs:
             if self._matches(doc, query):
                 matched += 1
+                changed = False
                 for key, value in update.get("$set", {}).items():
                     if doc.get(key) != value:
                         doc[key] = value
-                        modified += 1
+                        changed = True
+                if changed:
+                    modified += 1
         return SimpleNamespace(matched_count=matched, modified_count=modified)
+
+    def find(self, query=None, projection=None):
+        query = query or {}
+        return [copy.deepcopy(doc) for doc in self.docs if self._matches(doc, query)]
 
     def count_documents(self, query):
         return sum(1 for doc in self.docs if self._matches(doc, query or {}))
@@ -356,6 +374,7 @@ class CriticalOfflineEmailFlowTests(unittest.TestCase):
             0,
         ), self._patch_alert_db(), \
              patch("services.alert_service.send_critical_offline_whatsapp_alert"), \
+             patch("services.alert_service.send_device_recovery_whatsapp_alert"), \
              patch("services.email_service.get_settings", return_value=_smtp_settings()), \
              patch("services.email_service.decrypt_secret", side_effect=lambda x: x):
             from services.alert_service import (
@@ -376,9 +395,56 @@ class CriticalOfflineEmailFlowTests(unittest.TestCase):
 
             resolve_critical_offline_alerts({**device, "status": STATUS_ONLINE})
             self.assertTrue(self.alerts.docs[0].get("resolved"))
+            # Offline alert is resolved — retry claim must not succeed.
             self.assertFalse(_try_claim_email_retry(alert_id))
+            # Recovery email was attempted (SMTP still down).
+            self.assertGreater(mock_smtp_cls.call_count, initial_calls)
+            self.assertFalse(self.alerts.docs[0].get("recoveryEmailSent"))
 
-        self.assertEqual(mock_smtp_cls.call_count, initial_calls)
+        recovered = [
+            doc
+            for doc in self.alerts.docs
+            if doc.get("alertType") == "Device Recovered"
+        ]
+        self.assertEqual(len(recovered), 1)
+        self.assertFalse(recovered[0].get("emailSent"))
+
+    @patch("smtplib.SMTP")
+    def test_recovery_sends_email_and_creates_alert(self, mock_smtp_cls):
+        mock_smtp_cls.return_value = _mock_smtp_server()
+        device = _critical_device()
+
+        with patch("services.monitor_service.save_ping_history"), \
+             patch("services.monitor_service.get_failure_confirmation_scans", return_value=2), \
+             self._patch_alert_db(), \
+             patch("services.alert_service.send_critical_offline_whatsapp_alert"), \
+             patch("services.alert_service.send_device_recovery_whatsapp_alert") as mock_wa, \
+             patch("services.email_service.get_settings", return_value=_smtp_settings()), \
+             patch("services.email_service.decrypt_secret", side_effect=lambda x: x):
+            device = self._apply_failures(device, 3)
+            self.assertEqual(mock_smtp_cls.call_count, 1)
+
+            from services.alert_service import resolve_critical_offline_alerts
+
+            resolve_critical_offline_alerts(
+                {**device, "status": STATUS_ONLINE},
+                scan_type="Automatic",
+            )
+
+        offline = self.alerts.docs[0]
+        self.assertTrue(offline.get("resolved"))
+        self.assertTrue(offline.get("recoveryEmailSent"))
+        recovered = [
+            doc
+            for doc in self.alerts.docs
+            if doc.get("alertType") == "Device Recovered"
+        ]
+        self.assertEqual(len(recovered), 1)
+        self.assertEqual(recovered[0].get("severity"), "INFO")
+        self.assertEqual(recovered[0].get("status"), STATUS_ONLINE)
+        self.assertTrue(recovered[0].get("emailSent"))
+        self.assertEqual(mock_smtp_cls.call_count, 2)
+        mock_wa.assert_called_once()
 
     @patch("smtplib.SMTP")
     def test_second_outage_can_email_again(self, mock_smtp_cls):
@@ -389,6 +455,7 @@ class CriticalOfflineEmailFlowTests(unittest.TestCase):
              patch("services.monitor_service.get_failure_confirmation_scans", return_value=2), \
              self._patch_alert_db(), \
              patch("services.alert_service.send_critical_offline_whatsapp_alert"), \
+             patch("services.alert_service.send_device_recovery_whatsapp_alert"), \
              patch("services.email_service.get_settings", return_value=_smtp_settings()), \
              patch("services.email_service.decrypt_secret", side_effect=lambda x: x):
             device = self._apply_failures(device, 3)
@@ -398,7 +465,12 @@ class CriticalOfflineEmailFlowTests(unittest.TestCase):
             device = {**device, "status": STATUS_ONLINE, "consecutiveFailures": 0}
             device = self._apply_failures(device, 3)
 
-        self.assertEqual(self.alerts.count_documents({"resolved": True}), 1)
+        self.assertEqual(
+            self.alerts.count_documents(
+                {"alertType": "Device Offline", "resolved": True}
+            ),
+            1,
+        )
         self.assertEqual(
             self.alerts.count_documents(
                 {
@@ -409,7 +481,8 @@ class CriticalOfflineEmailFlowTests(unittest.TestCase):
             ),
             1,
         )
-        self.assertEqual(mock_smtp_cls.call_count, 2)
+        # offline #1, recovery, offline #2
+        self.assertEqual(mock_smtp_cls.call_count, 3)
 
     @patch("smtplib.SMTP")
     def test_smtp_failure_does_not_break_monitoring(self, mock_smtp_cls):

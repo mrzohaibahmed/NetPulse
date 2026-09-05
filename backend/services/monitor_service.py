@@ -321,7 +321,11 @@ def apply_ping_result(
                     "attemptId": attempt_id,
                 },
             )
-        resolve_critical_offline_alerts(device, cycle_id=cycle_id)
+        resolve_critical_offline_alerts(
+            device,
+            scan_type=scan_type,
+            cycle_id=cycle_id,
+        )
     else:
         maybe_send_critical_offline_alert(
             device,

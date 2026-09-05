@@ -352,6 +352,88 @@ def send_critical_offline_alert(device, scan_type="Automatic"):
     return send_email(subject, body_text, body_html)
 
 
+def send_critical_device_recovery_alert(
+    device,
+    alert: dict | None = None,
+    *,
+    scan_type: str = "Automatic",
+) -> bool:
+    """Send one critical-device recovery notification email."""
+    hostname = device.get("hostname", "Unknown")
+    ip_address = device.get("ipAddress", "Unknown")
+    device_type = device.get("deviceType") or device.get("type") or "Unknown"
+    recovered_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    incident_id = str((alert or {}).get("_id") or "")
+
+    outage_duration = ""
+    created_at = (alert or {}).get("createdAt")
+    if isinstance(created_at, datetime):
+        started = created_at
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=timezone.utc)
+        delta = datetime.now(timezone.utc) - started.astimezone(timezone.utc)
+        total_seconds = max(0, int(delta.total_seconds()))
+        hours, rem = divmod(total_seconds, 3600)
+        minutes, seconds = divmod(rem, 60)
+        if hours:
+            outage_duration = f"{hours}h {minutes}m {seconds}s"
+        elif minutes:
+            outage_duration = f"{minutes}m {seconds}s"
+        else:
+            outage_duration = f"{seconds}s"
+
+    subject = f"[NetPulse Recovered] Critical device online: {hostname}"
+    body_text = (
+        "NetPulse Network Monitor Recovery\n"
+        "=================================\n\n"
+        f"A critical device has come back online.\n\n"
+        f"Hostname:   {hostname}\n"
+        f"IP address: {ip_address}\n"
+        f"Type:       {device_type}\n"
+        f"Recovered:  {recovered_at}\n"
+        f"Scan type:  {scan_type}\n"
+    )
+    if outage_duration:
+        body_text += f"Outage:     {outage_duration}\n"
+    if incident_id:
+        body_text += f"Incident:   {incident_id}\n"
+    body_text += "\nNo further action is required unless issues persist."
+
+    duration_row = ""
+    if outage_duration:
+        duration_row = (
+            f"<tr><td><strong>Outage duration</strong></td>"
+            f"<td>{html.escape(outage_duration)}</td></tr>"
+        )
+    incident_row = ""
+    if incident_id:
+        incident_row = (
+            f"<tr><td><strong>Previous incident</strong></td>"
+            f"<td>{html.escape(incident_id)}</td></tr>"
+        )
+
+    body_html = f"""
+    <html>
+      <body style="font-family: Arial, sans-serif; color: #132033;">
+        <h2 style="color: #1f7a4d;">Critical device recovered</h2>
+        <p>A critical device monitored by NetPulse is online again.</p>
+        <table cellpadding="6" cellspacing="0" style="border-collapse: collapse;">
+          <tr><td><strong>Hostname</strong></td><td>{html.escape(str(hostname))}</td></tr>
+          <tr><td><strong>IP address</strong></td><td>{html.escape(str(ip_address))}</td></tr>
+          <tr><td><strong>Type</strong></td><td>{html.escape(str(device_type))}</td></tr>
+          <tr><td><strong>Recovered</strong></td><td>{recovered_at}</td></tr>
+          <tr><td><strong>Scan type</strong></td><td>{html.escape(str(scan_type))}</td></tr>
+          {duration_row}
+          {incident_row}
+        </table>
+        <p style="margin-top: 16px;">No further action is required unless issues persist.</p>
+      </body>
+    </html>
+    """
+
+    return send_email(subject, body_text, body_html)
+
+
 def send_isp_offline_alert(isp: dict, *, consecutive_failures: int) -> bool:
     """Send one ISP offline notification email."""
     name = isp.get("name", "Unknown ISP")

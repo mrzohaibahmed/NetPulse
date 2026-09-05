@@ -8,6 +8,7 @@ import json
 import os
 import sys
 import unittest
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from pymongo.errors import DuplicateKeyError
@@ -266,9 +267,10 @@ class WhatsAppAlertIntegrationTests(unittest.TestCase):
         self.assertFalse(ok)
         mock_whatsapp.assert_not_called()
 
+    @patch("services.alert_service.send_critical_device_recovery_alert", return_value=True)
     @patch("services.alert_service.send_device_recovery_whatsapp_alert", return_value=True)
     @patch("services.alert_service.db")
-    def test_recovery_triggers_whatsapp(self, mock_db, mock_whatsapp):
+    def test_recovery_triggers_whatsapp(self, mock_db, mock_whatsapp, mock_recovery_email):
         from bson import ObjectId
 
         from services.alert_service import resolve_critical_offline_alerts
@@ -278,13 +280,28 @@ class WhatsAppAlertIntegrationTests(unittest.TestCase):
             "hostname": "sw1",
             "ipAddress": "10.0.0.1",
         }
+        offline_alert = {
+            "_id": ObjectId(),
+            "deviceId": device["_id"],
+            "status": "Offline (Critical)",
+            "resolved": False,
+            "dismissed": False,
+            "recoveryEmailSent": False,
+        }
         result = MagicMock()
         result.modified_count = 1
+        mock_db.alerts.find.return_value = [offline_alert]
         mock_db.alerts.update_many.return_value = result
+        mock_db.alerts.insert_one.return_value = SimpleNamespace(
+            inserted_id=ObjectId(),
+            acknowledged=True,
+        )
 
         count = resolve_critical_offline_alerts(device)
         self.assertEqual(count, 1)
         mock_whatsapp.assert_called_once_with(device)
+        mock_recovery_email.assert_called_once()
+        mock_db.alerts.insert_one.assert_called_once()
 
 
 if __name__ == "__main__":

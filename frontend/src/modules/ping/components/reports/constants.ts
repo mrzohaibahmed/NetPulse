@@ -41,7 +41,7 @@ export const PERIOD_OPTIONS = [
 
 export const DEVICE_STATUSES = ['all', 'Online', 'Not Reachable', 'Offline (Critical)', 'Unknown']
 
-export const ALERT_TYPES = ['all', 'Device Offline', 'Storm Protection', 'Collector Health']
+export const ALERT_TYPES = ['all', 'Device Offline', 'Device Recovered', 'Storm Protection', 'Collector Health']
 
 export const ALERT_STATUSES = ['all', 'open', 'resolved', 'acknowledged']
 
