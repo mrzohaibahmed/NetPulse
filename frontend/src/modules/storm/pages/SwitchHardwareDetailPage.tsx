@@ -27,6 +27,7 @@ import { useAuth } from '@/shared/auth/AuthContext'
 import { Badge } from '@/shared/ui/badge'
 import { Button } from '@/shared/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/shared/ui/card'
+import { Checkbox } from '@/shared/ui/checkbox'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -39,6 +40,8 @@ import {
 } from '@/shared/ui/alert-dialog'
 import {
   useDeviceQuery,
+  useSettingsMutation,
+  useSettingsQuery,
   useSwitchHardwareCollectMutation,
   useSwitchHardwareEventsQuery,
   useSwitchHardwareHistoryQuery,
@@ -51,6 +54,9 @@ import { formatDateTime, formatRelative } from '@/utils/format'
 export function SwitchHardwareDetailPage() {
   const { deviceId = '' } = useParams()
   const { isAdmin } = useAuth()
+  const settingsQuery = useSettingsQuery(true)
+  const settingsMutation = useSettingsMutation()
+  const monitoringEnabled = Boolean(settingsQuery.data?.switchHardwareMonitoringEnabled)
   const [confirmCollect, setConfirmCollect] = useState(false)
   const [eventsPage, setEventsPage] = useState(1)
   const [eventsLimit, setEventsLimit] = useState(25)
@@ -121,6 +127,22 @@ export function SwitchHardwareDetailPage() {
         }
         actions={
           <div className="flex flex-wrap gap-2">
+            {isAdmin ? (
+              <label className="flex items-center gap-2 rounded-lg border border-border/70 bg-card px-3 py-2 text-sm">
+                <Checkbox
+                  checked={monitoringEnabled}
+                  disabled={settingsQuery.isLoading || settingsMutation.isPending}
+                  onCheckedChange={(checked) =>
+                    settingsMutation.mutate({
+                      switchHardwareMonitoringEnabled: Boolean(checked),
+                    })
+                  }
+                />
+                <span className="font-medium">
+                  {monitoringEnabled ? 'Monitoring enabled' : 'Enable monitoring'}
+                </span>
+              </label>
+            ) : null}
             <Button
               type="button"
               variant="secondary"
@@ -140,6 +162,7 @@ export function SwitchHardwareDetailPage() {
                 type="button"
                 size="sm"
                 loading={collectMutation.isPending}
+                disabled={!monitoringEnabled}
                 onClick={() => setConfirmCollect(true)}
               >
                 Collect Now
@@ -148,6 +171,15 @@ export function SwitchHardwareDetailPage() {
           </div>
         }
       />
+
+      {!monitoringEnabled ? (
+        <div className="rounded-xl border border-warning/40 bg-warning/10 px-4 py-3 text-sm">
+          <p className="font-medium">Hardware monitoring is disabled</p>
+          <p className="mt-1 text-muted-foreground">
+            Enable monitoring to run Collect Now and scheduled hardware polling.
+          </p>
+        </div>
+      ) : null}
 
       {overviewLoading ? (
         <LoadingState label="Loading hardware health…" />

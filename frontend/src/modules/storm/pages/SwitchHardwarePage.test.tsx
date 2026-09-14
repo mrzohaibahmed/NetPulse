@@ -21,10 +21,22 @@ vi.mock('@/utils/fetchAllPages', () => ({
   })),
 }))
 
+vi.mock('@/shared/auth/AuthContext', () => ({
+  useAuth: () => ({ isAdmin: true, user: { role: 'admin' } }),
+}))
+
 vi.mock('@/hooks/queries', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/hooks/queries')>()
   return {
     ...actual,
+    useSettingsQuery: () => ({
+      data: { switchHardwareMonitoringEnabled: true },
+      isLoading: false,
+    }),
+    useSettingsMutation: () => ({
+      isPending: false,
+      mutate: vi.fn(),
+    }),
     useBatchedSwitchHardware: () => ({
       data: new Map([
         [

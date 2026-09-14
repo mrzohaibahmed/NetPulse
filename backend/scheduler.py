@@ -759,15 +759,12 @@ def _run_switch_hardware_inventory_job() -> None:
 def _start_switch_hardware_jobs() -> None:
     from services.switch_hardware.config import (  # noqa: PLC0415
         inventory_interval_seconds,
-        is_hardware_monitoring_enabled,
         poll_interval_seconds,
         ssh_interval_seconds,
     )
 
-    if not is_hardware_monitoring_enabled():
-        logger.info("Switch hardware monitoring jobs disabled")
-        return
-
+    # Always register jobs so enabling via UI takes effect without process restart.
+    # Job bodies / collectors no-op when switchHardwareMonitoringEnabled is false.
     try:
         snmp_interval = max(poll_interval_seconds(), 30)
         ssh_interval = max(ssh_interval_seconds(), 60)
@@ -801,7 +798,8 @@ def _start_switch_hardware_jobs() -> None:
             coalesce=True,
         )
         logger.info(
-            "Switch hardware jobs registered | snmp=%ss ssh=%ss inventory=%ss",
+            "Switch hardware jobs registered | snmp=%ss ssh=%ss inventory=%ss "
+            "(runtime enable via settings UI)",
             snmp_interval,
             ssh_interval,
             inventory_interval,

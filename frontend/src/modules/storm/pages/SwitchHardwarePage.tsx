@@ -21,11 +21,18 @@ import { TableSkeleton } from '@/shared/components/LoadingState'
 import { PageHeader } from '@/shared/components/PageHeader'
 import { PaginationControls } from '@/shared/components/PaginationControls'
 import { StatusBadge } from '@/shared/components/StatusBadge'
+import { useAuth } from '@/shared/auth/AuthContext'
+import { Badge } from '@/shared/ui/badge'
 import { Button } from '@/shared/ui/button'
+import { Checkbox } from '@/shared/ui/checkbox'
 import { Input } from '@/shared/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table'
-import { useBatchedSwitchHardware } from '@/hooks/queries'
+import {
+  useBatchedSwitchHardware,
+  useSettingsMutation,
+  useSettingsQuery,
+} from '@/hooks/queries'
 import { useClientPagination } from '@/hooks/useClientPagination'
 import type { Device } from '@/types'
 import { fetchAllListPages } from '@/utils/fetchAllPages'
@@ -57,6 +64,10 @@ type FleetRow = {
 
 export function SwitchHardwarePage() {
   const navigate = useNavigate()
+  const { isAdmin } = useAuth()
+  const settingsQuery = useSettingsQuery(true)
+  const settingsMutation = useSettingsMutation()
+  const monitoringEnabled = Boolean(settingsQuery.data?.switchHardwareMonitoringEnabled)
   const [query, setQuery] = useState('')
   const [debouncedQuery, setDebouncedQuery] = useState('')
   const [healthFilter, setHealthFilter] = useState('all')
@@ -66,6 +77,10 @@ export function SwitchHardwarePage() {
     const timer = window.setTimeout(() => setDebouncedQuery(query), 300)
     return () => window.clearTimeout(timer)
   }, [query])
+
+  const toggleMonitoring = (enabled: boolean) => {
+    settingsMutation.mutate({ switchHardwareMonitoringEnabled: enabled })
+  }
 
   const devicesQuery = useQuery({
     queryKey: ['devices', 'inventory', 'switch', 'hardware'],
@@ -154,20 +169,50 @@ export function SwitchHardwarePage() {
         title="Hardware Health"
         description="Cisco switch chassis health — temperature, fans, power supplies, CPU, memory, and outage evidence."
         actions={
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            onClick={() => {
-              void devicesQuery.refetch()
-              void hardwareQuery.refetch()
-            }}
-          >
-            <RefreshCw className="h-4 w-4" />
-            Refresh
-          </Button>
+          <div className="flex flex-wrap items-center gap-3">
+            {isAdmin ? (
+              <label className="flex items-center gap-2 rounded-lg border border-border/70 bg-card px-3 py-2 text-sm">
+                <Checkbox
+                  checked={monitoringEnabled}
+                  disabled={settingsQuery.isLoading || settingsMutation.isPending}
+                  onCheckedChange={(checked) => toggleMonitoring(Boolean(checked))}
+                />
+                <span className="font-medium">
+                  {monitoringEnabled ? 'Monitoring enabled' : 'Enable hardware monitoring'}
+                </span>
+              </label>
+            ) : (
+              <Badge variant={monitoringEnabled ? 'success' : 'warning'}>
+                {monitoringEnabled ? 'Monitoring on' : 'Monitoring off'}
+              </Badge>
+            )}
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                void devicesQuery.refetch()
+                void hardwareQuery.refetch()
+              }}
+            >
+              <RefreshCw className="h-4 w-4" />
+              Refresh
+            </Button>
+          </div>
         }
       />
+
+      {!monitoringEnabled ? (
+        <div className="rounded-xl border border-warning/40 bg-warning/10 px-4 py-3 text-sm">
+          <p className="font-medium text-foreground">Hardware monitoring is disabled</p>
+          <p className="mt-1 text-muted-foreground">
+            Scheduled collection and Collect Now stay idle until an admin enables monitoring.
+            {isAdmin
+              ? ' Use the toggle above to turn it on.'
+              : ' Ask an administrator to enable it.'}
+          </p>
+        </div>
+      ) : null}
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
         <KpiCard label="Total Switches" value={kpis.total} icon={Server} loading={loading} />

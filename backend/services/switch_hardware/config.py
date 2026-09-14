@@ -40,7 +40,25 @@ def _env_float(name: str, default: float, *, minimum: float = 0.5) -> float:
 
 
 def is_hardware_monitoring_enabled() -> bool:
-    return _env_bool("SWITCH_HARDWARE_MONITORING_ENABLED", False)
+    """
+    Runtime enable flag.
+
+    Preference order:
+    1. Mongo settings.switchHardwareMonitoringEnabled (UI-togglable)
+    2. SWITCH_HARDWARE_MONITORING_ENABLED env default
+    """
+    try:
+        from services.settings_service import (  # noqa: PLC0415
+            DEFAULT_SETTINGS,
+            get_settings,
+        )
+
+        settings = get_settings() or {}
+        if "switchHardwareMonitoringEnabled" in settings:
+            return bool(settings.get("switchHardwareMonitoringEnabled"))
+        return bool(DEFAULT_SETTINGS.get("switchHardwareMonitoringEnabled", False))
+    except Exception:  # noqa: BLE001
+        return _env_bool("SWITCH_HARDWARE_MONITORING_ENABLED", False)
 
 
 def is_snmp_enabled() -> bool:

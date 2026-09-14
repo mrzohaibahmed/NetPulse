@@ -306,6 +306,8 @@ export interface AppSettings {
     failureEmails: boolean
     toAddress: string
   }
+  /** Admin-togglable Cisco switch hardware monitoring master switch. */
+  switchHardwareMonitoringEnabled?: boolean
   updatedAt: string | null
 }
 

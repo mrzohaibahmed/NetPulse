@@ -44,6 +44,14 @@ vi.mock('@/hooks/queries', async (importOriginal) => {
       isPending: false,
       mutate: collectMutate,
     }),
+    useSettingsQuery: () => ({
+      data: { switchHardwareMonitoringEnabled: true },
+      isLoading: false,
+    }),
+    useSettingsMutation: () => ({
+      isPending: false,
+      mutate: vi.fn(),
+    }),
   }
 })
 

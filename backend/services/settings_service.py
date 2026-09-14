@@ -96,6 +96,11 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         in ("1", "true", "yes"),
         "toAddress": (os.getenv("STORM_EMAIL_TO") or "").strip(),
     },
+    # Seeded from env; runtime toggle is stored in Mongo and editable in the UI.
+    "switchHardwareMonitoringEnabled": os.getenv(
+        "SWITCH_HARDWARE_MONITORING_ENABLED", "false"
+    ).lower()
+    in ("1", "true", "yes"),
     "updatedAt": None,
 }
 
@@ -103,6 +108,19 @@ DEFAULT_SETTINGS: dict[str, Any] = {
 def ensure_settings():
     existing = db.settings.find_one({"_id": SETTINGS_ID})
     if existing:
+        # Backfill new keys on existing deployments without overwriting operator choices.
+        if "switchHardwareMonitoringEnabled" not in existing:
+            db.settings.update_one(
+                {"_id": SETTINGS_ID},
+                {
+                    "$set": {
+                        "switchHardwareMonitoringEnabled": DEFAULT_SETTINGS[
+                            "switchHardwareMonitoringEnabled"
+                        ]
+                    }
+                },
+            )
+            return db.settings.find_one({"_id": SETTINGS_ID})
         return existing
 
     doc = deepcopy(DEFAULT_SETTINGS)
@@ -164,6 +182,12 @@ def get_public_settings():
         "dataRetentionDays": int(settings.get("dataRetentionDays", 90)),
         "incidentRetentionDays": int(settings.get("incidentRetentionDays", 365)),
         "stormNotifications": _public_storm_notifications(settings),
+        "switchHardwareMonitoringEnabled": bool(
+            settings.get(
+                "switchHardwareMonitoringEnabled",
+                DEFAULT_SETTINGS["switchHardwareMonitoringEnabled"],
+            )
+        ),
         "whatsapp": get_public_whatsapp_status(),
         "updatedAt": settings.get("updatedAt"),
     }
@@ -310,6 +334,14 @@ def update_settings(payload: dict):
         if "toAddress" in incoming and incoming["toAddress"] is not None:
             current_storm["toAddress"] = str(incoming["toAddress"]).strip()
         update["stormNotifications"] = current_storm
+
+    if (
+        "switchHardwareMonitoringEnabled" in payload
+        and payload["switchHardwareMonitoringEnabled"] is not None
+    ):
+        update["switchHardwareMonitoringEnabled"] = bool(
+            payload["switchHardwareMonitoringEnabled"]
+        )
 
     db.settings.update_one({"_id": SETTINGS_ID}, {"$set": update})
     updated_doc = get_settings()

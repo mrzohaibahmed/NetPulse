@@ -1066,6 +1066,8 @@ export function useSettingsMutation() {
       await Promise.all([
         qc.invalidateQueries({ queryKey: queryKeys.settings }),
         qc.invalidateQueries({ queryKey: queryKeys.stormConfig }),
+        qc.invalidateQueries({ queryKey: ['switch-hardware'] }),
+        qc.invalidateQueries({ queryKey: ['switch-hardware-fleet'] }),
       ])
     },
     onError: (err: Error) => toast.error(err.message),

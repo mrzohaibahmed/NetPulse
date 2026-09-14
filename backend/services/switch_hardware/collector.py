@@ -134,7 +134,13 @@ def collect_device_hardware(
     source_label: str = "scheduled",
 ) -> dict[str, Any]:
     if not hw_config.is_hardware_monitoring_enabled():
-        return {"success": False, "reason": "disabled"}
+        return {
+            "success": False,
+            "reason": "disabled",
+            "errors": [
+                "Hardware monitoring is disabled. Enable it with the toggle on Hardware Health."
+            ],
+        }
 
     if isinstance(device_id, str):
         if not ObjectId.is_valid(device_id):
