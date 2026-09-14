@@ -21,7 +21,9 @@ from routes.report_routes import report_bp
 from routes.scan_routes import scan_bp
 from routes.settings_routes import settings_bp
 from routes.storm_routes import storm_bp
+from routes.switch_hardware_routes import switch_hardware_bp
 from routes.topology import topology_bp
+from services.switch_hardware.ping_hooks import register_ping_hooks
 from scheduler import start_scheduler
 from services.device_indexes import ensure_device_indexes
 from services.isp_indexes import ensure_isp_indexes
@@ -99,6 +101,7 @@ app.register_blueprint(alert_bp, url_prefix="/api")
 app.register_blueprint(settings_bp, url_prefix="/api")
 app.register_blueprint(report_bp, url_prefix="/api")
 app.register_blueprint(topology_bp, url_prefix="/api/topology")
+app.register_blueprint(switch_hardware_bp, url_prefix="/api")
 
 
 @app.route("/")
@@ -222,6 +225,10 @@ def bootstrap():
     ensure_incident_indexes()
     ensure_mitigation_indexes()
     ensure_recovery_indexes()
+    from services.switch_hardware.indexes import ensure_switch_hardware_indexes  # noqa: PLC0415
+
+    ensure_switch_hardware_indexes()
+    register_ping_hooks()
     ensure_retention_ttl_indexes()
     try:
         from services.report_indexes import ensure_report_indexes  # noqa: PLC0415

@@ -69,6 +69,9 @@ RETENTION_JOB_ID = "data_retention_job"
 ISP_JOB_ID = "isp_monitor_job"
 MAC_ARP_POLL_JOB_ID = "mac_arp_poll_job"
 ARP_ACTIVE_SWEEP_JOB_ID = "arp_active_sweep_job"
+SWITCH_HARDWARE_SNMP_JOB_ID = "switch_hardware_snmp_job"
+SWITCH_HARDWARE_SSH_JOB_ID = "switch_hardware_ssh_job"
+SWITCH_HARDWARE_INVENTORY_JOB_ID = "switch_hardware_inventory_job"
 
 
 def _reclaim_expired_storm_leases() -> None:
@@ -729,6 +732,84 @@ def _register_device_monitor_job() -> None:
     )
 
 
+def _run_switch_hardware_snmp_job() -> None:
+    if not require_scheduler_leadership(SWITCH_HARDWARE_SNMP_JOB_ID):
+        return
+    from services.switch_hardware.collector import collect_all_switch_hardware  # noqa: PLC0415
+
+    collect_all_switch_hardware(mode="poll")
+
+
+def _run_switch_hardware_ssh_job() -> None:
+    if not require_scheduler_leadership(SWITCH_HARDWARE_SSH_JOB_ID):
+        return
+    from services.switch_hardware.collector import collect_all_switch_hardware  # noqa: PLC0415
+
+    collect_all_switch_hardware(mode="ssh")
+
+
+def _run_switch_hardware_inventory_job() -> None:
+    if not require_scheduler_leadership(SWITCH_HARDWARE_INVENTORY_JOB_ID):
+        return
+    from services.switch_hardware.collector import collect_all_switch_hardware  # noqa: PLC0415
+
+    collect_all_switch_hardware(mode="inventory")
+
+
+def _start_switch_hardware_jobs() -> None:
+    from services.switch_hardware.config import (  # noqa: PLC0415
+        inventory_interval_seconds,
+        is_hardware_monitoring_enabled,
+        poll_interval_seconds,
+        ssh_interval_seconds,
+    )
+
+    if not is_hardware_monitoring_enabled():
+        logger.info("Switch hardware monitoring jobs disabled")
+        return
+
+    try:
+        snmp_interval = max(poll_interval_seconds(), 30)
+        ssh_interval = max(ssh_interval_seconds(), 60)
+        inventory_interval = max(inventory_interval_seconds(), 300)
+
+        scheduler.add_job(
+            func=_run_switch_hardware_snmp_job,
+            trigger="interval",
+            seconds=snmp_interval,
+            id=SWITCH_HARDWARE_SNMP_JOB_ID,
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        scheduler.add_job(
+            func=_run_switch_hardware_ssh_job,
+            trigger="interval",
+            seconds=ssh_interval,
+            id=SWITCH_HARDWARE_SSH_JOB_ID,
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        scheduler.add_job(
+            func=_run_switch_hardware_inventory_job,
+            trigger="interval",
+            seconds=inventory_interval,
+            id=SWITCH_HARDWARE_INVENTORY_JOB_ID,
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        logger.info(
+            "Switch hardware jobs registered | snmp=%ss ssh=%ss inventory=%ss",
+            snmp_interval,
+            ssh_interval,
+            inventory_interval,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Switch hardware jobs could not be registered: %s", exc)
+
+
 def start_scheduler():
     """Start automatic device monitoring using persisted settings."""
     with _scheduler_init_lock:
@@ -781,6 +862,9 @@ def start_scheduler():
 
         # Job 6: Data retention (TTL refresh + closed-incident purge) — daily.
         _start_retention_job()
+
+        # Job 7: Cisco switch hardware monitoring (feature-flagged).
+        _start_switch_hardware_jobs()
 
 
 def reschedule_dispatcher_job() -> None:

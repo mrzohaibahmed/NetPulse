@@ -172,3 +172,32 @@ def ensure_monitoring_idempotency_indexes() -> None:
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("Failed to ensure ISP offline alert unique index: %s", exc)
+
+    # At most one active hardware alert per device + hardwareAlertKey.
+    try:
+        db.alerts.create_index(
+            [
+                ("deviceId", ASCENDING),
+                ("hardwareAlertKey", ASCENDING),
+            ],
+            unique=True,
+            name="uniq_alerts_active_hardware",
+            partialFilterExpression={
+                "alertType": "Switch Hardware",
+                "resolved": False,
+                "dismissed": False,
+                "deviceId": {"$type": "objectId"},
+                "hardwareAlertKey": {"$exists": True},
+            },
+        )
+        logger.info("Active switch hardware alert unique index ensured")
+    except OperationFailure as exc:
+        logger.error(
+            "Failed to ensure active switch hardware alert unique index: %s",
+            exc,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "Failed to ensure switch hardware alert unique index: %s",
+            exc,
+        )

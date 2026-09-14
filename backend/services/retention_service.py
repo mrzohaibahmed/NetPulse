@@ -44,6 +44,7 @@ PING_HISTORY_TTL_TARGETS: tuple[tuple[str, str, str], ...] = (
 # Do NOT include storm_incidents, lock collections, or mitigation/recovery audits.
 DATA_TTL_TARGETS: tuple[tuple[str, str, str], ...] = (
     # collection, date_field, index_name
+    ("switch_hardware_history", "timestamp", "idx_switch_hardware_history_timestamp_ttl"),
     ("interface_stats", "timestamp", "idx_interface_stats_timestamp_ttl"),
     ("eligibility_results", "timestamp", "idx_eligibility_timestamp_ttl"),
     ("storm_risk_history", "timestamp", "idx_storm_risk_timestamp_ttl"),
