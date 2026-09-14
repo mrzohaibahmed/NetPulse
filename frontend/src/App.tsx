@@ -68,6 +68,16 @@ const SwitchesPage = lazy(() =>
     default: m.SwitchesPage,
   })),
 )
+const SwitchHardwarePage = lazy(() =>
+  import('@/modules/storm/pages/SwitchHardwarePage').then((m) => ({
+    default: m.SwitchHardwarePage,
+  })),
+)
+const SwitchHardwareDetailPage = lazy(() =>
+  import('@/modules/storm/pages/SwitchHardwareDetailPage').then((m) => ({
+    default: m.SwitchHardwareDetailPage,
+  })),
+)
 const LoginPage = lazy(() =>
   import('@/pages/LoginPage').then((m) => ({ default: m.LoginPage })),
 )
@@ -99,6 +109,11 @@ export default function App() {
                       <Route path="storm" element={<StormProtectionPage />} />
                       <Route path="topology" element={<TopologyPage />} />
                       <Route path="switches" element={<SwitchesPage />} />
+                      <Route path="switches/hardware" element={<SwitchHardwarePage />} />
+                      <Route
+                        path="switches/:deviceId/hardware"
+                        element={<SwitchHardwareDetailPage />}
+                      />
                       <Route path="discovery" element={<DiscoveryPage />} />
                       <Route path="history" element={<HistoryPage />} />
                       <Route path="reports" element={<ReportsPage />} />

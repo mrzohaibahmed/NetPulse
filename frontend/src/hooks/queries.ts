@@ -21,6 +21,7 @@ import {
   getDeviceInterfaceStats,
   getDeviceInterfaces,
   getDevices,
+  getDevice,
   getDeviceNetworks,
   getEligibilityResults,
   getHealth,
@@ -85,8 +86,18 @@ import {
   deleteNetwork,
   scanNetworks,
 } from '@/api'
+import {
+  collectSwitchHardware,
+  getSwitchHardware,
+  getSwitchHardwareEvents,
+  getSwitchHardwareHistory,
+  getSwitchOutage,
+  getSwitchOutages,
+  type SwitchHardwareCurrent,
+} from '@/api/switchHardwareService'
 import type { HistoryDeletionScope } from '@/api'
 import { queryKeys } from '@/hooks/queryKeys'
+import { runWithConcurrency } from '@/utils/runWithConcurrency'
 import type {
   DevicePayload,
   IspConnectionPayload,
@@ -262,6 +273,15 @@ export function useDevicesQuery(params: PaginationParams) {
     queryFn: () => getDevices(params),
     refetchInterval: DEVICES_INTERVAL,
     placeholderData: (prev) => prev,
+  })
+}
+
+export function useDeviceQuery(deviceId: string, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.device(deviceId),
+    queryFn: async () => (await getDevice(deviceId)).data,
+    enabled: Boolean(deviceId) && enabled,
+    staleTime: 15_000,
   })
 }
 
@@ -1239,5 +1259,126 @@ export function useScanNetworksMutation() {
       if (err instanceof ApiRequestError && err.status === 409) return
       toast.error(err.message)
     },
+  })
+}
+
+const HARDWARE_INTERVAL = 45_000
+
+export function useSwitchHardwareQuery(deviceId: string, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.switchHardware(deviceId),
+    queryFn: async () => {
+      const res = await getSwitchHardware(deviceId)
+      return res.hardware
+    },
+    enabled: Boolean(deviceId) && enabled,
+    refetchInterval: HARDWARE_INTERVAL,
+    staleTime: 15_000,
+  })
+}
+
+export function useSwitchHardwareHistoryQuery(
+  deviceId: string,
+  params: PaginationParams & { start?: string; end?: string } = {},
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: queryKeys.switchHardwareHistory(deviceId, params),
+    queryFn: () => getSwitchHardwareHistory(deviceId, params),
+    enabled: Boolean(deviceId) && enabled,
+    staleTime: 20_000,
+    placeholderData: (prev) => prev,
+  })
+}
+
+export function useSwitchHardwareEventsQuery(
+  deviceId: string,
+  params: PaginationParams & { eventType?: string } = {},
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: queryKeys.switchHardwareEvents(deviceId, params),
+    queryFn: () => getSwitchHardwareEvents(deviceId, params),
+    enabled: Boolean(deviceId) && enabled,
+    staleTime: 15_000,
+    placeholderData: (prev) => prev,
+  })
+}
+
+export function useSwitchHardwareOutagesQuery(
+  deviceId: string,
+  params: PaginationParams & { status?: string } = {},
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: queryKeys.switchHardwareOutages(deviceId, params),
+    queryFn: () => getSwitchOutages(deviceId, params),
+    enabled: Boolean(deviceId) && enabled,
+    staleTime: 15_000,
+    placeholderData: (prev) => prev,
+  })
+}
+
+export function useSwitchHardwareOutageQuery(
+  deviceId: string,
+  incidentId: string | null,
+  enabled = false,
+) {
+  return useQuery({
+    queryKey: queryKeys.switchHardwareOutage(deviceId, incidentId || ''),
+    queryFn: async () => {
+      const res = await getSwitchOutage(deviceId, incidentId!)
+      return res.outage
+    },
+    enabled: Boolean(deviceId) && Boolean(incidentId) && enabled,
+  })
+}
+
+export function useBatchedSwitchHardware(deviceIds: string[]) {
+  const sortedKey = [...deviceIds].sort().join('|')
+  return useQuery({
+    queryKey: queryKeys.switchHardwareFleet(sortedKey),
+    queryFn: async () => {
+      const map = new Map<string, SwitchHardwareCurrent | null>()
+      await runWithConcurrency(deviceIds, 6, async (deviceId) => {
+        try {
+          const res = await getSwitchHardware(deviceId)
+          map.set(deviceId, res.hardware)
+        } catch (err) {
+          // Non-eligible / missing hardware is not a fleet hard failure.
+          if (err instanceof ApiRequestError && (err.status === 400 || err.status === 404)) {
+            map.set(deviceId, null)
+            return
+          }
+          map.set(deviceId, null)
+        }
+      })
+      return map
+    },
+    enabled: deviceIds.length > 0,
+    staleTime: 30_000,
+    refetchInterval: HARDWARE_INTERVAL,
+  })
+}
+
+export function useSwitchHardwareCollectMutation(deviceId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => collectSwitchHardware(deviceId),
+    onSuccess: async (res) => {
+      if (res.success) {
+        toast.success('Hardware collection completed')
+      } else {
+        toast.error(res.errors?.[0] || 'Hardware collection failed')
+      }
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ['switch-hardware'] }),
+        qc.invalidateQueries({ queryKey: ['switch-hardware-history'] }),
+        qc.invalidateQueries({ queryKey: ['switch-hardware-events'] }),
+        qc.invalidateQueries({ queryKey: ['switch-hardware-outages'] }),
+        qc.invalidateQueries({ queryKey: ['switch-hardware-fleet'] }),
+      ])
+    },
+    onError: (err: Error) => toast.error(err.message),
   })
 }

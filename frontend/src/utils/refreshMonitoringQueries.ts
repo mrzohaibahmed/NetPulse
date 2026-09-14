@@ -31,6 +31,12 @@ const MONITORING_QUERY_PREFIXES: readonly (readonly string[])[] = [
   queryKeys.stormConfig,
   ['networks'],
   ['devices', 'networks'],
+  ['switch-hardware'],
+  ['switch-hardware-history'],
+  ['switch-hardware-events'],
+  ['switch-hardware-outages'],
+  ['switch-hardware-outage'],
+  ['switch-hardware-fleet'],
 ]
 
 /**

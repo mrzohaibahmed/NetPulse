@@ -44,4 +44,15 @@ export const queryKeys = {
   stormManagementReport: (params: object) => ['reports', 'storm', params] as const,
   stormIncidentReportDetail: (id: string) => ['reports', 'storm-incident', id] as const,
   isps: ['isps'] as const,
+  switchHardware: (id: string) => ['switch-hardware', id] as const,
+  switchHardwareHistory: (id: string, params: object) =>
+    ['switch-hardware-history', id, params] as const,
+  switchHardwareEvents: (id: string, params: object) =>
+    ['switch-hardware-events', id, params] as const,
+  switchHardwareOutages: (id: string, params: object) =>
+    ['switch-hardware-outages', id, params] as const,
+  switchHardwareOutage: (id: string, incidentId: string) =>
+    ['switch-hardware-outage', id, incidentId] as const,
+  switchHardwareFleet: (deviceIdsKey: string) =>
+    ['switch-hardware-fleet', deviceIdsKey] as const,
 }
