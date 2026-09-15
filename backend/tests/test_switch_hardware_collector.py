@@ -5,7 +5,11 @@ from unittest.mock import patch
 
 from bson import ObjectId
 
-from services.switch_hardware.collector import _merge_hardware
+from services.switch_hardware.collector import (
+    _has_hardware_payload,
+    _merge_hardware,
+    _ssh_connection_error,
+)
 
 
 class SwitchHardwareCollectorTests(unittest.TestCase):
@@ -34,6 +38,18 @@ class SwitchHardwareCollectorTests(unittest.TestCase):
         self.assertEqual(merged["inventory"]["iosVersion"], "15.2")
         self.assertEqual(merged["cpu"]["utilizationPercent"], 10.0)
 
+    def test_ssh_connection_error_from_soft_fail(self):
+        ssh = {
+            "parsed": {},
+            "errors": {"connection": "SSH authentication failed for 10.0.0.1: auth"},
+            "availability": {"ssh": "unavailable"},
+        }
+        self.assertIn("authentication failed", _ssh_connection_error(ssh) or "")
+
+    def test_empty_snapshot_has_no_payload(self):
+        merged = _merge_hardware(None, {"parsed": {}, "availability": {"ssh": "unavailable"}})
+        self.assertFalse(_has_hardware_payload(merged))
+
     @patch("services.switch_hardware.collector.hw_config.is_hardware_monitoring_enabled", return_value=False)
     def test_disabled_returns_early(self, _mock):
         from services.switch_hardware.collector import collect_device_hardware
@@ -41,6 +57,7 @@ class SwitchHardwareCollectorTests(unittest.TestCase):
         result = collect_device_hardware(ObjectId())
         self.assertFalse(result["success"])
         self.assertEqual(result["reason"], "disabled")
+        self.assertTrue(result["errors"])
 
 
 if __name__ == "__main__":

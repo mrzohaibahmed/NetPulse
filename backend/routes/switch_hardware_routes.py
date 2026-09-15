@@ -13,7 +13,7 @@ from services.switch_hardware.collector import (
     collect_device_hardware,
     serialize_hardware_document,
 )
-from services.switch_hardware.vendor_detection import is_eligible_switch
+from services.switch_hardware.vendor_detection import get_ineligibility_reason, is_eligible_switch
 from utils.auth import require_auth
 from utils.pagination import clamp_page, pagination_payload, parse_pagination
 
@@ -34,10 +34,8 @@ def _load_eligible_device(device_id: str):
     if not device:
         return None, (jsonify({"success": False, "message": "Device not found"}), 404)
     if not is_eligible_switch(device):
-        return None, (
-            jsonify({"success": False, "message": "Device is not an eligible Cisco switch"}),
-            400,
-        )
+        reason = get_ineligibility_reason(device) or "Device is not an eligible Cisco switch"
+        return None, (jsonify({"success": False, "message": reason}), 400)
     return device, None
 
 

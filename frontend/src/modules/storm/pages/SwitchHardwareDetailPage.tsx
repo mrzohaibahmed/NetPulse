@@ -192,7 +192,7 @@ export function SwitchHardwareDetailPage() {
       ) : !hardware ? (
         <EmptyState
           title="Hardware data unavailable"
-          description="No hardware collection exists for this switch yet. Admins can run Collect Now, or wait for the scheduled hardware job when enabled."
+          description="No hardware collection exists for this switch yet. Confirm Vendor is Cisco (or blank with credentials), enable monitoring, then use Collect Now."
         />
       ) : (
         <>

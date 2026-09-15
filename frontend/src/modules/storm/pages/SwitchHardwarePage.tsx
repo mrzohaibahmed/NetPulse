@@ -39,13 +39,63 @@ import { fetchAllListPages } from '@/utils/fetchAllPages'
 import { formatDateTime, formatRelative } from '@/utils/format'
 import type { SwitchHardwareCurrent } from '@/api/switchHardwareService'
 
-function isCiscoCandidate(device: Device): boolean {
-  if (!isManagedSwitch(device.deviceType)) return false
+function isCiscoSignal(device: Device): boolean {
   const vendor = (device.vendor || '').toLowerCase()
   const sshVendor = (device.credentials?.sshVendor || '').toLowerCase()
-  if (vendor.includes('cisco') || sshVendor.includes('cisco')) return true
-  // Include monitored switches with credentials when vendor is unknown.
-  return Boolean(device.credentials) || !vendor
+  const deviceType = (device.deviceType || '').toLowerCase()
+  return (
+    vendor.includes('cisco') ||
+    sshVendor.includes('cisco') ||
+    deviceType.includes('cisco')
+  )
+}
+
+function isExplicitNonCisco(device: Device): boolean {
+  if (isCiscoSignal(device)) return false
+  const blob = `${device.vendor || ''} ${device.credentials?.sshVendor || ''}`.toLowerCase()
+  const hints = [
+    'juniper',
+    'aruba',
+    'hewlett',
+    'procurve',
+    'mikrotik',
+    'ubiquiti',
+    'fortinet',
+    'palo alto',
+    'paloalto',
+    'dell networking',
+    'netgear',
+    'huawei',
+    'extreme networks',
+    'brocade',
+    'alcatel',
+  ]
+  return hints.some((hint) => blob.includes(hint))
+}
+
+function hasUsableCredentials(device: Device): boolean {
+  const creds = device.credentials
+  if (!creds) return false
+  return Boolean(
+    creds.sshPasswordConfigured ||
+      creds.snmpCommunityConfigured ||
+      (creds.sshUsername || '').trim(),
+  )
+}
+
+function isUnknownVendor(device: Device): boolean {
+  const vendor = (device.vendor || '').trim().toLowerCase()
+  return !vendor || ['unknown', 'n/a', 'na', '-', 'none', 'null'].includes(vendor)
+}
+
+/** Matches backend ``is_eligible_switch`` for the fleet list. */
+function isCiscoCandidate(device: Device): boolean {
+  if (device.monitor === false) return false
+  if (!isManagedSwitch(device.deviceType)) return false
+  if (isExplicitNonCisco(device)) return false
+  if (isCiscoSignal(device)) return true
+  // Discovery often leaves vendor blank on real Cisco gear.
+  return isUnknownVendor(device) && hasUsableCredentials(device)
 }
 
 function healthBucket(status: string | null | undefined): string {
@@ -268,8 +318,8 @@ export function SwitchHardwarePage() {
         <TableSkeleton rows={8} />
       ) : filtered.length === 0 ? (
         <EmptyState
-          title="No hardware data"
-          description="No eligible Cisco switches matched the current filters. Hardware monitoring must be enabled and switches need credentials."
+          title="No eligible Cisco switches"
+          description="Only monitored switches with a Cisco vendor (or blank vendor plus SSH/SNMP credentials) appear here. Set Vendor to Cisco on Devices, add credentials, then enable hardware monitoring."
           action={
             <Button asChild variant="secondary" size="sm">
               <Link to="/switches">Open Switches</Link>
@@ -332,9 +382,11 @@ export function SwitchHardwarePage() {
                     <TableCell className="text-sm text-muted-foreground">
                       {hardware?.lastSuccessfulCollectionAt
                         ? formatRelative(hardware.lastSuccessfulCollectionAt)
-                        : hardware?.lastAttemptedCollectionAt
-                          ? `Attempted ${formatDateTime(hardware.lastAttemptedCollectionAt)}`
-                          : 'Not available'}
+                        : hardware?.lastError
+                          ? hardware.lastError
+                          : hardware?.lastAttemptedCollectionAt
+                            ? `Attempted ${formatDateTime(hardware.lastAttemptedCollectionAt)}`
+                            : 'Not collected yet'}
                     </TableCell>
                     <TableCell>
                       <StatusBadge status={device.status} />

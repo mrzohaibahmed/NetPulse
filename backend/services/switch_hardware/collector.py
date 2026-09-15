@@ -27,6 +27,7 @@ from services.switch_hardware.models import (
 from services.switch_hardware.snmp_collector import collect_snmp_hardware
 from services.switch_hardware.ssh_collector import collect_ssh_hardware
 from services.switch_hardware.vendor_detection import (
+    get_ineligibility_reason,
     is_eligible_switch,
     platform_label,
 )
@@ -127,6 +128,42 @@ def _merge_hardware(snmp_data: dict | None, ssh_data: dict | None) -> dict[str, 
     return snapshot
 
 
+def _ssh_connection_error(ssh_data: dict | None) -> str | None:
+    if not ssh_data:
+        return None
+    errors = ssh_data.get("errors") or {}
+    if errors.get("connection"):
+        return str(errors["connection"])
+    availability = (ssh_data.get("availability") or {}).get("ssh")
+    if availability == "unavailable":
+        return "SSH unavailable"
+    return None
+
+
+def _has_hardware_payload(snapshot: dict) -> bool:
+    inventory = snapshot.get("inventory") or {}
+    if any(inventory.get(key) for key in ("model", "serialNumber", "iosVersion", "hostname")):
+        return True
+    temperature = snapshot.get("temperature") or {}
+    if temperature.get("sensors"):
+        return True
+    fans = snapshot.get("fans") or {}
+    if fans.get("items") or fans.get("count"):
+        return True
+    power = snapshot.get("powerSupplies") or {}
+    if power.get("items") or power.get("count"):
+        return True
+    cpu = snapshot.get("cpu") or {}
+    if cpu.get("utilizationPercent") is not None:
+        return True
+    memory = snapshot.get("memory") or {}
+    if memory.get("utilizationPercent") is not None:
+        return True
+    if snapshot.get("hardwareAlarms"):
+        return True
+    return False
+
+
 def collect_device_hardware(
     device_id,
     *,
@@ -151,7 +188,9 @@ def collect_device_hardware(
     if not device:
         raise ValueError("Device not found")
     if not is_eligible_switch(device):
-        raise ValueError("Device is not an eligible Cisco switch")
+        raise ValueError(
+            get_ineligibility_reason(device) or "Device is not an eligible Cisco switch"
+        )
 
     key = str(device_id)
     if key in _inflight:
@@ -184,9 +223,21 @@ def collect_device_hardware(
                     include_inventory=include_inventory,
                     timeout=timeout,
                 )
+                ssh_error = _ssh_connection_error(ssh_data)
+                if ssh_error:
+                    errors.append(f"SSH: {ssh_error}")
+                    logger.info("SSH hardware unavailable | device=%s | %s", device_id, ssh_error)
+                    # Soft-failed SSH returns an empty shell; keep availability only.
+                    if not (ssh_data.get("parsed") or {}):
+                        ssh_data = {
+                            "parsed": {},
+                            "availability": {"ssh": "unavailable"},
+                            "errors": ssh_data.get("errors") or {"connection": ssh_error},
+                        }
             except Exception as exc:  # noqa: BLE001
                 errors.append(f"SSH: {exc}")
                 logger.info("SSH hardware unavailable | device=%s | %s", device_id, exc)
+                ssh_data = None
 
         merged = _merge_hardware(snmp_data, ssh_data)
         merged = evaluate_snapshot(merged)
@@ -200,10 +251,19 @@ def collect_device_hardware(
             platform = detect_platform(device, sys_descr=snmp_data.get("sysDescr"))
 
         previous = db.switch_hardware_current.find_one({"deviceId": device_id})
+        has_payload = _has_hardware_payload(merged)
+        if not has_payload and not errors:
+            errors.append(
+                "No hardware details returned via SNMP or SSH. "
+                "Check SNMP community, SSH login/enable, and that the device "
+                "supports ENTITY-MIB / show environment."
+            )
+
         collection_status = "success"
-        if errors and (snmp_data or ssh_data):
+        useful_sources = bool(snmp_data or ssh_data) and has_payload
+        if errors and useful_sources:
             collection_status = "partial"
-        elif errors:
+        elif errors or not has_payload:
             collection_status = "failed"
 
         now = utc_now()
