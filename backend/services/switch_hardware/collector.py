@@ -275,7 +275,7 @@ def collect_device_hardware(
             inventory=merged.get("inventory"),
             temperature=merged.get("temperature"),
             fans=merged.get("fans"),
-            powerSupplies=merged.get("powerSupplies"),
+            power_supplies=merged.get("powerSupplies"),
             cpu=merged.get("cpu"),
             memory=merged.get("memory"),
             alarms=merged.get("hardwareAlarms"),
@@ -287,6 +287,22 @@ def collect_device_hardware(
             ),
             last_attempted_collection_at=now,
         )
+
+        if collection_status == "failed" and previous:
+            # A failed cycle carries no new hardware data; do not blank out the
+            # last known-good component readings, only the status/error/timestamps.
+            for field in (
+                "inventory",
+                "temperature",
+                "fans",
+                "powerSupplies",
+                "cpu",
+                "memory",
+                "hardwareAlarms",
+                "overallHealth",
+            ):
+                if previous.get(field) not in (None, {}, []):
+                    doc[field] = previous[field]
 
         db.switch_hardware_current.update_one(
             {"deviceId": device_id},

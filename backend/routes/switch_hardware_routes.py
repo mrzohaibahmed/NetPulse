@@ -15,9 +15,11 @@ from services.switch_hardware.collector import (
 )
 from services.switch_hardware.vendor_detection import get_ineligibility_reason, is_eligible_switch
 from utils.auth import require_auth
+from utils.monitor_logger import get_monitor_logger
 from utils.pagination import clamp_page, pagination_payload, parse_pagination
 
 switch_hardware_bp = Blueprint("switch_hardware", __name__)
+logger = get_monitor_logger("switch_hardware.routes")
 
 
 def _parse_object_id(device_id: str):
@@ -228,6 +230,9 @@ def collect_switch_hardware(device_id: str):
     except ValueError as exc:
         return jsonify({"success": False, "message": str(exc)}), 400
     except Exception as exc:  # noqa: BLE001
+        logger.exception(
+            "Manual hardware collection failed | device=%s | %s", device_id, exc
+        )
         return jsonify({"success": False, "message": "Hardware collection failed"}), 500
 
     log_audit(
