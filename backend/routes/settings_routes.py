@@ -72,6 +72,9 @@ def update_settings_route():
                 "requiredConfirmations": updated.get("requiredConfirmations"),
                 "pingHistoryRetentionDays": updated.get("pingHistoryRetentionDays"),
                 "dataRetentionDays": updated.get("dataRetentionDays"),
+                "switchHardwareHistoryRetentionDays": updated.get(
+                    "switchHardwareHistoryRetentionDays"
+                ),
                 "incidentRetentionDays": updated.get("incidentRetentionDays"),
             },
         )

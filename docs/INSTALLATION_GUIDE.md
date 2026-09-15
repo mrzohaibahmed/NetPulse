@@ -561,6 +561,7 @@ INTERFACE_STATS_INTERVAL=60
 | `MONITOR_CONNECTIVITY_PROBE_TIMEOUT_MS` | No | `800` | Probe timeout | 800 | Yes |
 | `PING_HISTORY_RETENTION_DAYS` | Seed | `7` | pingHistory TTL | 7 | Settings + TTL job |
 | `DATA_RETENTION_DAYS` | Seed | `90` | Stats / storm eval TTL | 90 | Settings + TTL job |
+| `SWITCH_HARDWARE_HISTORY_RETENTION_DAYS` | Seed | `90` | switch_hardware_history TTL (own window) | 90 | Settings + TTL job |
 | `INCIDENT_RETENTION_DAYS` | Seed | `365` | Mitigation/recovery logs + closed incidents | 365 | Settings + daily purge |
 | `ALERT_EMAIL_ENABLED` | Seed | `true` in example | SMTP on/off for critical offline | example true | Settings persist |
 | `EMAIL_PROVIDER` | Seed | `gmail` | `gmail` or `outlook` | gmail unless Outlook host | Settings persist |
@@ -1073,6 +1074,7 @@ Configured in **Settings → Data retention** (and seeded from env on first boot
 |--------|---------|------------------------|
 | `pingHistoryRetentionDays` | 7 | TTL on `pingHistory.timestamp` (`idx_pingHistory_timestamp_ttl`) |
 | `dataRetentionDays` | 90 | TTL on `interface_stats`, `eligibility_results`, `storm_risk_history`, `storm_confirmation_history`, `storm_safety_history` |
+| `switchHardwareHistoryRetentionDays` | 90 | TTL on `switch_hardware_history.timestamp` (own window, independent of `dataRetentionDays`) |
 | `incidentRetentionDays` | 365 | TTL on mitigation/recovery **history**; daily job purges **RESOLVED** `storm_incidents` only |
 
 TTL is applied with `create_index` / `collMod` (`expireAfterSeconds`). MongoDB may delay actual deletes (TTL monitor thread). Keep host time (NTP) accurate.

@@ -2,9 +2,10 @@
 Data retention: MongoDB TTL indexes for high-volume history, plus a daily
 purge of closed storm incidents (native TTL must not delete active incidents).
 
-Three TTL windows:
+Four TTL windows:
 - pingHistoryRetentionDays (default 7): pingHistory only
 - dataRetentionDays (default 90): interface/storm evaluation telemetry
+- switchHardwareHistoryRetentionDays (default 90): switch_hardware_history only
 - incidentRetentionDays (default 365): mitigation/recovery attempt logs AND
   RESOLVED storm_incidents purge (same window so incidents stay consistent
   with their action history)
@@ -31,6 +32,10 @@ DEFAULT_RETENTION_DAYS = 90
 MIN_RETENTION_DAYS = 1
 MAX_RETENTION_DAYS = 3650
 
+DEFAULT_SWITCH_HARDWARE_HISTORY_RETENTION_DAYS = 90
+MIN_SWITCH_HARDWARE_HISTORY_RETENTION_DAYS = 1
+MAX_SWITCH_HARDWARE_HISTORY_RETENTION_DAYS = 3650
+
 DEFAULT_INCIDENT_RETENTION_DAYS = 365
 MIN_INCIDENT_RETENTION_DAYS = 1
 MAX_INCIDENT_RETENTION_DAYS = 3650
@@ -44,12 +49,19 @@ PING_HISTORY_TTL_TARGETS: tuple[tuple[str, str, str], ...] = (
 # Do NOT include storm_incidents, lock collections, or mitigation/recovery audits.
 DATA_TTL_TARGETS: tuple[tuple[str, str, str], ...] = (
     # collection, date_field, index_name
-    ("switch_hardware_history", "timestamp", "idx_switch_hardware_history_timestamp_ttl"),
     ("interface_stats", "timestamp", "idx_interface_stats_timestamp_ttl"),
     ("eligibility_results", "timestamp", "idx_eligibility_timestamp_ttl"),
     ("storm_risk_history", "timestamp", "idx_storm_risk_timestamp_ttl"),
     ("storm_confirmation_history", "timestamp", "idx_storm_confirmation_timestamp_ttl"),
     ("storm_safety_history", "timestamp", "idx_storm_safety_timestamp_ttl"),
+)
+
+# Cisco switch hardware polling history — own window (switchHardwareHistoryRetentionDays),
+# independent of dataRetentionDays. Same index name/field as before this setting existed;
+# only the controlling retention window changed, so the existing index is collMod'd in
+# place rather than dropped and recreated.
+SWITCH_HARDWARE_HISTORY_TTL_TARGETS: tuple[tuple[str, str, str], ...] = (
+    ("switch_hardware_history", "timestamp", "idx_switch_hardware_history_timestamp_ttl"),
 )
 
 # Append-only port-action audit logs — longer window (incidentRetentionDays).
@@ -85,6 +97,21 @@ def clamp_retention_days(value: Any) -> int:
         raise ValueError(f"dataRetentionDays must be at least {MIN_RETENTION_DAYS}")
     if days > MAX_RETENTION_DAYS:
         raise ValueError(f"dataRetentionDays must be at most {MAX_RETENTION_DAYS}")
+    return days
+
+
+def clamp_switch_hardware_history_retention_days(value: Any) -> int:
+    days = int(value)
+    if days < MIN_SWITCH_HARDWARE_HISTORY_RETENTION_DAYS:
+        raise ValueError(
+            "switchHardwareHistoryRetentionDays must be at least "
+            f"{MIN_SWITCH_HARDWARE_HISTORY_RETENTION_DAYS}"
+        )
+    if days > MAX_SWITCH_HARDWARE_HISTORY_RETENTION_DAYS:
+        raise ValueError(
+            "switchHardwareHistoryRetentionDays must be at most "
+            f"{MAX_SWITCH_HARDWARE_HISTORY_RETENTION_DAYS}"
+        )
     return days
 
 
@@ -125,6 +152,22 @@ def get_retention_days(settings: dict | None = None) -> int:
         )
     except (TypeError, ValueError):
         return DEFAULT_RETENTION_DAYS
+
+
+def get_switch_hardware_history_retention_days(settings: dict | None = None) -> int:
+    if settings is None:
+        from services.settings_service import get_settings  # noqa: PLC0415
+
+        settings = get_settings() or {}
+    try:
+        return clamp_switch_hardware_history_retention_days(
+            settings.get(
+                "switchHardwareHistoryRetentionDays",
+                DEFAULT_SWITCH_HARDWARE_HISTORY_RETENTION_DAYS,
+            )
+        )
+    except (TypeError, ValueError):
+        return DEFAULT_SWITCH_HARDWARE_HISTORY_RETENTION_DAYS
 
 
 def get_incident_retention_days(settings: dict | None = None) -> int:
@@ -301,6 +344,7 @@ def ensure_retention_ttl_indexes(
     retention_days: int | None = None,
     incident_retention_days: int | None = None,
     ping_history_retention_days: int | None = None,
+    switch_hardware_history_retention_days: int | None = None,
 ) -> dict[str, Any]:
     """
     Ensure TTL indexes for all retention windows.
@@ -318,6 +362,11 @@ def ensure_retention_ttl_indexes(
         if retention_days is not None
         else get_retention_days()
     )
+    switch_hardware_history_days = (
+        clamp_switch_hardware_history_retention_days(switch_hardware_history_retention_days)
+        if switch_hardware_history_retention_days is not None
+        else get_switch_hardware_history_retention_days()
+    )
     incident_days = (
         clamp_incident_retention_days(incident_retention_days)
         if incident_retention_days is not None
@@ -327,11 +376,13 @@ def ensure_retention_ttl_indexes(
     results: dict[str, Any] = {
         "pingHistoryRetentionDays": ping_history_days,
         "dataRetentionDays": data_days,
+        "switchHardwareHistoryRetentionDays": switch_hardware_history_days,
         "incidentRetentionDays": incident_days,
         "indexes": {},
     }
     _ensure_ttl_group(PING_HISTORY_TTL_TARGETS, ping_history_days, results)
     _ensure_ttl_group(DATA_TTL_TARGETS, data_days, results)
+    _ensure_ttl_group(SWITCH_HARDWARE_HISTORY_TTL_TARGETS, switch_hardware_history_days, results)
     _ensure_ttl_group(INCIDENT_TTL_TARGETS, incident_days, results)
     return results
 

@@ -23,7 +23,9 @@ SNMPv3 is deferred to Phase 2.
 
 See `backend/.env.example` (`SWITCH_HARDWARE_*`).
 
-History retention uses existing `DATA_RETENTION_DAYS` (default 90).
+History retention has its own setting, `switchHardwareHistoryRetentionDays`
+(default 90 days), configurable in Settings → Data retention — independent of
+`dataRetentionDays`. Seeded from `SWITCH_HARDWARE_HISTORY_RETENTION_DAYS`.
 
 ## MongoDB collections
 

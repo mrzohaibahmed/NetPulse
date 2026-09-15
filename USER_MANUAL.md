@@ -537,6 +537,7 @@ Examples use placeholders, not real secrets.
 | `SNMP_TIMEOUT` | No | SNMP timeout | `3` | `3` | |
 | `SNMP_RETRIES` | No | SNMP retries | `1` | `1` | |
 | `DATA_RETENTION_DAYS` | Seed | History TTL days | `90` | `90` | Min 1, max 3650 via API |
+| `SWITCH_HARDWARE_HISTORY_RETENTION_DAYS` | Seed | switch_hardware_history TTL days | `90` | `90` | Min 1, max 3650 via API; own window, independent of `DATA_RETENTION_DAYS` |
 | `INCIDENT_RETENTION_DAYS` | Seed | Closed incident / action log days | `365` | `365` | Min 1, max 3650 via API |
 | `GUNICORN_BIND` | No | Bind address | `127.0.0.1:5000` | `127.0.0.1:5000` | |
 | `GUNICORN_WORKERS` | No | Worker count | `1` | `1` | >1 forces API role in gunicorn.conf.py |
@@ -1841,7 +1842,7 @@ Database name: **`DATABASE_NAME` from `.env`** (example `NetworkMonitor`).
 
 ### Retention
 
-TTL indexes (Mongo native) on telemetry collections using `dataRetentionDays` (default 90). Mitigation/recovery logs use `incidentRetentionDays` (default 365). **RESOLVED** incidents are purged by the daily job (03:15 UTC cron), not by TTL on active incidents.
+TTL indexes (Mongo native) on telemetry collections using `dataRetentionDays` (default 90). Cisco switch hardware history (`switch_hardware_history`) uses its own `switchHardwareHistoryRetentionDays` window (default 90), independent of `dataRetentionDays`. Mitigation/recovery logs use `incidentRetentionDays` (default 365). **RESOLVED** incidents are purged by the daily job (03:15 UTC cron), not by TTL on active incidents.
 
 NTP accuracy matters for TTL.
 

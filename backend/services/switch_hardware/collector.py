@@ -216,7 +216,7 @@ def collect_device_hardware(
                 errors.append(f"SNMP: {exc}")
                 logger.info("SNMP hardware unavailable | device=%s | %s", device_id, exc)
 
-        if hw_config.is_ssh_enabled() and mode in ("full", "ssh", "inventory", "poll"):
+        if hw_config.is_ssh_enabled() and mode in ("full", "ssh", "inventory"):
             try:
                 ssh_data = collect_ssh_hardware(
                     device,

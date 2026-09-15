@@ -59,6 +59,7 @@ const schema = z.object({
   requiredConfirmations: z.number().min(1).max(20),
   pingHistoryRetentionDays: z.number().min(1).max(3650),
   dataRetentionDays: z.number().min(1).max(3650),
+  switchHardwareHistoryRetentionDays: z.number().min(1).max(3650),
   incidentRetentionDays: z.number().min(1).max(3650),
   stormNotificationsEnabled: z.boolean(),
   stormShutdownEmails: z.boolean(),
@@ -100,6 +101,7 @@ export function SettingsPage() {
       requiredConfirmations: 4,
       pingHistoryRetentionDays: 7,
       dataRetentionDays: 90,
+      switchHardwareHistoryRetentionDays: 90,
       incidentRetentionDays: 365,
       stormNotificationsEnabled: true,
       stormShutdownEmails: true,
@@ -133,6 +135,7 @@ export function SettingsPage() {
       requiredConfirmations: data.requiredConfirmations ?? 4,
       pingHistoryRetentionDays: data.pingHistoryRetentionDays ?? 7,
       dataRetentionDays: data.dataRetentionDays ?? 90,
+      switchHardwareHistoryRetentionDays: data.switchHardwareHistoryRetentionDays ?? 90,
       incidentRetentionDays: data.incidentRetentionDays ?? 365,
       stormNotificationsEnabled: data.stormNotifications?.enabled ?? true,
       stormShutdownEmails: data.stormNotifications?.shutdownEmails ?? true,
@@ -212,6 +215,7 @@ export function SettingsPage() {
       requiredConfirmations: values.requiredConfirmations,
       pingHistoryRetentionDays: values.pingHistoryRetentionDays,
       dataRetentionDays: values.dataRetentionDays,
+      switchHardwareHistoryRetentionDays: values.switchHardwareHistoryRetentionDays,
       incidentRetentionDays: values.incidentRetentionDays,
       stormNotifications: {
         enabled: values.stormNotificationsEnabled,
@@ -589,6 +593,19 @@ export function SettingsPage() {
               />
               <p className="text-xs text-muted-foreground">
                 Interface stats and storm eligibility, risk, confirmation, and safety history.
+              </p>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="switchHardwareHistoryRetentionDays">Switch hardware history (days)</Label>
+              <Input
+                id="switchHardwareHistoryRetentionDays"
+                type="number"
+                min={1}
+                max={3650}
+                {...form.register('switchHardwareHistoryRetentionDays', { valueAsNumber: true })}
+              />
+              <p className="text-xs text-muted-foreground">
+                Cisco switch hardware polling snapshots in switch_hardware_history.
               </p>
             </div>
             <div className="space-y-1.5">

@@ -7,9 +7,13 @@ from pymongo.errors import OperationFailure
 
 from services.retention_service import (
     DATA_TTL_TARGETS,
+    DEFAULT_SWITCH_HARDWARE_HISTORY_RETENTION_DAYS,
+    SWITCH_HARDWARE_HISTORY_TTL_TARGETS,
     RetentionTtlSyncError,
     _ensure_ttl_group,
+    clamp_switch_hardware_history_retention_days,
     ensure_retention_ttl_indexes,
+    get_switch_hardware_history_retention_days,
     retention_ttl_results_have_errors,
 )
 
@@ -324,6 +328,260 @@ class RetentionTtlRouteTests(unittest.TestCase):
         self.assertFalse(payload["success"])
         self.assertIn("TTL synchronization failed", payload["message"])
         self.assertIn("ttlSync", payload)
+
+
+class SwitchHardwareHistoryRetentionTests(unittest.TestCase):
+    """User-configurable switch_hardware_history retention (own window, not dataRetentionDays)."""
+
+    def test_default_is_90_days(self):
+        self.assertEqual(DEFAULT_SWITCH_HARDWARE_HISTORY_RETENTION_DAYS, 90)
+
+    def test_default_value_when_setting_absent(self):
+        self.assertEqual(
+            get_switch_hardware_history_retention_days({}),
+            DEFAULT_SWITCH_HARDWARE_HISTORY_RETENTION_DAYS,
+        )
+
+    def test_custom_value_is_used(self):
+        self.assertEqual(
+            get_switch_hardware_history_retention_days(
+                {"switchHardwareHistoryRetentionDays": 30}
+            ),
+            30,
+        )
+
+    def test_clamp_rejects_non_integer(self):
+        with self.assertRaises(ValueError):
+            clamp_switch_hardware_history_retention_days("not-a-number")
+
+    def test_clamp_rejects_zero_and_negative(self):
+        with self.assertRaises(ValueError):
+            clamp_switch_hardware_history_retention_days(0)
+        with self.assertRaises(ValueError):
+            clamp_switch_hardware_history_retention_days(-5)
+
+    def test_clamp_rejects_above_maximum(self):
+        with self.assertRaises(ValueError):
+            clamp_switch_hardware_history_retention_days(3651)
+
+    def test_clamp_accepts_boundaries(self):
+        self.assertEqual(clamp_switch_hardware_history_retention_days(1), 1)
+        self.assertEqual(clamp_switch_hardware_history_retention_days(3650), 3650)
+
+    def test_invalid_stored_value_falls_back_to_default(self):
+        """Matches the other retention getters: a bad stored value never raises,
+        it silently falls back to the default (fail-safe, not fail-open)."""
+        self.assertEqual(
+            get_switch_hardware_history_retention_days(
+                {"switchHardwareHistoryRetentionDays": "garbage"}
+            ),
+            DEFAULT_SWITCH_HARDWARE_HISTORY_RETENTION_DAYS,
+        )
+
+    def _run_group(self, coll: _FakeCollection, days: int) -> dict:
+        results: dict = {"indexes": {}}
+        with patch("services.retention_service.db") as mock_db:
+            mock_db.__getitem__.return_value = coll
+            mock_db.command = MagicMock(side_effect=coll.apply_collmod)
+            _ensure_ttl_group(SWITCH_HARDWARE_HISTORY_TTL_TARGETS, days, results)
+        return results
+
+    def test_ttl_seconds_calculation(self):
+        cases = {30: 2_592_000, 90: 7_776_000, 180: 15_552_000}
+        for days, expected_seconds in cases.items():
+            with self.subTest(days=days):
+                results = self._run_group(_FakeCollection(), days)
+                self.assertEqual(
+                    results["indexes"]["switch_hardware_history"]["expireAfterSeconds"],
+                    expected_seconds,
+                )
+
+    def test_existing_ttl_index_updated_via_collmod_not_drop_or_create(self):
+        # Simulates the pre-existing index, previously controlled by dataRetentionDays (90d).
+        coll = _FakeCollection(
+            [
+                {
+                    "name": "idx_switch_hardware_history_timestamp_ttl",
+                    "key": {"timestamp": 1},
+                    "expireAfterSeconds": 7_776_000,
+                }
+            ]
+        )
+        results = self._run_group(coll, 30)
+
+        self.assertEqual(results["indexes"]["switch_hardware_history"]["status"], "updated")
+        self.assertEqual(coll.dropped, [])
+        self.assertEqual(coll.created, [])
+        self.assertEqual(len(coll.commands), 1)
+        self.assertEqual(coll.commands[0]["collMod"], "switch_hardware_history")
+        self.assertEqual(coll.commands[0]["index"]["expireAfterSeconds"], 2_592_000)
+        # No second/duplicate index was created alongside the existing one.
+        self.assertEqual(len(coll.indexes), 1)
+
+    def test_missing_index_creates_and_verifies(self):
+        coll = _FakeCollection()
+        results = self._run_group(coll, 90)
+        self.assertEqual(results["indexes"]["switch_hardware_history"]["status"], "created")
+        self.assertEqual(len(coll.created), 1)
+        self.assertEqual(coll.dropped, [])
+        self.assertEqual(coll.commands, [])
+
+    def test_unchanged_when_already_at_target(self):
+        coll = _FakeCollection(
+            [
+                {
+                    "name": "idx_switch_hardware_history_timestamp_ttl",
+                    "key": {"timestamp": 1},
+                    "expireAfterSeconds": 7_776_000,
+                }
+            ]
+        )
+        results = self._run_group(coll, 90)
+        self.assertEqual(results["indexes"]["switch_hardware_history"]["status"], "unchanged")
+        self.assertEqual(coll.dropped, [])
+        self.assertEqual(coll.created, [])
+        self.assertEqual(coll.commands, [])
+
+    def test_switch_hardware_history_not_in_data_ttl_targets(self):
+        """It must be controlled by exactly one TTL group, not two."""
+        data_collections = {target[0] for target in DATA_TTL_TARGETS}
+        self.assertNotIn("switch_hardware_history", data_collections)
+        hw_collections = {target[0] for target in SWITCH_HARDWARE_HISTORY_TTL_TARGETS}
+        self.assertEqual(hw_collections, {"switch_hardware_history"})
+
+    def test_switch_hardware_history_field_is_timestamp(self):
+        for collection, field, _index_name in SWITCH_HARDWARE_HISTORY_TTL_TARGETS:
+            self.assertEqual(collection, "switch_hardware_history")
+            self.assertEqual(field, "timestamp")
+
+    def test_changing_hardware_history_window_does_not_touch_other_collections(self):
+        """Changing switchHardwareHistoryRetentionDays must not modify TTL for
+        dataRetentionDays / pingHistoryRetentionDays / incidentRetentionDays collections."""
+        data_coll = _FakeCollection(
+            [
+                {
+                    "name": "idx_interface_stats_timestamp_ttl",
+                    "key": {"timestamp": 1},
+                    "expireAfterSeconds": 7_776_000,  # already at the requested 90d
+                }
+            ]
+        )
+        hw_coll = _FakeCollection(
+            [
+                {
+                    "name": "idx_switch_hardware_history_timestamp_ttl",
+                    "key": {"timestamp": 1},
+                    "expireAfterSeconds": 7_776_000,
+                }
+            ]
+        )
+        other_colls: dict[str, _FakeCollection] = {}
+
+        def _get_collection(name: str) -> _FakeCollection:
+            if name == "interface_stats":
+                return data_coll
+            if name == "switch_hardware_history":
+                return hw_coll
+            other_colls.setdefault(name, _FakeCollection())
+            return other_colls[name]
+
+        with patch("services.retention_service.db") as mock_db:
+            mock_db.__getitem__.side_effect = _get_collection
+            mock_db.command = MagicMock(
+                side_effect=lambda cmd: _get_collection(cmd["collMod"]).apply_collmod(cmd)
+            )
+            ensure_retention_ttl_indexes(
+                retention_days=90,
+                incident_retention_days=365,
+                ping_history_retention_days=7,
+                switch_hardware_history_retention_days=30,
+            )
+
+        # Only switch_hardware_history's TTL changed, to the newly requested 30d.
+        self.assertEqual(len(hw_coll.commands), 1)
+        self.assertEqual(hw_coll.commands[0]["index"]["expireAfterSeconds"], 2_592_000)
+        # dataRetentionDays' own window was requested unchanged (still 90d) — untouched.
+        self.assertEqual(data_coll.commands, [])
+
+
+class SwitchHardwareHistorySettingsSyncTests(unittest.TestCase):
+    @patch("services.settings_service.db")
+    @patch("services.settings_service.get_settings")
+    @patch("services.settings_service.ensure_settings")
+    def test_settings_save_persists_and_reaches_ttl_sync(
+        self, mock_ensure, mock_get_settings, mock_db
+    ):
+        from services.settings_service import update_settings
+
+        mock_ensure.return_value = {"_id": "global"}
+        mock_get_settings.side_effect = [
+            {"_id": "global", "switchHardwareHistoryRetentionDays": 90},
+            {"_id": "global", "switchHardwareHistoryRetentionDays": 30},
+        ]
+        mock_db.settings.update_one.return_value = None
+
+        ok = {
+            "indexes": {
+                "switch_hardware_history": {
+                    "status": "updated",
+                    "expireAfterSeconds": 2_592_000,
+                },
+            }
+        }
+        captured: dict = {}
+
+        def _capture(**kwargs):
+            captured.update(kwargs)
+            return ok
+
+        with patch(
+            "services.retention_service.ensure_retention_ttl_indexes",
+            side_effect=_capture,
+        ):
+            updated = update_settings({"switchHardwareHistoryRetentionDays": 30})
+
+        # Settings API -> persist setting -> retention config -> TTL update, end to end.
+        self.assertEqual(updated["switchHardwareHistoryRetentionDays"], 30)
+        self.assertEqual(captured.get("switch_hardware_history_retention_days"), 30)
+        mock_db.settings.update_one.assert_called_once()
+
+    @patch("services.settings_service.db")
+    @patch("services.settings_service.get_settings")
+    @patch("services.settings_service.ensure_settings")
+    def test_settings_save_raises_when_ttl_sync_fails(
+        self, mock_ensure, mock_get_settings, mock_db
+    ):
+        from services.settings_service import update_settings
+
+        mock_ensure.return_value = {"_id": "global"}
+        mock_get_settings.side_effect = [
+            {"_id": "global", "switchHardwareHistoryRetentionDays": 90},
+            {"_id": "global", "switchHardwareHistoryRetentionDays": 30},
+        ]
+        mock_db.settings.update_one.return_value = None
+
+        failing = {
+            "indexes": {
+                "switch_hardware_history": {"status": "error", "error": "collMod failed"},
+            }
+        }
+        with patch(
+            "services.retention_service.ensure_retention_ttl_indexes",
+            return_value=failing,
+        ):
+            with self.assertRaises(RetentionTtlSyncError):
+                update_settings({"switchHardwareHistoryRetentionDays": 30})
+
+    def test_invalid_value_rejected_before_persisting(self):
+        from services.settings_service import update_settings
+
+        with patch("services.settings_service.ensure_settings"), patch(
+            "services.settings_service.get_settings",
+            return_value={"_id": "global"},
+        ), patch("services.settings_service.db") as mock_db:
+            with self.assertRaises(ValueError):
+                update_settings({"switchHardwareHistoryRetentionDays": 0})
+            mock_db.settings.update_one.assert_not_called()
 
 
 if __name__ == "__main__":

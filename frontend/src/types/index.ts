@@ -298,6 +298,7 @@ export interface AppSettings {
   requiredConfirmations?: number
   pingHistoryRetentionDays?: number
   dataRetentionDays?: number
+  switchHardwareHistoryRetentionDays?: number
   incidentRetentionDays?: number
   stormNotifications?: {
     enabled: boolean

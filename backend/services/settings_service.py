@@ -85,6 +85,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "requiredConfirmations": int(os.getenv("STORM_REQUIRED_CONFIRMATIONS", "4")),
     "pingHistoryRetentionDays": int(os.getenv("PING_HISTORY_RETENTION_DAYS", "7")),
     "dataRetentionDays": int(os.getenv("DATA_RETENTION_DAYS", "90")),
+    "switchHardwareHistoryRetentionDays": int(
+        os.getenv("SWITCH_HARDWARE_HISTORY_RETENTION_DAYS", "90")
+    ),
     "incidentRetentionDays": int(os.getenv("INCIDENT_RETENTION_DAYS", "365")),
     "stormNotifications": {
         "enabled": os.getenv("STORM_EMAIL_ENABLED", "true").lower() in ("1", "true", "yes"),
@@ -180,6 +183,12 @@ def get_public_settings():
             settings.get("pingHistoryRetentionDays", DEFAULT_SETTINGS["pingHistoryRetentionDays"])
         ),
         "dataRetentionDays": int(settings.get("dataRetentionDays", 90)),
+        "switchHardwareHistoryRetentionDays": int(
+            settings.get(
+                "switchHardwareHistoryRetentionDays",
+                DEFAULT_SETTINGS["switchHardwareHistoryRetentionDays"],
+            )
+        ),
         "incidentRetentionDays": int(settings.get("incidentRetentionDays", 365)),
         "stormNotifications": _public_storm_notifications(settings),
         "switchHardwareMonitoringEnabled": bool(
@@ -311,6 +320,20 @@ def update_settings(payload: dict):
 
         update["dataRetentionDays"] = clamp_retention_days(payload["dataRetentionDays"])
 
+    if (
+        "switchHardwareHistoryRetentionDays" in payload
+        and payload["switchHardwareHistoryRetentionDays"] is not None
+    ):
+        from services.retention_service import (  # noqa: PLC0415
+            clamp_switch_hardware_history_retention_days,
+        )
+
+        update["switchHardwareHistoryRetentionDays"] = (
+            clamp_switch_hardware_history_retention_days(
+                payload["switchHardwareHistoryRetentionDays"]
+            )
+        )
+
     if "incidentRetentionDays" in payload and payload["incidentRetentionDays"] is not None:
         from services.retention_service import clamp_incident_retention_days  # noqa: PLC0415
 
@@ -359,6 +382,7 @@ def update_settings(payload: dict):
     if (
         "pingHistoryRetentionDays" in update
         or "dataRetentionDays" in update
+        or "switchHardwareHistoryRetentionDays" in update
         or "incidentRetentionDays" in update
     ):
         from services.retention_service import (  # noqa: PLC0415
@@ -372,6 +396,12 @@ def update_settings(payload: dict):
                 updated_doc.get("pingHistoryRetentionDays", 7)
             ),
             retention_days=int(updated_doc.get("dataRetentionDays", 90)),
+            switch_hardware_history_retention_days=int(
+                updated_doc.get(
+                    "switchHardwareHistoryRetentionDays",
+                    DEFAULT_SETTINGS["switchHardwareHistoryRetentionDays"],
+                )
+            ),
             incident_retention_days=int(
                 updated_doc.get("incidentRetentionDays", 365)
             ),

@@ -192,6 +192,93 @@ class SwitchHardwareCollectorTests(unittest.TestCase):
         # But the failure itself must still be visible.
         self.assertIsNotNone(result["document"]["lastError"])
 
+    def _run_with_mode(self, mode: str):
+        """Helper: run collect_device_hardware in a given mode with both
+        protocols enabled, and return the (snmp_mock, ssh_mock) call spies."""
+        from services.switch_hardware.collector import collect_device_hardware
+
+        device_id = ObjectId()
+        device = {
+            "_id": device_id,
+            "vendor": "Cisco",
+            "deviceType": "Managed Switch",
+            "monitor": True,
+            "hostname": "sw1",
+            "ipAddress": "10.0.0.1",
+        }
+
+        with patch("services.switch_hardware.collector.db") as mock_db, patch(
+            "services.switch_hardware.collector.hw_config.is_hardware_monitoring_enabled",
+            return_value=True,
+        ), patch(
+            "services.switch_hardware.collector.hw_config.is_snmp_enabled", return_value=True
+        ), patch(
+            "services.switch_hardware.collector.hw_config.is_ssh_enabled", return_value=True
+        ), patch(
+            "services.switch_hardware.collector.snmp_available", return_value=True
+        ), patch(
+            "services.switch_hardware.collector.collect_snmp_hardware"
+        ) as mock_snmp, patch(
+            "services.switch_hardware.collector.collect_ssh_hardware"
+        ) as mock_ssh, patch(
+            "services.switch_hardware.collector.detect_hardware_events"
+        ), patch("services.switch_hardware.collector.evaluate_hardware_alerts"):
+            mock_db.devices.find_one.return_value = device
+            mock_db.switch_hardware_current.find_one.return_value = None
+            mock_db.switch_hardware_current.update_one.return_value = MagicMock(acknowledged=True)
+            mock_db.switch_hardware_history.insert_one.return_value = MagicMock()
+
+            mock_snmp.return_value = {
+                "inventory": {"model": "WS-C3850-24T"},
+                "temperature": empty_temperature(),
+                "fans": empty_fans(),
+                "powerSupplies": empty_power_supplies(),
+                "availability": {"snmp": "available"},
+            }
+            mock_ssh.return_value = {
+                "parsed": {
+                    "inventory": {"model": "WS-C3850-24T"},
+                    "temperature": empty_temperature(),
+                    "fans": empty_fans(),
+                    "powerSupplies": empty_power_supplies(),
+                    "cpu": {"utilizationPercent": 10.0},
+                    "memory": {"utilizationPercent": 20.0},
+                    "alarms": [],
+                },
+                "outputs": {},
+                "errors": {},
+                "platform": "cisco_ios",
+                "availability": {"ssh": "available"},
+            }
+
+            collect_device_hardware(device_id, mode=mode, source_label="test")
+            return mock_snmp, mock_ssh
+
+    def test_poll_mode_is_snmp_only(self):
+        """The 60s scheduled poll job must not also run SSH (redundant with
+        the dedicated 10-minute SSH job)."""
+        mock_snmp, mock_ssh = self._run_with_mode("poll")
+        self.assertTrue(mock_snmp.called)
+        self.assertFalse(mock_ssh.called)
+
+    def test_ssh_mode_is_ssh_only_without_inventory_commands(self):
+        mock_snmp, mock_ssh = self._run_with_mode("ssh")
+        self.assertFalse(mock_snmp.called)
+        self.assertTrue(mock_ssh.called)
+        self.assertFalse(mock_ssh.call_args.kwargs.get("include_inventory"))
+
+    def test_inventory_mode_is_ssh_only_with_inventory_commands(self):
+        mock_snmp, mock_ssh = self._run_with_mode("inventory")
+        self.assertFalse(mock_snmp.called)
+        self.assertTrue(mock_ssh.called)
+        self.assertTrue(mock_ssh.call_args.kwargs.get("include_inventory"))
+
+    def test_full_mode_still_runs_both_protocols(self):
+        """Manual "Collect Now" (mode="full") must be unaffected by the poll-mode change."""
+        mock_snmp, mock_ssh = self._run_with_mode("full")
+        self.assertTrue(mock_snmp.called)
+        self.assertTrue(mock_ssh.called)
+
 
 if __name__ == "__main__":
     unittest.main()
