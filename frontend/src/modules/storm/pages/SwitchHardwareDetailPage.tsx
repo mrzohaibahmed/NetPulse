@@ -267,6 +267,14 @@ export function SwitchHardwareDetailPage() {
                     : 'Not available'}
                 </p>
               </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Last sample collected</p>
+                <p className="font-medium">
+                  {hardware.lastAttemptedCollectionAt
+                    ? formatDateTime(hardware.lastAttemptedCollectionAt)
+                    : 'Not available'}
+                </p>
+              </div>
               {hardware.lastError ? (
                 <div className="sm:col-span-2 lg:col-span-4 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-sm">
                   Last collection note: {hardware.lastError}
