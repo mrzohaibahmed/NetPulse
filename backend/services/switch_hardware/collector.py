@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
@@ -81,18 +82,47 @@ def _merge_component_list(existing: dict, incoming: dict, list_key: str = "items
     return merged
 
 
-def _merge_hardware(snmp_data: dict | None, ssh_data: dict | None) -> dict[str, Any]:
-    snapshot = {
-        "inventory": empty_inventory(),
-        "temperature": empty_temperature(),
-        "fans": empty_fans(),
-        "powerSupplies": empty_power_supplies(),
-        "cpu": empty_cpu(),
-        "memory": empty_memory(),
-        "hardwareAlarms": [],
-        "availability": {"snmp": "unknown", "ssh": "unknown"},
-        "evidence": {"logEvidence": []},
+def _snapshot_baseline(previous: dict | None) -> dict[str, Any]:
+    """
+    Starting point for this cycle's snapshot.
+
+    Seeded from the last persisted ``switch_hardware_current`` document (deep
+    copied — health_evaluator's evaluate_*() functions mutate dicts in place,
+    and this must never alias back into ``previous``, which is compared
+    against the new document afterwards for event detection).
+
+    Fields whose owning protocol does not run this cycle — or runs but
+    returns nothing new — are left as these previous values by the snmp_data/
+    ssh_data merge blocks below (they only overwrite a field when the fresh
+    payload actually has something for it). With no previous document, this
+    falls back to the original empty defaults.
+    """
+    previous = previous or {}
+    prev_availability = previous.get("availability") or {}
+    prev_evidence = previous.get("evidence") or {}
+    return {
+        "inventory": copy.deepcopy(previous.get("inventory")) or empty_inventory(),
+        "temperature": copy.deepcopy(previous.get("temperature")) or empty_temperature(),
+        "fans": copy.deepcopy(previous.get("fans")) or empty_fans(),
+        "powerSupplies": copy.deepcopy(previous.get("powerSupplies")) or empty_power_supplies(),
+        "cpu": copy.deepcopy(previous.get("cpu")) or empty_cpu(),
+        "memory": copy.deepcopy(previous.get("memory")) or empty_memory(),
+        "hardwareAlarms": copy.deepcopy(previous.get("hardwareAlarms")) or [],
+        "availability": {
+            "snmp": prev_availability.get("snmp", "unknown"),
+            "ssh": prev_availability.get("ssh", "unknown"),
+        },
+        "evidence": {"logEvidence": copy.deepcopy(prev_evidence.get("logEvidence")) or []},
     }
+
+
+def _merge_hardware(
+    snmp_data: dict | None,
+    ssh_data: dict | None,
+    *,
+    previous: dict | None = None,
+) -> dict[str, Any]:
+    snapshot = _snapshot_baseline(previous)
 
     if snmp_data:
         snapshot["inventory"] = _merge_dict(snapshot["inventory"], snmp_data.get("inventory") or {})
@@ -239,7 +269,22 @@ def collect_device_hardware(
                 logger.info("SSH hardware unavailable | device=%s | %s", device_id, exc)
                 ssh_data = None
 
-        merged = _merge_hardware(snmp_data, ssh_data)
+        previous = db.switch_hardware_current.find_one({"deviceId": device_id})
+
+        # collection_status must reflect what THIS cycle's attempt(s) actually
+        # produced, not what's preserved from a previous good document — so
+        # has_payload is judged from a fresh-only merge (no baseline), exactly
+        # as before this fix. Otherwise a protocol that ran and failed would
+        # read as "partial" (payload present) instead of "failed" any time a
+        # previous document exists, which would silently change existing
+        # collection_status semantics.
+        has_payload = _has_hardware_payload(_merge_hardware(snmp_data, ssh_data))
+
+        # Protocol-aware merge for the document's actual field values: fields
+        # whose protocol did not run this cycle (or ran but returned nothing
+        # new) keep their value from `previous` instead of being blanked to
+        # empty/unknown — see _snapshot_baseline().
+        merged = _merge_hardware(snmp_data, ssh_data, previous=previous)
         merged = evaluate_snapshot(merged)
 
         platform = None
@@ -249,9 +294,8 @@ def collect_device_hardware(
             from services.switch_hardware.vendor_detection import detect_platform
 
             platform = detect_platform(device, sys_descr=snmp_data.get("sysDescr"))
+        platform_label_value = platform_label(platform) or (previous or {}).get("platform")
 
-        previous = db.switch_hardware_current.find_one({"deviceId": device_id})
-        has_payload = _has_hardware_payload(merged)
         if not has_payload and not errors:
             errors.append(
                 "No hardware details returned via SNMP or SSH. "
@@ -269,7 +313,7 @@ def collect_device_hardware(
         now = utc_now()
         doc = build_current_document(
             device_id,
-            platform=platform_label(platform),
+            platform=platform_label_value,
             collection_status=collection_status,
             overall_health=merged.get("overallHealth", "unknown"),
             inventory=merged.get("inventory"),
@@ -288,21 +332,12 @@ def collect_device_hardware(
             last_attempted_collection_at=now,
         )
 
-        if collection_status == "failed" and previous:
-            # A failed cycle carries no new hardware data; do not blank out the
-            # last known-good component readings, only the status/error/timestamps.
-            for field in (
-                "inventory",
-                "temperature",
-                "fans",
-                "powerSupplies",
-                "cpu",
-                "memory",
-                "hardwareAlarms",
-                "overallHealth",
-            ):
-                if previous.get(field) not in (None, {}, []):
-                    doc[field] = previous[field]
+        # Field-level preservation already happened inside _merge_hardware()
+        # (protocol-aware, per field) — including for a fully failed cycle,
+        # where neither snmp_data nor ssh_data carries anything new and every
+        # field naturally falls back to its `previous` value. overallHealth
+        # is recomputed above from those (fresh-or-preserved) values rather
+        # than copied wholesale, so it stays consistent with what's displayed.
 
         db.switch_hardware_current.update_one(
             {"deviceId": device_id},
