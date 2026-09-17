@@ -512,6 +512,89 @@ def send_isp_recovery_alert(
 
 
 # ---------------------------------------------------------------------------
+# Switch hardware alerts (Cisco switch temperature/fan/PSU/CPU/memory faults)
+# ---------------------------------------------------------------------------
+
+
+def send_switch_hardware_alert_email(device: dict, alert: dict) -> bool:
+    """Send one Cisco switch hardware fault notification email."""
+    hostname = device.get("hostname", "Unknown")
+    ip_address = device.get("ipAddress", "Unknown")
+    title = alert.get("title", "Hardware Alert")
+    message = alert.get("message", "")
+    severity = alert.get("severity", "WARNING")
+    detected_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+    subject = f"[NetPulse Alert] {title} — {hostname}"
+    body_text = (
+        "NetPulse Switch Hardware Alert\n"
+        "===============================\n\n"
+        f"{message}\n\n"
+        f"Hostname:   {hostname}\n"
+        f"IP address: {ip_address}\n"
+        f"Severity:   {severity}\n"
+        f"Detected:   {detected_at}\n\n"
+        "Please investigate the switch hardware as soon as possible."
+    )
+    color = "#c23b3b" if severity == "CRITICAL" else "#b8860b"
+    body_html = f"""
+    <html>
+      <body style="font-family: Arial, sans-serif; color: #132033;">
+        <h2 style="color: {color};">{html.escape(str(title))}</h2>
+        <p>{html.escape(str(message))}</p>
+        <table cellpadding="6" cellspacing="0" style="border-collapse: collapse;">
+          <tr><td><strong>Hostname</strong></td><td>{html.escape(str(hostname))}</td></tr>
+          <tr><td><strong>IP address</strong></td><td>{html.escape(str(ip_address))}</td></tr>
+          <tr><td><strong>Severity</strong></td><td>{html.escape(str(severity))}</td></tr>
+          <tr><td><strong>Detected</strong></td><td>{detected_at}</td></tr>
+        </table>
+        <p style="margin-top: 16px;">Please investigate the switch hardware as soon as possible.</p>
+      </body>
+    </html>
+    """
+    return send_email(subject, body_text, body_html)
+
+
+def send_switch_hardware_recovery_alert_email(device: dict, alert: dict) -> bool:
+    """Send one Cisco switch hardware recovery notification email."""
+    hostname = device.get("hostname", "Unknown")
+    ip_address = device.get("ipAddress", "Unknown")
+    title = alert.get("title", "Hardware Alert")
+    recovered_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    incident_id = str(alert.get("_id") or "")
+
+    subject = f"[NetPulse Recovered] {title} resolved — {hostname}"
+    body_text = (
+        "NetPulse Switch Hardware Recovery\n"
+        "==================================\n\n"
+        f"{title} has recovered on {hostname}.\n\n"
+        f"Hostname:   {hostname}\n"
+        f"IP address: {ip_address}\n"
+        f"Recovered:  {recovered_at}\n"
+    )
+    if incident_id:
+        body_text += f"Incident:   {incident_id}\n"
+    body_text += "\nNo further action is required unless issues persist."
+
+    body_html = f"""
+    <html>
+      <body style="font-family: Arial, sans-serif; color: #132033;">
+        <h2 style="color: #1f7a4d;">{html.escape(str(title))} — Recovered</h2>
+        <p>Hardware condition on {html.escape(str(hostname))} has returned to normal.</p>
+        <table cellpadding="6" cellspacing="0" style="border-collapse: collapse;">
+          <tr><td><strong>Hostname</strong></td><td>{html.escape(str(hostname))}</td></tr>
+          <tr><td><strong>IP address</strong></td><td>{html.escape(str(ip_address))}</td></tr>
+          <tr><td><strong>Recovered</strong></td><td>{recovered_at}</td></tr>
+          <tr><td><strong>Previous incident</strong></td><td>{html.escape(incident_id)}</td></tr>
+        </table>
+        <p style="margin-top: 16px;">No further action is required unless issues persist.</p>
+      </body>
+    </html>
+    """
+    return send_email(subject, body_text, body_html)
+
+
+# ---------------------------------------------------------------------------
 # Storm protection notifications
 # ---------------------------------------------------------------------------
 

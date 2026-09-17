@@ -7,6 +7,10 @@ from typing import Any
 from pymongo.errors import DuplicateKeyError
 
 from config.database import db
+from services.email_service import (
+    send_switch_hardware_alert_email,
+    send_switch_hardware_recovery_alert_email,
+)
 from services.mongo_retry import assert_insert_acknowledged
 from utils.monitor_logger import get_monitor_logger
 from utils.utc import utc_now
@@ -60,6 +64,15 @@ def _build_hardware_alert_doc(
 
 
 def claim_hardware_alert(device: dict, *, title: str, message: str, severity: str, key: str) -> bool:
+    """
+    Create the dashboard alert, then best-effort send the notification email.
+
+    Dedup via the partial unique index on (deviceId, hardwareAlertKey) — a
+    DuplicateKeyError means an active alert already exists, so no second
+    email goes out for the same ongoing condition. Mirrors the existing
+    claim -> insert -> send email -> mark emailSent pattern used for ISP
+    offline alerts (services/isp_alert_service.py).
+    """
     doc = _build_hardware_alert_doc(
         device,
         title=title,
@@ -70,25 +83,79 @@ def claim_hardware_alert(device: dict, *, title: str, message: str, severity: st
     try:
         result = db.alerts.insert_one(doc)
         assert_insert_acknowledged(result, action="hardware_alert_insert")
-        return True
     except DuplicateKeyError:
         return False
     except Exception as exc:  # noqa: BLE001
         logger.warning("Hardware alert claim failed | device=%s | %s", device.get("_id"), exc)
         return False
 
+    email_sent = False
+    try:
+        email_sent = send_switch_hardware_alert_email(device, doc)
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            "Hardware alert email failed | device=%s | key=%s | %s",
+            device.get("_id"),
+            key,
+            exc,
+        )
 
-def resolve_hardware_alert(device_id, hardware_alert_key: str) -> None:
-    device_id = _normalize_device_id(device_id)
-    db.alerts.update_many(
-        {
-            "deviceId": device_id,
-            "hardwareAlertKey": hardware_alert_key,
-            "resolved": False,
-            "dismissed": False,
-        },
-        {"$set": {"resolved": True, "updatedAt": utc_now()}},
-    )
+    if email_sent:
+        try:
+            db.alerts.update_one({"_id": result.inserted_id}, {"$set": {"emailSent": True}})
+            logger.info(
+                "Hardware alert email sent | device=%s | key=%s", device.get("_id"), key
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed to update hardware alert emailSent | %s", exc)
+
+    return True
+
+
+def resolve_hardware_alert(device: dict, hardware_alert_key: str) -> None:
+    """
+    Resolve active alerts for this key and send one recovery email each.
+
+    Takes the full device (not just an id) so the recovery email can include
+    hostname/IP, matching send_isp_recovery_alert / send_critical_device_recovery_alert.
+    """
+    device_id = _normalize_device_id(device.get("_id"))
+    active_filter = {
+        "deviceId": device_id,
+        "hardwareAlertKey": hardware_alert_key,
+        "resolved": False,
+        "dismissed": False,
+    }
+    active_alerts = list(db.alerts.find(active_filter))
+    if not active_alerts:
+        return
+
+    db.alerts.update_many(active_filter, {"$set": {"resolved": True, "updatedAt": utc_now()}})
+
+    for alert in active_alerts:
+        recovery_sent = False
+        try:
+            recovery_sent = send_switch_hardware_recovery_alert_email(device, alert)
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "Hardware recovery email failed | device=%s | key=%s | %s",
+                device.get("_id"),
+                hardware_alert_key,
+                exc,
+            )
+        if recovery_sent:
+            try:
+                db.alerts.update_one(
+                    {"_id": alert["_id"]}, {"$set": {"recoveryEmailSent": True}}
+                )
+                logger.info(
+                    "Hardware recovery email sent | device=%s | key=%s | alertId=%s",
+                    device.get("_id"),
+                    hardware_alert_key,
+                    alert.get("_id"),
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Failed to update hardware alert recoveryEmailSent | %s", exc)
 
 
 def _active_alert_keys(snapshot: dict[str, Any]) -> set[str]:
@@ -144,4 +211,4 @@ def evaluate_hardware_alerts(device: dict, snapshot: dict[str, Any]) -> None:
                 key=alert_key,
             )
         else:
-            resolve_hardware_alert(device.get("_id"), alert_key)
+            resolve_hardware_alert(device, alert_key)
