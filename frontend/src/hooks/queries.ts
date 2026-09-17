@@ -27,6 +27,7 @@ import {
   getHealth,
   getHistory,
   getIsps,
+  getDeviceRisk,
   getInterfaceHistory,
   getInterfaceRisk,
   getInterfaces,
@@ -534,6 +535,16 @@ export function useRiskQuery(params: PaginationParams) {
   return useQuery({
     queryKey: queryKeys.risk(params),
     queryFn: () => getRiskResults(params),
+    refetchInterval: ELIGIBILITY_INTERVAL,
+    placeholderData: (prev) => prev,
+  })
+}
+
+export function useDeviceRiskQuery(deviceId: string, params: PaginationParams = {}) {
+  return useQuery({
+    queryKey: queryKeys.deviceRisk(deviceId, params),
+    queryFn: () => getDeviceRisk(deviceId, params),
+    enabled: Boolean(deviceId),
     refetchInterval: ELIGIBILITY_INTERVAL,
     placeholderData: (prev) => prev,
   })

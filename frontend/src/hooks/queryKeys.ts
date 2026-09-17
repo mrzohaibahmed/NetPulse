@@ -21,6 +21,7 @@ export const queryKeys = {
   deviceEligibility: (id: string, params: object) =>
     ['device-eligibility', id, params] as const,
   risk: (params: object) => ['risk', params] as const,
+  deviceRisk: (id: string, params: object) => ['device-risk', id, params] as const,
   interfaceRisk: (id: string, name: string, params: object) =>
     ['interface-risk', id, name, params] as const,
   confirmation: (params: object) => ['confirmation', params] as const,

@@ -49,7 +49,7 @@ import { useLevel1Topology } from '@/hooks/useTopologyData'
 import {
   useDeviceInterfacesQuery,
   useDeviceQuery,
-  useRiskQuery,
+  useDeviceRiskQuery,
   useSettingsMutation,
   useSettingsQuery,
   useSwitchHardwareCollectMutation,
@@ -167,7 +167,7 @@ export function SwitchDetailPage() {
   const deviceQuery = useDeviceQuery(deviceId)
   const hardwareQuery = useSwitchHardwareQuery(deviceId)
   const interfacesQuery = useDeviceInterfacesQuery(deviceId, { limit: 500 })
-  const riskQuery = useRiskQuery({ deviceId, limit: 500 })
+  const riskQuery = useDeviceRiskQuery(deviceId, { limit: 500 })
 
   const [outagesPage, setOutagesPage] = useState(1)
   const [outagesLimit, setOutagesLimit] = useState(10)

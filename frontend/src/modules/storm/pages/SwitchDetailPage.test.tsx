@@ -9,7 +9,7 @@ const useAuth = vi.fn()
 const useDeviceQuery = vi.fn()
 const useSwitchHardwareQuery = vi.fn()
 const useDeviceInterfacesQuery = vi.fn()
-const useRiskQuery = vi.fn()
+const useDeviceRiskQuery = vi.fn()
 const useLevel1Topology = vi.fn()
 const collectMutate = vi.fn()
 
@@ -24,7 +24,7 @@ vi.mock('@/hooks/queries', async (importOriginal) => {
     useDeviceQuery: (...args: unknown[]) => useDeviceQuery(...args),
     useSwitchHardwareQuery: (...args: unknown[]) => useSwitchHardwareQuery(...args),
     useDeviceInterfacesQuery: (...args: unknown[]) => useDeviceInterfacesQuery(...args),
-    useRiskQuery: (...args: unknown[]) => useRiskQuery(...args),
+    useDeviceRiskQuery: (...args: unknown[]) => useDeviceRiskQuery(...args),
     useSwitchHardwareHistoryQuery: () => ({
       data: { items: [], pagination: { page: 1, limit: 100, total: 0, totalPages: 0 } },
       isLoading: false,
@@ -188,7 +188,7 @@ describe('SwitchDetailPage', () => {
       error: null,
       refetch: vi.fn(),
     })
-    useRiskQuery.mockReturnValue({ data: { data: [] }, isLoading: false })
+    useDeviceRiskQuery.mockReturnValue({ data: { data: [] }, isLoading: false })
     useLevel1Topology.mockReturnValue({
       data: { nodes: [], edges: [] },
       isLoading: false,
@@ -261,7 +261,7 @@ describe('SwitchDetailPage', () => {
       ['', 'UNKNOWN'],
       ['bogus', 'UNKNOWN'],
     ])('severity %p normalizes to %p', (input, expected) => {
-      useRiskQuery.mockReturnValue({
+      useDeviceRiskQuery.mockReturnValue({
         data: {
           data: [{ deviceId: DEVICE_ID, interface: 'Gi1/0/1', severity: input }],
         },
@@ -270,5 +270,42 @@ describe('SwitchDetailPage', () => {
       renderPage(`/switches/${DEVICE_ID}?tab=interfaces`)
       expect(screen.getByText(expected)).toBeInTheDocument()
     })
+  })
+
+  // Regression for the confirmed BLOCKER: SwitchDetailPage must use the
+  // device-scoped risk query (GET /api/storm/risk/:deviceId), never the
+  // generic fleet-wide risk query (GET /api/storm/risk?deviceId=...), so a
+  // risk record belonging to a different switch can never appear here.
+  it('requests risk data via the device-scoped hook, not the generic fleet-wide one', () => {
+    renderPage()
+    expect(useDeviceRiskQuery).toHaveBeenCalledWith(DEVICE_ID, { limit: 500 })
+  })
+
+  it('never displays another switch’s risk severity for a same-named interface', () => {
+    // Simulates the device-scoped endpoint for Switch A: only Switch A's own
+    // Gi1/0/1 record (HIGH) is returned. Switch B's Gi1/0/1 (CRITICAL) would
+    // have leaked in under the old fleet-wide ?deviceId= query.
+    useDeviceRiskQuery.mockReturnValue({
+      data: {
+        data: [{ deviceId: DEVICE_ID, interface: 'Gi1/0/1', severity: 'HIGH' }],
+      },
+      isLoading: false,
+    })
+    renderPage(`/switches/${DEVICE_ID}?tab=interfaces`)
+    expect(screen.getByText('HIGH')).toBeInTheDocument()
+    expect(screen.queryByText('CRITICAL')).not.toBeInTheDocument()
+  })
+
+  it('Overview "Critical Storm Risk" KPI is derived from the device-scoped risk data', () => {
+    useDeviceRiskQuery.mockReturnValue({
+      data: {
+        data: [{ deviceId: DEVICE_ID, interface: 'Gi1/0/1', severity: 'CRITICAL' }],
+      },
+      isLoading: false,
+    })
+    renderPage()
+    const kpi = screen.getByText('Critical Storm Risk').closest('div')
+    expect(kpi).not.toBeNull()
+    expect(kpi?.textContent).toContain('1')
   })
 })
