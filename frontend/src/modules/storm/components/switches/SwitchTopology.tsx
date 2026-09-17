@@ -37,6 +37,16 @@ type LayoutSaveStatus = 'idle' | 'saved' | 'unsaved' | 'saving' | 'error'
 interface SwitchTopologyProps {
   switches: TopologyNode[]
   edges: TopologyEdge[]
+  /**
+   * Disables layout editing (drag + Save Topology) — for embedding a filtered
+   * subset (e.g. one switch's neighborhood) where saving positions would
+   * overwrite the shared full-fleet layout with only a few nodes. Read-only
+   * views still show saved positions, just can't change them. Default false
+   * (existing full-fleet /switches page behavior is unchanged).
+   */
+  readOnly?: boolean
+  /** Called with a node's device id on click — e.g. to navigate to its detail page. */
+  onNodeClick?: (deviceId: string) => void
 }
 
 function buildStructureKey(switches: TopologyNode[], edges: TopologyEdge[]) {
@@ -48,7 +58,12 @@ function buildStructureKey(switches: TopologyNode[], edges: TopologyEdge[]) {
   return `${[...switchIds].sort().join('|')}::${edgePairs}`
 }
 
-export function SwitchTopology({ switches, edges }: SwitchTopologyProps) {
+export function SwitchTopology({
+  switches,
+  edges,
+  readOnly = false,
+  onNodeClick,
+}: SwitchTopologyProps) {
   const layoutQuery = useTopologyLayout(SWITCHES_LAYOUT_VIEW_KEY)
   const saveLayoutMutation = useSaveTopologyLayoutMutation()
 
@@ -261,37 +276,39 @@ export function SwitchTopology({ switches, edges }: SwitchTopologyProps) {
           />
         </div>
       </div>
-      <div className="pointer-events-none absolute right-3 top-3 z-20">
-        <div className="pointer-events-auto flex flex-wrap items-center gap-2 rounded-lg border border-border/70 bg-card/95 px-2.5 py-1.5 text-xs font-medium text-foreground shadow-sm backdrop-blur-md">
-          <span
-            className={cn(
-              'rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
-              saveStatus === 'unsaved' && 'bg-amber-500/15 text-amber-700 dark:text-amber-300',
-              saveStatus === 'saved' && 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300',
-              saveStatus === 'saving' && 'bg-primary/10 text-primary',
-              saveStatus === 'error' && 'bg-destructive/15 text-destructive',
-              saveStatus === 'idle' && 'bg-muted text-muted-foreground',
-            )}
-          >
-            {saveStatusLabel}
-          </span>
-          <Button
-            type="button"
-            size="sm"
-            variant="secondary"
-            className="h-7 gap-1.5 px-2 text-xs"
-            disabled={nodes.length === 0 || saveStatus === 'saving' || saveLayoutMutation.isPending}
-            onClick={() => void handleSaveTopology()}
-          >
-            {saveStatus === 'saving' || saveLayoutMutation.isPending ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Save className="h-3.5 w-3.5" />
-            )}
-            {saveStatus === 'saving' || saveLayoutMutation.isPending ? 'Saving…' : 'Save Topology'}
-          </Button>
+      {readOnly ? null : (
+        <div className="pointer-events-none absolute right-3 top-3 z-20">
+          <div className="pointer-events-auto flex flex-wrap items-center gap-2 rounded-lg border border-border/70 bg-card/95 px-2.5 py-1.5 text-xs font-medium text-foreground shadow-sm backdrop-blur-md">
+            <span
+              className={cn(
+                'rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
+                saveStatus === 'unsaved' && 'bg-amber-500/15 text-amber-700 dark:text-amber-300',
+                saveStatus === 'saved' && 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300',
+                saveStatus === 'saving' && 'bg-primary/10 text-primary',
+                saveStatus === 'error' && 'bg-destructive/15 text-destructive',
+                saveStatus === 'idle' && 'bg-muted text-muted-foreground',
+              )}
+            >
+              {saveStatusLabel}
+            </span>
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              className="h-7 gap-1.5 px-2 text-xs"
+              disabled={nodes.length === 0 || saveStatus === 'saving' || saveLayoutMutation.isPending}
+              onClick={() => void handleSaveTopology()}
+            >
+              {saveStatus === 'saving' || saveLayoutMutation.isPending ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Save className="h-3.5 w-3.5" />
+              )}
+              {saveStatus === 'saving' || saveLayoutMutation.isPending ? 'Saving…' : 'Save Topology'}
+            </Button>
+          </div>
         </div>
-      </div>
+      )}
 
       {layoutQuery.isLoading ? (
         <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/60 backdrop-blur-[1px]">
@@ -306,13 +323,14 @@ export function SwitchTopology({ switches, edges }: SwitchTopologyProps) {
             edges={flowEdges}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
-            onNodeDragStop={onNodeDragStop}
+            onNodeDragStop={readOnly ? undefined : onNodeDragStop}
+            onNodeClick={onNodeClick ? (_event, node) => onNodeClick(node.id) : undefined}
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
             onInit={setRfInstance}
             minZoom={0.08}
             maxZoom={2}
-            nodesDraggable
+            nodesDraggable={!readOnly}
             nodesConnectable={false}
             elementsSelectable={false}
             panOnDrag

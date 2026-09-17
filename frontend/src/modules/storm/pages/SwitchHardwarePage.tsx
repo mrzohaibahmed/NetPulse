@@ -351,7 +351,7 @@ export function SwitchHardwarePage() {
                   <TableRow
                     key={device._id}
                     className="cursor-pointer"
-                    onClick={() => navigate(`/switches/${device._id}/hardware`)}
+                    onClick={() => navigate(`/switches/${device._id}?tab=hardware`)}
                   >
                     <TableCell className="font-medium">{device.hostname}</TableCell>
                     <TableCell className="mono text-sm">{device.ipAddress}</TableCell>

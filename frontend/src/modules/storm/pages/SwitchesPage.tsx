@@ -1,3 +1,4 @@
+import { useNavigate } from 'react-router-dom'
 import { PageHeader } from '@/shared/components/PageHeader'
 import { LoadingState } from '@/shared/components/LoadingState'
 import { ErrorState } from '@/shared/components/ErrorState'
@@ -6,6 +7,7 @@ import { useTopologySwitches, useFullTopology } from '@/hooks/useTopologyData'
 import { SwitchTopology } from '@/modules/storm/components/switches/SwitchTopology'
 
 export function SwitchesPage() {
+  const navigate = useNavigate()
   const switchesQuery = useTopologySwitches()
   const topologyQuery = useFullTopology(true)
 
@@ -64,7 +66,11 @@ export function SwitchesPage() {
                   Switch links could not be loaded. Showing switches without connections.
                 </p>
               ) : null}
-              <SwitchTopology switches={switches} edges={topologyEdges} />
+              <SwitchTopology
+                switches={switches}
+                edges={topologyEdges}
+                onNodeClick={(deviceId) => navigate(`/switches/${deviceId}`)}
+              />
             </div>
           )}
         </CardContent>

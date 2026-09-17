@@ -864,6 +864,12 @@ function DeviceInventorySection({
                 Export
               </Button>
               <Button type="button" size="sm" variant="secondary" asChild>
+                <Link to={`/switches/${device.deviceId}?tab=interfaces`}>
+                  <ExternalLink className="h-3.5 w-3.5" />
+                  Switch
+                </Link>
+              </Button>
+              <Button type="button" size="sm" variant="secondary" asChild>
                 <Link to={`/devices/${device.deviceId}`}>
                   <ExternalLink className="h-3.5 w-3.5" />
                   Device

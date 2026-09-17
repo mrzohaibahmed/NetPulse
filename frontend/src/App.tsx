@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { lazy, Suspense } from 'react'
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
+import { BrowserRouter, Navigate, Route, Routes, useParams } from 'react-router-dom'
 import { ThemedToaster } from '@/shared/components/ThemedToaster'
 import { AuthProvider } from '@/shared/auth/AuthContext'
 import { Layout } from '@/shared/layout/Layout'
@@ -73,9 +73,9 @@ const SwitchHardwarePage = lazy(() =>
     default: m.SwitchHardwarePage,
   })),
 )
-const SwitchHardwareDetailPage = lazy(() =>
-  import('@/modules/storm/pages/SwitchHardwareDetailPage').then((m) => ({
-    default: m.SwitchHardwareDetailPage,
+const SwitchDetailPage = lazy(() =>
+  import('@/modules/storm/pages/SwitchDetailPage').then((m) => ({
+    default: m.SwitchDetailPage,
   })),
 )
 const LoginPage = lazy(() =>
@@ -84,6 +84,12 @@ const LoginPage = lazy(() =>
 
 function PageFallback() {
   return <LoadingState label="Loading page…" />
+}
+
+/** Backward-compatible: /switches/:deviceId/hardware -> /switches/:deviceId?tab=hardware */
+function HardwareTabRedirect() {
+  const { deviceId = '' } = useParams()
+  return <Navigate to={`/switches/${deviceId}?tab=hardware`} replace />
 }
 
 export default function App() {
@@ -110,9 +116,11 @@ export default function App() {
                       <Route path="topology" element={<TopologyPage />} />
                       <Route path="switches" element={<SwitchesPage />} />
                       <Route path="switches/hardware" element={<SwitchHardwarePage />} />
+                      <Route path="switches/:deviceId" element={<SwitchDetailPage />} />
+                      {/* Backward compatible: old bookmarked/shared links still work. */}
                       <Route
                         path="switches/:deviceId/hardware"
-                        element={<SwitchHardwareDetailPage />}
+                        element={<HardwareTabRedirect />}
                       />
                       <Route path="discovery" element={<DiscoveryPage />} />
                       <Route path="history" element={<HistoryPage />} />
