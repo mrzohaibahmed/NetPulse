@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
   ReactFlow,
   Controls,
@@ -496,7 +497,9 @@ const nodeTypes = { topologyDevice: TopologyDeviceNode }
 const edgeTypes = { topologyEdge: TopologyEdge }
 
 export function TopologyPage() {
-  const [selectedSwitchId, setSelectedSwitchId] = useState<string | null>(null)
+  const [searchParams] = useSearchParams()
+  const switchParam = searchParams.get('switch')
+  const [selectedSwitchId, setSelectedSwitchId] = useState<string | null>(switchParam)
   const [searchInput, setSearchInput] = useState('')
   const [exactSearch, setExactSearch] = useState(false)
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([])
@@ -581,6 +584,15 @@ export function TopologyPage() {
     setSearchInput('')
     setExactSearch(false)
   }, [])
+
+  // Re-applies a ?switch= deep link even if this page was already mounted
+  // (e.g. navigating here again from a different switch's detail page,
+  // which only changes the query string, not the route).
+  useEffect(() => {
+    if (switchParam) {
+      setSelectedSwitchId(switchParam)
+    }
+  }, [switchParam])
 
   useEffect(() => {
     if (prevViewKeyRef.current !== viewKey) {

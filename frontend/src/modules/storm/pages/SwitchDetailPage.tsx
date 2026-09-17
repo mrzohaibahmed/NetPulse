@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, RefreshCw, Thermometer } from 'lucide-react'
 import { CpuMemorySection } from '@/modules/storm/components/hardware/CpuMemorySection'
@@ -20,7 +20,6 @@ import {
   formatAllowedVlans,
   neighborRemotePort,
 } from '@/modules/storm/components/InterfaceStatusBadge'
-import { SwitchTopology } from '@/modules/storm/components/switches/SwitchTopology'
 import { isManagedSwitch } from '@/modules/storm/components/stormShared'
 import { EmptyState } from '@/shared/components/EmptyState'
 import { ErrorState } from '@/shared/components/ErrorState'
@@ -45,7 +44,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/shared/ui/alert-dialog'
-import { useLevel1Topology } from '@/hooks/useTopologyData'
 import {
   useDeviceInterfacesQuery,
   useDeviceQuery,
@@ -149,6 +147,16 @@ export function SwitchDetailPage() {
     setSearchParams(next, { replace: true })
   }
 
+  // Topology has no separate view here — it belongs on the Network Topology
+  // page's Level 1 neighborhood view for this switch, so any way of landing
+  // on this tab (clicking it, or a deep link) redirects there instead of
+  // rendering a second, disconnected topology of just this switch.
+  useEffect(() => {
+    if (activeTab === 'topology') {
+      navigate(`/topology?switch=${deviceId}`, { replace: true })
+    }
+  }, [activeTab, deviceId, navigate])
+
   // ---------------------------------------------------------------------
   // Hardware monitoring toggle + Collect Now (shared: header + Overview + Hardware)
   // ---------------------------------------------------------------------
@@ -197,8 +205,6 @@ export function SwitchDetailPage() {
     { page: eventsPage, limit: eventsLimit },
     activeTab === 'events',
   )
-  const topologyQuery = useLevel1Topology(activeTab === 'topology' ? deviceId : null)
-
   const device = deviceQuery.data
   const hardware = hardwareQuery.data
   const interfaceRows: NetworkInterface[] = interfacesQuery.data?.data ?? []
@@ -318,7 +324,6 @@ export function SwitchDetailPage() {
                 void outagesQuery.refetch()
                 if (activeTab === 'hardware') void historyQuery.refetch()
                 if (activeTab === 'events') void eventsQuery.refetch()
-                if (activeTab === 'topology') void topologyQuery.refetch()
               }}
             >
               <RefreshCw className="h-4 w-4" />
@@ -406,18 +411,6 @@ export function SwitchDetailPage() {
               onSearchChange={setInterfaceSearch}
               riskByInterface={riskByInterface}
               onOpenInterface={(name) => navigate(`/interfaces/${deviceId}/${encodeURIComponent(name)}`)}
-            />
-          ) : null}
-
-          {activeTab === 'topology' ? (
-            <TopologyTab
-              deviceId={deviceId}
-              loading={topologyQuery.isLoading}
-              error={topologyQuery.error}
-              onRetry={() => void topologyQuery.refetch()}
-              nodes={topologyQuery.data?.nodes ?? []}
-              edges={topologyQuery.data?.edges ?? []}
-              onNavigateToSwitch={(id) => navigate(`/switches/${id}`)}
             />
           ) : null}
 
@@ -866,53 +859,3 @@ function InterfacesTab({
   )
 }
 
-// ===========================================================================
-// Topology (device-scoped — GET /api/topology/switch/:device_id)
-// ===========================================================================
-
-function TopologyTab({
-  loading,
-  error,
-  onRetry,
-  nodes,
-  edges,
-  onNavigateToSwitch,
-}: {
-  deviceId: string
-  loading: boolean
-  error: unknown
-  onRetry: () => void
-  nodes: Parameters<typeof SwitchTopology>[0]['switches']
-  edges: Parameters<typeof SwitchTopology>[0]['edges']
-  onNavigateToSwitch: (deviceId: string) => void
-}) {
-  if (loading) return <LoadingState label="Loading topology…" />
-  if (error) {
-    return (
-      <ErrorState
-        title="Unable to load topology"
-        message={error instanceof Error ? error.message : 'Request failed'}
-        onRetry={onRetry}
-      />
-    )
-  }
-  if (nodes.length === 0) {
-    return (
-      <EmptyState
-        title="No topology neighbors discovered"
-        description="CDP/LLDP discovery has not found any switch-to-switch links for this device yet."
-      />
-    )
-  }
-
-  return (
-    <Card className="border-border/70">
-      <CardHeader>
-        <CardTitle className="text-base">Neighborhood</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <SwitchTopology switches={nodes} edges={edges} readOnly onNodeClick={onNavigateToSwitch} />
-      </CardContent>
-    </Card>
-  )
-}
