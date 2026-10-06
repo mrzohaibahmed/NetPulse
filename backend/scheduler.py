@@ -72,6 +72,34 @@ ARP_ACTIVE_SWEEP_JOB_ID = "arp_active_sweep_job"
 SWITCH_HARDWARE_SNMP_JOB_ID = "switch_hardware_snmp_job"
 SWITCH_HARDWARE_SSH_JOB_ID = "switch_hardware_ssh_job"
 SWITCH_HARDWARE_INVENTORY_JOB_ID = "switch_hardware_inventory_job"
+ILO_HARDWARE_POLL_JOB_ID = "ilo_hardware_poll_job"
+
+
+def _run_ilo_hardware_poll_job() -> None:
+    if not require_scheduler_leadership(ILO_HARDWARE_POLL_JOB_ID):
+        return
+    try:
+        from services.server_hardware import collect_all_server_hardware  # noqa: PLC0415
+        collect_all_server_hardware()
+    except Exception as exc:  # noqa: BLE001
+        logger.error("iLO server hardware polling job failed: %s", exc)
+
+
+def _start_ilo_hardware_poll_job() -> None:
+    """Register periodic iLO server hardware collection job (60s default)."""
+    try:
+        scheduler.add_job(
+            func=_run_ilo_hardware_poll_job,
+            trigger="interval",
+            seconds=60,
+            id=ILO_HARDWARE_POLL_JOB_ID,
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        logger.info("iLO server hardware polling job registered | interval=60s")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("iLO server hardware polling job could not be registered: %s", exc)
 
 
 def _reclaim_expired_storm_leases() -> None:
@@ -863,6 +891,9 @@ def start_scheduler():
 
         # Job 7: Cisco switch hardware monitoring (feature-flagged).
         _start_switch_hardware_jobs()
+
+        # Job 8: iLO server hardware monitoring.
+        _start_ilo_hardware_poll_job()
 
 
 def reschedule_dispatcher_job() -> None:

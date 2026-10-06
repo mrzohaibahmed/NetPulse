@@ -117,6 +117,10 @@ def normalize_server_hardware(
     )
 
 
+from services.server_hardware.collector import (
+    collect_all_server_hardware,
+    poll_single_device_ilo_hardware,
+)
 from services.server_hardware.indexes import (
     ensure_server_hardware_indexes,
 )
@@ -150,10 +154,12 @@ __all__ = [
     "StorageController",
     "TemperatureSensor",
     "append_server_hardware_history",
+    "collect_all_server_hardware",
     "ensure_server_hardware_indexes",
     "get_current_server_hardware",
     "get_server_hardware_history",
     "normalize_server_hardware",
+    "poll_single_device_ilo_hardware",
     "save_current_server_hardware",
     "serialize_server_hardware",
 ]
