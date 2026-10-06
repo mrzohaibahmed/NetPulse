@@ -121,6 +121,12 @@ from services.server_hardware.collector import (
     collect_all_server_hardware,
     poll_single_device_ilo_hardware,
 )
+from services.server_hardware.health import (
+    ServerHardwareHealth,
+    SubsystemHealth,
+    evaluate_server_hardware_health,
+    resolve_component_health,
+)
 from services.server_hardware.indexes import (
     ensure_server_hardware_indexes,
 )
@@ -144,6 +150,7 @@ __all__ = [
     "ServerCapabilities",
     "ServerFirmware",
     "ServerHardware",
+    "ServerHardwareHealth",
     "ServerHardwarePersistenceError",
     "ServerIdentity",
     "ServerMemoryDimm",
@@ -152,14 +159,17 @@ __all__ = [
     "ServerProcessor",
     "ServerStorage",
     "StorageController",
+    "SubsystemHealth",
     "TemperatureSensor",
     "append_server_hardware_history",
     "collect_all_server_hardware",
     "ensure_server_hardware_indexes",
+    "evaluate_server_hardware_health",
     "get_current_server_hardware",
     "get_server_hardware_history",
     "normalize_server_hardware",
     "poll_single_device_ilo_hardware",
+    "resolve_component_health",
     "save_current_server_hardware",
     "serialize_server_hardware",
 ]
