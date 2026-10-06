@@ -117,6 +117,19 @@ def normalize_server_hardware(
     )
 
 
+from services.server_hardware.indexes import (
+    ensure_server_hardware_indexes,
+)
+from services.server_hardware.persistence import (
+    ServerHardwarePersistenceError,
+    append_server_hardware_history,
+    get_current_server_hardware,
+    get_server_hardware_history,
+    save_current_server_hardware,
+    serialize_server_hardware,
+)
+
+
 __all__ = [
     "ComponentStatus",
     "CoolingFan",
@@ -127,6 +140,7 @@ __all__ = [
     "ServerCapabilities",
     "ServerFirmware",
     "ServerHardware",
+    "ServerHardwarePersistenceError",
     "ServerIdentity",
     "ServerMemoryDimm",
     "ServerNetworkInterface",
@@ -135,5 +149,11 @@ __all__ = [
     "ServerStorage",
     "StorageController",
     "TemperatureSensor",
+    "append_server_hardware_history",
+    "ensure_server_hardware_indexes",
+    "get_current_server_hardware",
+    "get_server_hardware_history",
     "normalize_server_hardware",
+    "save_current_server_hardware",
+    "serialize_server_hardware",
 ]

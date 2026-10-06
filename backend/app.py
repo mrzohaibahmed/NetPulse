@@ -37,6 +37,7 @@ from services.monitor_indexes import ensure_monitoring_idempotency_indexes
 from services.monitor_schedule_migration import ensure_monitor_schedule_migration
 from services.storm.pipeline_cycles import ensure_pipeline_cycle_indexes
 from services.storm.confirmation import ensure_confirmation_indexes
+from services.server_hardware import ensure_server_hardware_indexes
 from services.storm.eligibility import ensure_eligibility_indexes
 from services.storm.incident import ensure_incident_indexes
 from services.storm.risk_engine import ensure_risk_indexes
@@ -200,6 +201,7 @@ def bootstrap():
     LockService.ensure_lock_ttl_indexes()
 
     ensure_default_admin()
+    ensure_server_hardware_indexes()
     ensure_interface_indexes()
     ensure_interface_stats_indexes()
     ensure_mac_arp_indexes()
