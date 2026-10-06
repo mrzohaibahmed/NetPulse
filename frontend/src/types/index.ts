@@ -47,7 +47,10 @@ export interface NetworkInfo {
 export interface Device {
   _id: string
   hostname: string
-  ipAddress: string
+  /** OS / network IP. Absent for iLO-only eligible servers. */
+  ipAddress?: string | null
+  /** iLO management IPv4 or DNS hostname. */
+  iloAddress?: string | null
   deviceType: string
   critical: boolean
   monitor: boolean
@@ -75,7 +78,7 @@ export interface Device {
   discoverySource?: string | null
   networkInfo?: NetworkInfo | null
   /**
-   * SSH/SNMP credentials metadata.
+   * SSH/SNMP/iLO credentials metadata.
    * Secrets are never returned (passwords are represented via configured flags).
    */
   credentials?: DeviceCredentials | null
@@ -83,7 +86,8 @@ export interface Device {
 
 export interface DevicePayload {
   hostname: string
-  ipAddress: string
+  ipAddress?: string | null
+  iloAddress?: string | null
   deviceType: string
   critical?: boolean
   monitor?: boolean
@@ -108,6 +112,9 @@ export interface DeviceCredentials {
   snmpCommunityConfigured: boolean
   snmpPort: number
   snmpVersion: string
+  iloUsername?: string
+  iloPasswordConfigured?: boolean
+  iloPort?: number
 }
 
 export interface DeviceCredentialsPayload {
@@ -120,6 +127,9 @@ export interface DeviceCredentialsPayload {
   snmpVersion?: string
   snmpPort?: number
   snmpTimeout?: number
+  iloUsername?: string
+  iloPassword?: string
+  iloPort?: number
 }
 
 export interface PingHistory {

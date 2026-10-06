@@ -36,6 +36,7 @@ from services.scheduler_ownership import (
     CycleLeadershipGuard,
     require_scheduler_leadership,
 )
+from utils.management_address import device_has_usable_os_ip, usable_os_ip
 from services.settings_service import (
     get_failure_confirmation_scans,
     get_monitor_ping_concurrency,
@@ -554,9 +555,20 @@ def _atomic_mark_failure(
 
 def _scan_device(device, *, suppress_offline: bool, cycle_id: str):
     hostname = device.get("hostname", "unknown")
-    ip_address = device.get("ipAddress", "unknown")
+    ip_address = usable_os_ip(device.get("ipAddress"))
     device_id = device.get("_id")
     attempt_id = _new_attempt_id()
+
+    if not ip_address:
+        logger.info(
+            "Device scan skipped — no usable OS IP | cycleId=%s | attemptId=%s | "
+            "deviceId=%s | hostname=%s",
+            cycle_id,
+            attempt_id,
+            device_id,
+            hostname,
+        )
+        return {"success": False, "status": "skipped", "message": "No usable OS IP"}
 
     logger.info(
         "Device scan started | cycleId=%s | attemptId=%s | deviceId=%s | "
@@ -733,7 +745,12 @@ def monitor_all_devices():
 
     now = utc_now()
     try:
-        devices = list(_db().devices.find({"monitor": True}))
+        devices = list(
+            _db().devices.find({
+                "monitor": True,
+                "ipAddress": {"$type": "string", "$gt": ""},
+            })
+        )
     except Exception as exc:  # noqa: BLE001
         logger.error(
             "Failed to load devices for monitoring | cycleId=%s | error=%s",
@@ -843,8 +860,17 @@ def monitor_all_devices():
 
 def _manual_ping_one(device: dict[str, Any]) -> dict[str, Any]:
     """Worker for manual bulk ping — mirrors single-device /scan semantics."""
-    ip_address = device.get("ipAddress") or "unknown"
+    ip_address = usable_os_ip(device.get("ipAddress"))
     hostname = device.get("hostname") or "unknown"
+    if not ip_address:
+        return {
+            "success": False,
+            "ip": None,
+            "hostname": hostname,
+            "status": None,
+            "error": "No usable OS IP",
+            "skipped": True,
+        }
     try:
         result = ping_device(
             ip_address,
@@ -882,10 +908,14 @@ def manual_ping_all_devices() -> dict[str, Any]:
 
     Same apply_ping_result / Manual history path as POST /devices/<id>/scan.
     Does not require scheduler leadership (operator-triggered).
+    Devices without a usable OS IP are skipped (not counted as ICMP failures).
     """
     cycle_id = f"manual-{uuid.uuid4().hex[:12]}"
     concurrency = get_monitor_ping_concurrency()
-    devices = list(_db().devices.find({}))
+    devices = [
+        d for d in _db().devices.find({})
+        if device_has_usable_os_ip(d)
+    ]
     total = len(devices)
 
     logger.info(

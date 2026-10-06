@@ -4,8 +4,8 @@ from utils.utc import utc_now
 
 def create_device(
     hostname,
-    ip_address,
-    device_type,
+    ip_address=None,
+    device_type="Unknown",
     critical=False,
     monitor=True,
     show_on_dashboard=False,
@@ -14,12 +14,22 @@ def create_device(
     ping_retries=None,
     credentials=None,
     location=None,
+    ilo_address=None,
 ):
+    """
+    Build a new device document.
+
+    ``ip_address`` may be omitted for eligible iLO-only server records.
+    Unused address fields are omitted from the document (never stored as
+    empty string or null). Without a usable OS IP, monitoring is forced off.
+    """
     now = utc_now()
+
+    if not ip_address:
+        monitor = False
 
     document = {
         "hostname": hostname,
-        "ipAddress": ip_address,
         "deviceType": device_type,
         "critical": critical,
         "monitor": monitor,
@@ -35,6 +45,11 @@ def create_device(
         "createdAt": now,
         "updatedAt": now,
     }
+    if ip_address:
+        document["ipAddress"] = ip_address
+    if ilo_address:
+        document["iloAddress"] = ilo_address
+
     # New monitored devices are due immediately for a first check; the
     # dispatcher / claim path then advances nextCheckAt by pingInterval.
     if monitor:
@@ -51,9 +66,12 @@ def create_device(
 
 def normalize_device_credentials(raw, existing=None) -> dict | None:
     """
-    Validate and normalise an optional SSH credentials payload.
+    Validate and normalise an optional credentials payload.
 
-    Accepted keys: sshUsername, sshPassword, sshPort, sshSecret, sshVendor.
+    Accepted keys: sshUsername, sshPassword, sshPort, sshSecret, sshVendor,
+    snmpCommunity, snmpVersion, snmpPort, snmpTimeout,
+    iloUsername, iloPassword, iloPort.
+
     When ``existing`` is provided, omitted secret fields are preserved so a
     partial update (e.g. username only) does not wipe the password.
 
@@ -111,5 +129,20 @@ def normalize_device_credentials(raw, existing=None) -> dict | None:
             credentials["snmpTimeout"] = float(raw["snmpTimeout"])
         except (TypeError, ValueError) as exc:
             raise ValueError("snmpTimeout must be a number") from exc
+
+    if "iloUsername" in raw and raw["iloUsername"] is not None:
+        credentials["iloUsername"] = str(raw["iloUsername"]).strip()
+
+    if "iloPassword" in raw and raw["iloPassword"] not in (None, ""):
+        credentials["iloPassword"] = encrypt_secret(str(raw["iloPassword"]))
+
+    if "iloPort" in raw and raw["iloPort"] not in ("", None):
+        try:
+            ilo_port = int(raw["iloPort"])
+        except (TypeError, ValueError) as exc:
+            raise ValueError("iloPort must be an integer") from exc
+        if not (1 <= ilo_port <= 65535):
+            raise ValueError("iloPort must be between 1 and 65535")
+        credentials["iloPort"] = ilo_port
 
     return credentials or None

@@ -125,9 +125,11 @@ def build_due_unclaimed_filter(now) -> dict[str, Any]:
     Candidate query for the dispatcher (no ``_id``).
 
     Missing ``nextCheckAt`` / claim expiry fields mean due / unclaimed.
+    Devices without a usable OS ``ipAddress`` are excluded (iLO-only).
     """
     return {
         "monitor": True,
+        "ipAddress": {"$type": "string", "$gt": ""},
         "$and": [
             {
                 "$or": [
@@ -159,6 +161,15 @@ def claim_device(
     Returns the updated device document on success, or ``None`` when another
     claimant won the race / the device is not due / not monitored.
     """
+    from utils.management_address import device_has_usable_os_ip  # noqa: PLC0415
+
+    if device is not None and not device_has_usable_os_ip(device):
+        logger.info(
+            "Device scan claim skipped — no usable OS IP | deviceId=%s",
+            device_id,
+        )
+        return None
+
     claim_now = now or utc_now()
     config = get_ping_config(device)
     interval_s = max(int(config["interval"]), 1)

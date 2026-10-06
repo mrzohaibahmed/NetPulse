@@ -28,20 +28,36 @@ import {
 } from '@/shared/ui/select'
 
 const IPV4_RE = /^(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)$/
-// Accepts common IPv6 forms including compressed `::`.
-const IPV6_RE =
-  /^((?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|(?:[0-9a-fA-F]{1,4}:){1,7}:|(?:[0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|(?:[0-9a-fA-F]{1,4}:){1,5}(?::[0-9a-fA-F]{1,4}){1,2}|(?:[0-9a-fA-F]{1,4}:){1,4}(?::[0-9a-fA-F]{1,4}){1,3}|(?:[0-9a-fA-F]{1,4}:){1,3}(?::[0-9a-fA-F]{1,4}){1,4}|(?:[0-9a-fA-F]{1,4}:){1,2}(?::[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:(?:(?::[0-9a-fA-F]{1,4}){1,6})|:(?:(?::[0-9a-fA-F]{1,4}){1,7}|:))$/
+const ILO_ONLY_TYPES = new Set(['server', 'linux server', 'esxi server'])
 
-const schema = z.object({
+/** Reject URL-like iLO values; backend does authoritative validation. */
+function looksLikeUrlAddress(value: string): boolean {
+  const v = value.trim().toLowerCase()
+  return (
+    v.includes('://') ||
+    v.includes('/') ||
+    v.includes('@') ||
+    v.includes('?') ||
+    v.includes('#') ||
+    v.includes(':')
+  )
+}
+
+export function isIloOnlyDeviceType(deviceType: string): boolean {
+  return ILO_ONLY_TYPES.has(deviceType.trim().toLowerCase())
+}
+
+const baseSchema = z.object({
   hostname: z.string().trim().min(1, 'Hostname is required'),
-  ipAddress: z.string().min(1).refine((val) => IPV4_RE.test(val.trim()) || IPV6_RE.test(val.trim()), {
-    message: 'Enter a valid IPv4/IPv6 address',
-  }),
+  ipAddress: z.string().trim(),
+  iloAddress: z.string().trim(),
   deviceType: z.string().trim().min(1, 'Device type is required'),
   vendor: z.string().trim(),
   username: z.string().trim(),
   password: z.string(),
   enableSecret: z.string(),
+  iloUsername: z.string().trim(),
+  iloPassword: z.string(),
   critical: z.boolean(),
   monitor: z.boolean(),
   showOnDashboard: z.boolean(),
@@ -51,7 +67,46 @@ const schema = z.object({
   location: z.string().trim().optional(),
 })
 
-type FormValues = z.infer<typeof schema>
+export const deviceFormSchema = baseSchema.superRefine((values, ctx) => {
+  const ip = values.ipAddress.trim()
+  const ilo = values.iloAddress.trim()
+
+  if (!ip && !ilo) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Provide an OS IP address and/or an iLO address',
+      path: ['ipAddress'],
+    })
+  }
+
+  if (ip && !IPV4_RE.test(ip)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Enter a valid IPv4 address',
+      path: ['ipAddress'],
+    })
+  }
+
+  if (ilo) {
+    if (looksLikeUrlAddress(ilo) || /\s/.test(values.iloAddress)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Enter an IPv4 or DNS hostname (not a URL)',
+        path: ['iloAddress'],
+      })
+    }
+  }
+
+  if (!ip && ilo && !isIloOnlyDeviceType(values.deviceType)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'iLO-only devices must be Server, Linux Server, or ESXi Server',
+      path: ['deviceType'],
+    })
+  }
+})
+
+export type DeviceFormValues = z.infer<typeof baseSchema>
 
 interface DeviceFormDialogProps {
   open: boolean
@@ -63,16 +118,20 @@ export function DeviceFormDialog({ open, onOpenChange, device }: DeviceFormDialo
   const { create, update } = useDeviceMutations()
   const [showPassword, setShowPassword] = useState(false)
   const [showEnableSecret, setShowEnableSecret] = useState(false)
-  const form = useForm<FormValues>({
-    resolver: zodResolver(schema),
+  const [showIloPassword, setShowIloPassword] = useState(false)
+  const form = useForm<DeviceFormValues>({
+    resolver: zodResolver(deviceFormSchema),
     defaultValues: {
       hostname: '',
       ipAddress: '',
+      iloAddress: '',
       deviceType: DEFAULT_DEVICE_TYPE,
       vendor: '',
       username: '',
       password: '',
       enableSecret: '',
+      iloUsername: '',
+      iloPassword: '',
       critical: false,
       monitor: true,
       showOnDashboard: false,
@@ -88,15 +147,17 @@ export function DeviceFormDialog({ open, onOpenChange, device }: DeviceFormDialo
     if (device) {
       form.reset({
         hostname: device.hostname,
-        ipAddress: device.ipAddress,
+        ipAddress: device.ipAddress ?? '',
+        iloAddress: device.iloAddress ?? '',
         deviceType: device.deviceType,
         vendor: device.credentials?.sshVendor ?? '',
         username: device.credentials?.sshUsername ?? '',
         password: '',
         enableSecret: '',
+        iloUsername: device.credentials?.iloUsername ?? '',
+        iloPassword: '',
         critical: device.critical,
         monitor: device.monitor,
-        // Legacy devices without the field already appear on the dashboard.
         showOnDashboard: device.showOnDashboard ?? true,
         pingInterval: device.pingInterval ?? null,
         pingTimeoutMs: device.pingTimeoutMs ?? null,
@@ -107,11 +168,14 @@ export function DeviceFormDialog({ open, onOpenChange, device }: DeviceFormDialo
       form.reset({
         hostname: '',
         ipAddress: '',
+        iloAddress: '',
         deviceType: DEFAULT_DEVICE_TYPE,
         vendor: '',
         username: '',
         password: '',
         enableSecret: '',
+        iloUsername: '',
+        iloPassword: '',
         critical: false,
         monitor: true,
         showOnDashboard: false,
@@ -123,40 +187,61 @@ export function DeviceFormDialog({ open, onOpenChange, device }: DeviceFormDialo
     }
     setShowPassword(false)
     setShowEnableSecret(false)
+    setShowIloPassword(false)
     form.clearErrors()
   }, [device, open, form])
+
+  const watchedIp = form.watch('ipAddress')
+  const watchedIlo = form.watch('iloAddress')
+  const isIloOnly = !watchedIp.trim() && Boolean(watchedIlo.trim())
+
+  useEffect(() => {
+    if (!open) return
+    if (isIloOnly && form.getValues('monitor')) {
+      form.setValue('monitor', false)
+    }
+  }, [isIloOnly, open, form])
 
   const onSubmit = form.handleSubmit(async (values) => {
     const nextPassword = values.password.trim()
     const nextEnableSecret = values.enableSecret.trim()
     const nextUsername = values.username.trim()
+    const nextIloPassword = values.iloPassword.trim()
+    const nextIloUsername = values.iloUsername.trim()
+    const ip = values.ipAddress.trim()
+    const ilo = values.iloAddress.trim()
 
     const credentialsPayload = device
       ? {
           sshUsername: nextUsername,
           sshVendor: values.vendor.trim(),
+          iloUsername: nextIloUsername,
           ...(nextPassword ? { sshPassword: nextPassword } : {}),
           ...(nextEnableSecret ? { sshSecret: nextEnableSecret } : {}),
+          ...(nextIloPassword ? { iloPassword: nextIloPassword } : {}),
         }
       : {
           ...(nextUsername ? { sshUsername: nextUsername } : {}),
           ...(values.vendor.trim() ? { sshVendor: values.vendor.trim() } : {}),
+          ...(nextIloUsername ? { iloUsername: nextIloUsername } : {}),
           ...(nextPassword ? { sshPassword: nextPassword } : {}),
           ...(nextEnableSecret ? { sshSecret: nextEnableSecret } : {}),
+          ...(nextIloPassword ? { iloPassword: nextIloPassword } : {}),
         }
 
     const isServer = values.deviceType.trim().toLowerCase() === 'server'
     const payload: DevicePayload = {
       hostname: values.hostname,
-      ipAddress: values.ipAddress,
       deviceType: values.deviceType,
       critical: values.critical,
-      monitor: values.monitor,
+      monitor: ip ? values.monitor : false,
       showOnDashboard: isServer ? values.showOnDashboard : false,
       pingInterval: values.pingInterval ?? null,
       pingTimeoutMs: values.pingTimeoutMs ?? null,
       pingRetries: values.pingRetries ?? null,
       location: values.location?.trim() ? values.location.trim() : null,
+      ipAddress: ip || null,
+      iloAddress: ilo || null,
     }
 
     if (device || Object.keys(credentialsPayload).length > 0) {
@@ -183,7 +268,7 @@ export function DeviceFormDialog({ open, onOpenChange, device }: DeviceFormDialo
           <DialogDescription>
             {device
               ? 'Update monitoring settings for this host.'
-              : 'Register a new host for monitoring.'}
+              : 'Register a new host for monitoring. iLO-only servers may omit the OS IP.'}
           </DialogDescription>
         </DialogHeader>
 
@@ -201,11 +286,32 @@ export function DeviceFormDialog({ open, onOpenChange, device }: DeviceFormDialo
             </div>
 
             <div className="space-y-1.5">
-              <Label htmlFor="ipAddress">IP address</Label>
+              <Label htmlFor="ipAddress">OS IP address</Label>
               <Input id="ipAddress" className="mono" {...form.register('ipAddress')} />
               {form.formState.errors.ipAddress ? (
                 <p className="text-xs text-danger">{form.formState.errors.ipAddress.message}</p>
-              ) : null}
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  Optional for Server / Linux Server / ESXi Server when an iLO address is set.
+                </p>
+              )}
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="iloAddress">iLO address</Label>
+              <Input
+                id="iloAddress"
+                className="mono"
+                {...form.register('iloAddress')}
+                placeholder="IPv4 or DNS hostname"
+              />
+              {form.formState.errors.iloAddress ? (
+                <p className="text-xs text-danger">{form.formState.errors.iloAddress.message}</p>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  Do not enter a URL (no https:// or /redfish path).
+                </p>
+              )}
             </div>
 
             <div className="space-y-1.5">
@@ -223,7 +329,6 @@ export function DeviceFormDialog({ open, onOpenChange, device }: DeviceFormDialo
                       {type}
                     </SelectItem>
                   ))}
-                  {/* Preserve legacy/custom types not in the canonical list */}
                   {device?.deviceType &&
                   !(DEVICE_TYPES as readonly string[]).includes(device.deviceType) ? (
                     <SelectItem value={device.deviceType}>{device.deviceType}</SelectItem>
@@ -232,19 +337,6 @@ export function DeviceFormDialog({ open, onOpenChange, device }: DeviceFormDialo
               </Select>
               {form.formState.errors.deviceType ? (
                 <p className="text-xs text-danger">{form.formState.errors.deviceType.message}</p>
-              ) : null}
-              {device?.classificationConfidence != null && device.classificationConfidence < 50 ? (
-                <p className="text-xs text-muted-foreground">
-                  Auto-detection confidence is low ({device.classificationConfidence}%). Please
-                  confirm or set the device type manually.
-                </p>
-              ) : device?.classificationConfidence != null ? (
-                <p className="text-xs text-muted-foreground">
-                  Auto-detected
-                  {device.operatingSystem ? ` · OS: ${device.operatingSystem}` : ''}
-                  {device.vendor ? ` · Vendor: ${device.vendor}` : ''}
-                  {` · ${device.classificationConfidence}% confidence`}
-                </p>
               ) : null}
             </div>
 
@@ -283,11 +375,7 @@ export function DeviceFormDialog({ open, onOpenChange, device }: DeviceFormDialo
               <div className="space-y-1.5">
                 <Label htmlFor="vendor">Vendor</Label>
                 <Input id="vendor" {...form.register('vendor')} placeholder="e.g. cisco_ios" />
-                {form.formState.errors.vendor ? (
-                  <p className="text-xs text-danger">{form.formState.errors.vendor.message}</p>
-                ) : null}
               </div>
-
               <div className="space-y-1.5">
                 <Label htmlFor="ssh-username">SSH Username</Label>
                 <Input
@@ -296,9 +384,6 @@ export function DeviceFormDialog({ open, onOpenChange, device }: DeviceFormDialo
                   {...form.register('username')}
                   placeholder="Optional SSH username"
                 />
-                {form.formState.errors.username ? (
-                  <p className="text-xs text-danger">{form.formState.errors.username.message}</p>
-                ) : null}
               </div>
             </div>
 
@@ -331,9 +416,6 @@ export function DeviceFormDialog({ open, onOpenChange, device }: DeviceFormDialo
                   {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </Button>
               </div>
-              {form.formState.errors.password ? (
-                <p className="text-xs text-danger">{form.formState.errors.password.message}</p>
-              ) : null}
             </div>
 
             <div className="space-y-1.5">
@@ -350,7 +432,9 @@ export function DeviceFormDialog({ open, onOpenChange, device }: DeviceFormDialo
                   autoComplete="new-password"
                   {...form.register('enableSecret')}
                   placeholder={
-                    device ? 'Leave blank to keep current enable password' : 'Optional enable password'
+                    device
+                      ? 'Leave blank to keep current enable password'
+                      : 'Optional enable password'
                   }
                   className="pr-10"
                 />
@@ -363,6 +447,51 @@ export function DeviceFormDialog({ open, onOpenChange, device }: DeviceFormDialo
                   onClick={() => setShowEnableSecret((s) => !s)}
                 >
                   {showEnableSecret ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </Button>
+              </div>
+            </div>
+          </fieldset>
+
+          <fieldset className="space-y-3 rounded-xl border border-border/60 bg-secondary/20 p-4">
+            <legend className="px-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              iLO credentials (optional)
+            </legend>
+            <div className="space-y-1.5">
+              <Label htmlFor="ilo-username">iLO Username</Label>
+              <Input
+                id="ilo-username"
+                autoComplete="off"
+                {...form.register('iloUsername')}
+                placeholder="Optional iLO username"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between gap-4">
+                <Label htmlFor="ilo-password">iLO Password</Label>
+                {device?.credentials?.iloPasswordConfigured ? (
+                  <p className="text-xs text-muted-foreground">Password Configured</p>
+                ) : null}
+              </div>
+              <div className="relative">
+                <Input
+                  id="ilo-password"
+                  type={showIloPassword ? 'text' : 'password'}
+                  autoComplete="new-password"
+                  {...form.register('iloPassword')}
+                  placeholder={
+                    device ? 'Leave blank to keep current iLO password' : 'Optional iLO password'
+                  }
+                  className="pr-10"
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="absolute right-0 top-1/2 -translate-y-1/2"
+                  aria-label={showIloPassword ? 'Hide iLO password' : 'Show iLO password'}
+                  onClick={() => setShowIloPassword((s) => !s)}
+                >
+                  {showIloPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </Button>
               </div>
             </div>
@@ -415,6 +544,7 @@ export function DeviceFormDialog({ open, onOpenChange, device }: DeviceFormDialo
               <label className="flex items-center gap-2 text-sm">
                 <Checkbox
                   checked={form.watch('monitor')}
+                  disabled={isIloOnly}
                   onCheckedChange={(checked) => form.setValue('monitor', Boolean(checked))}
                 />
                 Include in automatic monitoring
@@ -438,7 +568,12 @@ export function DeviceFormDialog({ open, onOpenChange, device }: DeviceFormDialo
                 </label>
               ) : null}
             </div>
-            {isServerType ? (
+            {isIloOnly ? (
+              <p className="text-xs text-muted-foreground">
+                iLO-only devices cannot be ping-monitored. Monitoring stays off until an OS IP is
+                set.
+              </p>
+            ) : isServerType ? (
               <p className="text-xs text-muted-foreground">
                 When enabled, this server appears under Site Monitoring for the selected location.
               </p>

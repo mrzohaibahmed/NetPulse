@@ -136,7 +136,9 @@ function ServerStatusCard({
               <p className="truncate text-base font-bold tracking-tight text-foreground">
                 {server.hostname}
               </p>
-              <p className="truncate text-xs font-mono text-muted-foreground">{server.ipAddress}</p>
+              <p className="truncate text-xs font-mono text-muted-foreground">
+                {server.ipAddress || server.iloAddress || '—'}
+              </p>
             </div>
           </div>
 

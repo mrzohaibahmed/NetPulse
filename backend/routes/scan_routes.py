@@ -7,6 +7,7 @@ from config.database import db
 from services.monitor_service import apply_ping_result, manual_ping_all_devices
 from services.ping_service import ping_device
 from utils.auth import require_auth
+from utils.management_address import usable_os_ip
 from utils.serializers import serialize_device
 
 scan_bp = Blueprint("scan", __name__)
@@ -62,8 +63,15 @@ def scan_device(device_id):
                 "message": "Device not found",
             }), 404
 
+        ip_address = usable_os_ip(device.get("ipAddress"))
+        if not ip_address:
+            return jsonify({
+                "success": False,
+                "message": "Device has no usable OS IP address to ping",
+            }), 400
+
         result = ping_device(
-            device["ipAddress"],
+            ip_address,
             critical=bool(device.get("critical")),
             device=device,
         )

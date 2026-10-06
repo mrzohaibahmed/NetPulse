@@ -71,7 +71,7 @@ def serialize_interface_stat(stat: dict) -> dict:
 
 def serialize_credentials(credentials: dict | None) -> dict | None:
     """
-    Serialise device SSH/SNMP credentials without exposing secrets.
+    Serialise device SSH/SNMP/iLO credentials without exposing secrets.
 
     Passwords / enable secrets are replaced with a boolean ``configured`` flag.
     """
@@ -80,8 +80,9 @@ def serialize_credentials(credentials: dict | None) -> dict | None:
 
     has_password = bool(credentials.get("sshPassword"))
     has_secret = bool(credentials.get("sshSecret"))
+    has_ilo_password = bool(credentials.get("iloPassword"))
 
-    return {
+    payload = {
         "sshUsername": credentials.get("sshUsername") or "",
         "sshPort": credentials.get("sshPort") or 22,
         "sshVendor": credentials.get("sshVendor") or "",
@@ -90,7 +91,12 @@ def serialize_credentials(credentials: dict | None) -> dict | None:
         "snmpCommunityConfigured": bool(credentials.get("snmpCommunity")),
         "snmpPort": credentials.get("snmpPort") or 161,
         "snmpVersion": credentials.get("snmpVersion") or "2c",
+        "iloUsername": credentials.get("iloUsername") or "",
+        "iloPasswordConfigured": has_ilo_password,
     }
+    if credentials.get("iloPort") not in (None, ""):
+        payload["iloPort"] = credentials.get("iloPort")
+    return payload
 
 
 def serialize_interface(interface: dict) -> dict:
@@ -222,6 +228,7 @@ def serialize_device(device):
         "_id": str(device["_id"]),
         "hostname": device.get("hostname"),
         "ipAddress": device.get("ipAddress"),
+        "iloAddress": device.get("iloAddress"),
         "deviceType": get_device_type(device),
         "critical": device.get("critical", False),
         "monitor": device.get("monitor", True),
@@ -246,7 +253,7 @@ def serialize_device(device):
         "discoverySource": device.get("discoverySource"),
         # Nmap metadata — present after the first successful scan, None before.
         "networkInfo": serialize_network_info(device.get("networkInfo")),
-        # SSH credentials metadata (secrets never returned).
+        # Credentials metadata (secrets never returned).
         "credentials": serialize_credentials(device.get("credentials")),
     }
 

@@ -81,7 +81,7 @@ export function DeviceDrawer({ deviceId, open, onOpenChange }: DeviceDrawerProps
           </SheetTitle>
           <SheetDescription className="mono truncate text-sm">
             {device
-              ? `${device.ipAddress} · ${displayDeviceType(device.deviceType, device.classificationConfidence)}`
+              ? `${device.ipAddress || device.iloAddress || '—'} · ${displayDeviceType(device.deviceType, device.classificationConfidence)}`
               : 'Loading device telemetry…'}
           </SheetDescription>
         </SheetHeader>
@@ -176,7 +176,8 @@ export function DeviceDrawer({ deviceId, open, onOpenChange }: DeviceDrawerProps
                       <SectionHeading icon={<Server className="h-4 w-4" />} title="Identity & credentials" />
                       <div className="grid gap-3 sm:grid-cols-2">
                         <Meta label="Hostname" value={device.hostname} />
-                        <Meta label="IP address" value={device.ipAddress} mono />
+                        <Meta label="OS IP address" value={device.ipAddress || '—'} mono />
+                        <Meta label="iLO address" value={device.iloAddress || '—'} mono />
                         <Meta
                           label="Device type"
                           value={displayDeviceType(
@@ -205,6 +206,16 @@ export function DeviceDrawer({ deviceId, open, onOpenChange }: DeviceDrawerProps
                           label="SSH Password"
                           value={
                             device.credentials?.sshPasswordConfigured ? '••••••••' : 'Not Configured'
+                          }
+                        />
+                        <Meta
+                          label="iLO Username"
+                          value={device.credentials?.iloUsername || '—'}
+                        />
+                        <Meta
+                          label="iLO Password"
+                          value={
+                            device.credentials?.iloPasswordConfigured ? '••••••••' : 'Not Configured'
                           }
                         />
                         <Meta label="Monitor" value={device.monitor ? 'Enabled' : 'Disabled'} />

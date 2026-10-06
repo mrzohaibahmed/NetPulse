@@ -591,6 +591,17 @@ def scan_and_update_device(
     device_id: ObjectId = device["_id"]
     scan_profile = normalize_scan_profile(profile)
 
+    from utils.management_address import usable_os_ip  # noqa: PLC0415
+
+    os_ip = usable_os_ip(device.get("ipAddress"))
+    if not os_ip:
+        logger.info(
+            "[NMAP] Skipping device without usable OS IP %s",
+            hostname,
+        )
+        return {"success": False, "ip": None, "error": "No usable OS IP"}
+    ip_address = os_ip
+
     # Guard: skip offline devices to avoid wasting scan time.
     # Ping service is the source of truth for online/offline status.
     if device.get("status") != "Online":
@@ -684,7 +695,12 @@ def scan_all_online_devices(
 
     # Pre-filter to online devices: offline devices are also guarded inside
     # scan_and_update_device, but filtering here avoids unnecessary submissions.
-    online_devices = list(db.devices.find({"status": "Online"}))
+    online_devices = list(
+        db.devices.find({
+            "status": "Online",
+            "ipAddress": {"$type": "string", "$gt": ""},
+        })
+    )
     total = len(online_devices)
 
     if total == 0:

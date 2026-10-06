@@ -15,14 +15,17 @@ from models.location import validate_location
 from services.audit_service import log_audit
 from services.discovery.identity_management import ownership_for_device_edit
 from utils.auth import require_auth
+from utils.management_address import (
+    IPV4_RE,
+    is_ilo_only_device_type,
+    normalize_ilo_address,
+    normalize_os_ip,
+    usable_os_ip,
+)
 from utils.pagination import clamp_page, pagination_payload, parse_pagination
 from utils.serializers import serialize_device
 
 device_bp = Blueprint("devices", __name__)
-
-IPV4_RE = re.compile(
-    r"^(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)$"
-)
 
 
 def build_device_filter():
@@ -89,6 +92,7 @@ def build_device_filter():
         query["$or"] = [
             {"hostname": pattern},
             {"ipAddress": pattern},
+            {"iloAddress": pattern},
             {"deviceType": pattern},
             {"type": pattern},
         ]
@@ -114,26 +118,60 @@ def add_device():
                 "message": "Request body is required",
             }), 400
 
-        required_fields = ["hostname", "ipAddress", "deviceType"]
-        for field in required_fields:
-            if not data.get(field):
-                return jsonify({
-                    "success": False,
-                    "message": f"{field} is required",
-                }), 400
+        hostname = (data.get("hostname") or "").strip()
+        device_type = (data.get("deviceType") or "").strip()
+        if not hostname:
+            return jsonify({"success": False, "message": "hostname is required"}), 400
+        if not device_type:
+            return jsonify({"success": False, "message": "deviceType is required"}), 400
 
-        if not IPV4_RE.match(str(data["ipAddress"]).strip()):
+        raw_ip = data.get("ipAddress")
+        raw_ilo = data.get("iloAddress")
+        has_ip_input = raw_ip is not None and str(raw_ip).strip() != ""
+        has_ilo_input = raw_ilo is not None and str(raw_ilo).strip() != ""
+
+        if not has_ip_input and not has_ilo_input:
             return jsonify({
                 "success": False,
-                "message": "Invalid IPv4 address",
+                "message": "At least one of ipAddress or iloAddress is required",
             }), 400
 
-        existing_device = db.devices.find_one({"ipAddress": data["ipAddress"].strip()})
-        if existing_device:
-            return jsonify({
-                "success": False,
-                "message": "Device with this IP address already exists",
-            }), 409
+        ip_address = None
+        ilo_address = None
+
+        if has_ip_input:
+            try:
+                ip_address = normalize_os_ip(raw_ip)
+            except ValueError as error:
+                return jsonify({"success": False, "message": str(error)}), 400
+            existing_device = db.devices.find_one({"ipAddress": ip_address})
+            if existing_device:
+                return jsonify({
+                    "success": False,
+                    "message": "Device with this IP address already exists",
+                }), 409
+
+        if has_ilo_input:
+            try:
+                ilo_address = normalize_ilo_address(raw_ilo)
+            except ValueError as error:
+                return jsonify({"success": False, "message": str(error)}), 400
+            existing_ilo = db.devices.find_one({"iloAddress": ilo_address})
+            if existing_ilo:
+                return jsonify({
+                    "success": False,
+                    "message": "Device with this iLO address already exists",
+                }), 409
+
+        if ip_address is None:
+            if not is_ilo_only_device_type(device_type):
+                return jsonify({
+                    "success": False,
+                    "message": (
+                        "iLO-only devices must use device type "
+                        "Server, Linux Server, or ESXi Server"
+                    ),
+                }), 400
 
         try:
             credentials = normalize_device_credentials(data.get("credentials"))
@@ -151,23 +189,27 @@ def add_device():
                 "message": str(error),
             }), 400
 
-        device_type = data["deviceType"].strip()
         show_on_dashboard = bool(data.get("showOnDashboard", False))
         if device_type.lower() != "server":
             show_on_dashboard = False
 
+        monitor = bool(data.get("monitor", True))
+        if ip_address is None:
+            monitor = False
+
         device = create_device(
-            hostname=data["hostname"].strip(),
-            ip_address=data["ipAddress"].strip(),
+            hostname=hostname,
+            ip_address=ip_address,
             device_type=device_type,
             critical=bool(data.get("critical", False)),
-            monitor=bool(data.get("monitor", True)),
+            monitor=monitor,
             show_on_dashboard=show_on_dashboard,
             ping_interval=_optional_int(data.get("pingInterval")),
             ping_timeout_ms=_optional_int(data.get("pingTimeoutMs")),
             ping_retries=_optional_int(data.get("pingRetries")),
             credentials=credentials,
             location=location,
+            ilo_address=ilo_address,
         )
 
         # Manually created devices should lock identity fields so background
@@ -184,7 +226,7 @@ def add_device():
         except DuplicateKeyError:
             return jsonify({
                 "success": False,
-                "message": "Device with this IP already exists",
+                "message": "Device with this IP or iLO address already exists",
             }), 409
         created_device = db.devices.find_one({"_id": result.inserted_id})
 
@@ -194,7 +236,8 @@ def add_device():
             entity_id=result.inserted_id,
             details={
                 "hostname": device["hostname"],
-                "ipAddress": device["ipAddress"],
+                "ipAddress": device.get("ipAddress"),
+                "iloAddress": device.get("iloAddress"),
             },
         )
 
@@ -368,19 +411,22 @@ def get_device_networks():
         ips = db.devices.distinct("ipAddress")
         subnets = set()
         for ip in ips:
-            parts = ip.split(".")
+            if not isinstance(ip, str) or not ip.strip():
+                continue
+            parts = ip.strip().split(".")
             if len(parts) == 4:
                 subnets.add(f"{parts[0]}.{parts[1]}.{parts[2]}")
-        
+
         import ipaddress
+
         def subnet_sort_key(s):
             try:
                 return int(ipaddress.IPv4Address(f"{s}.0"))
             except Exception:
                 return 0
-                
+
         sorted_subnets = sorted(list(subnets), key=subnet_sort_key)
-        
+
         return jsonify({
             "success": True,
             "data": sorted_subnets
@@ -435,7 +481,6 @@ def update_device(device_id):
 
         allowed_fields = [
             "hostname",
-            "ipAddress",
             "deviceType",
             "critical",
             "monitor",
@@ -447,6 +492,8 @@ def update_device(device_id):
         ]
 
         update_data = {}
+        unset_fields = {}
+
         for field in allowed_fields:
             if field in data:
                 update_data[field] = data[field]
@@ -475,31 +522,28 @@ def update_device(device_id):
                     "message": str(error),
                 }), 400
 
-            # Never write secrets into the audit trail.
-            audit_details = {
-                k: v for k, v in update_data.items() if k != "credentials"
-            }
-            audit_details["credentialsUpdated"] = True
-        else:
-            audit_details = update_data
+        # --- Address updates (omit empty/null; never persist "") ---
+        clear_ip = "ipAddress" in data and (
+            data.get("ipAddress") is None or str(data.get("ipAddress")).strip() == ""
+        )
+        set_ip = "ipAddress" in data and not clear_ip
+        clear_ilo = "iloAddress" in data and (
+            data.get("iloAddress") is None or str(data.get("iloAddress")).strip() == ""
+        )
+        set_ilo = "iloAddress" in data and not clear_ilo
 
-        if not update_data:
-            return jsonify({
-                "success": False,
-                "message": "No valid fields provided for update",
-            }), 400
+        next_ip = usable_os_ip(device.get("ipAddress"))
+        next_ilo = device.get("iloAddress") if isinstance(device.get("iloAddress"), str) else None
+        if next_ilo is not None:
+            next_ilo = next_ilo.strip() or None
 
-        if "ipAddress" in update_data:
-            ip_address = str(update_data["ipAddress"]).strip()
-            if not IPV4_RE.match(ip_address):
-                return jsonify({
-                    "success": False,
-                    "message": "Invalid IPv4 address",
-                }), 400
-            update_data["ipAddress"] = ip_address
-
+        if set_ip:
+            try:
+                next_ip = normalize_os_ip(data.get("ipAddress"))
+            except ValueError as error:
+                return jsonify({"success": False, "message": str(error)}), 400
             duplicate = db.devices.find_one({
-                "ipAddress": ip_address,
+                "ipAddress": next_ip,
                 "_id": {"$ne": ObjectId(device_id)},
             })
             if duplicate:
@@ -507,6 +551,52 @@ def update_device(device_id):
                     "success": False,
                     "message": "Another device already uses this IP address",
                 }), 409
+            update_data["ipAddress"] = next_ip
+        elif clear_ip:
+            next_ip = None
+            unset_fields["ipAddress"] = ""
+
+        if set_ilo:
+            try:
+                next_ilo = normalize_ilo_address(data.get("iloAddress"))
+            except ValueError as error:
+                return jsonify({"success": False, "message": str(error)}), 400
+            duplicate_ilo = db.devices.find_one({
+                "iloAddress": next_ilo,
+                "_id": {"$ne": ObjectId(device_id)},
+            })
+            if duplicate_ilo:
+                return jsonify({
+                    "success": False,
+                    "message": "Another device already uses this iLO address",
+                }), 409
+            update_data["iloAddress"] = next_ilo
+        elif clear_ilo:
+            next_ilo = None
+            unset_fields["iloAddress"] = ""
+
+        if next_ip is None and next_ilo is None:
+            return jsonify({
+                "success": False,
+                "message": "At least one of ipAddress or iloAddress is required",
+            }), 400
+
+        if next_ip is None:
+            if not is_ilo_only_device_type(next_device_type):
+                return jsonify({
+                    "success": False,
+                    "message": (
+                        "iLO-only devices must use device type "
+                        "Server, Linux Server, or ESXi Server"
+                    ),
+                }), 400
+            update_data["monitor"] = False
+
+        if not update_data and not unset_fields:
+            return jsonify({
+                "success": False,
+                "message": "No valid fields provided for update",
+            }), 400
 
         for key in ("pingInterval", "pingTimeoutMs", "pingRetries"):
             if key in update_data:
@@ -525,8 +615,11 @@ def update_device(device_id):
                 }), 400
 
         # Enabling monitor without a schedule: due immediately for first check.
+        # Never enable monitor without a usable OS IP.
         if "monitor" in update_data and bool(update_data["monitor"]):
-            if not device.get("monitor") or device.get("nextCheckAt") is None:
+            if next_ip is None:
+                update_data["monitor"] = False
+            elif not device.get("monitor") or device.get("nextCheckAt") is None:
                 if "nextCheckAt" not in update_data:
                     update_data["nextCheckAt"] = datetime.now(timezone.utc)
 
@@ -539,15 +632,32 @@ def update_device(device_id):
                 update_data["classificationConfidence"] = 100
                 update_data["classificationMethod"] = "manual"
 
+        # Never write secrets into the audit trail.
+        if "credentials" in update_data:
+            audit_details = {
+                k: v for k, v in update_data.items() if k != "credentials"
+            }
+            audit_details["credentialsUpdated"] = True
+        else:
+            audit_details = dict(update_data)
+        if unset_fields:
+            audit_details["clearedFields"] = sorted(unset_fields.keys())
+
+        mongo_update = {}
+        if update_data:
+            mongo_update["$set"] = update_data
+        if unset_fields:
+            mongo_update["$unset"] = unset_fields
+
         try:
             db.devices.update_one(
                 {"_id": ObjectId(device_id)},
-                {"$set": update_data},
+                mongo_update,
             )
         except DuplicateKeyError:
             return jsonify({
                 "success": False,
-                "message": "Another device already uses this IP address",
+                "message": "Another device already uses this IP or iLO address",
             }), 409
 
         updated_device = db.devices.find_one({"_id": ObjectId(device_id)})

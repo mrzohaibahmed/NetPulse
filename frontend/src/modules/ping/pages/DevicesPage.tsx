@@ -319,8 +319,17 @@ export function DevicesPage() {
       },
       {
         accessorKey: 'ipAddress',
-        header: 'IP',
-        cell: ({ row }) => <span className="mono text-muted-foreground">{row.original.ipAddress}</span>,
+        header: 'OS IP',
+        cell: ({ row }) => (
+          <span className="mono text-muted-foreground">{row.original.ipAddress || '—'}</span>
+        ),
+      },
+      {
+        accessorKey: 'iloAddress',
+        header: 'iLO',
+        cell: ({ row }) => (
+          <span className="mono text-muted-foreground">{row.original.iloAddress || '—'}</span>
+        ),
       },
       {
         accessorKey: 'deviceType',
@@ -879,7 +888,8 @@ export function DevicesPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete device?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will permanently remove {deleteTarget?.hostname} ({deleteTarget?.ipAddress}) from
+              This will permanently remove {deleteTarget?.hostname} (
+              {deleteTarget?.ipAddress || deleteTarget?.iloAddress || 'no address'}) from
               monitoring.
             </AlertDialogDescription>
           </AlertDialogHeader>

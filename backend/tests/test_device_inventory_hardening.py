@@ -23,33 +23,60 @@ from services.discovery import apply as apply_mod
 
 
 def test_unique_index_creation_is_idempotent():
+    """Partial unique ip/ilo indexes + due/claim index; safe to call twice."""
+    state = {
+        "indexes": {
+            "_id_": {"name": "_id_", "key": {"_id": 1}},
+            "uniq_devices_ipAddress": {
+                "name": "uniq_devices_ipAddress",
+                "key": {"ipAddress": 1},
+                "unique": True,
+            },
+        }
+    }
+
     mock_devices = MagicMock()
-    mock_devices.create_index.side_effect = [
-        "uniq_devices_ipAddress",
-        "idx_devices_monitor_due_claim",
-        "uniq_devices_ipAddress",
-        "idx_devices_monitor_due_claim",
-    ]
+
+    def list_indexes():
+        return list(state["indexes"].values())
+
+    def create_index(keys, **kwargs):
+        name = kwargs["name"]
+        doc = {
+            "name": name,
+            "key": {k: v for k, v in keys},
+            "unique": bool(kwargs.get("unique")),
+        }
+        if "partialFilterExpression" in kwargs:
+            doc["partialFilterExpression"] = kwargs["partialFilterExpression"]
+        state["indexes"][name] = doc
+        return name
+
+    def drop_index(name):
+        state["indexes"].pop(name, None)
+
+    mock_devices.list_indexes.side_effect = list_indexes
+    mock_devices.create_index.side_effect = create_index
+    mock_devices.drop_index.side_effect = drop_index
 
     with patch("services.device_indexes.db") as mock_db:
         mock_db.devices = mock_devices
         ensure_device_indexes()
         ensure_device_indexes()
 
-    assert mock_devices.create_index.call_count == 4
-    first_keys = [call.args[0] for call in mock_devices.create_index.call_args_list]
-    assert [("ipAddress", 1)] in first_keys
-    assert [("nextCheckAt", 1), ("scanClaimExpiresAt", 1)] in first_keys
-
-    due_calls = [
-        call
-        for call in mock_devices.create_index.call_args_list
-        if call.kwargs.get("name") == "idx_devices_monitor_due_claim"
-        or (call.args and call.args[0] == [("nextCheckAt", 1), ("scanClaimExpiresAt", 1)])
-    ]
-    assert len(due_calls) == 2
-    assert due_calls[0].kwargs["partialFilterExpression"] == {"monitor": True}
-    assert due_calls[0].kwargs.get("unique") is not True
+    ip_idx = state["indexes"]["uniq_devices_ipAddress"]
+    assert ip_idx["unique"] is True
+    assert ip_idx["partialFilterExpression"] == {
+        "ipAddress": {"$type": "string", "$gt": ""}
+    }
+    ilo_idx = state["indexes"]["uniq_devices_iloAddress"]
+    assert ilo_idx["unique"] is True
+    assert ilo_idx["partialFilterExpression"] == {
+        "iloAddress": {"$type": "string", "$gt": ""}
+    }
+    assert "idx_devices_monitor_due_claim" in state["indexes"]
+    due = state["indexes"]["idx_devices_monitor_due_claim"]
+    assert due.get("partialFilterExpression") == {"monitor": True}
 
 
 def test_duplicate_key_error_during_discovery_insert():
