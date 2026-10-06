@@ -1,0 +1,31 @@
+{
+  "@odata.context": "/redfish/v1/$metadata#ServiceRoot",
+  "@odata.id": "/redfish/v1/",
+  "@odata.type": "#ServiceRoot.v1_0_0.ServiceRoot",
+  "Id": "RootService",
+  "Name": "HP iLO Service Root",
+  "RedfishVersion": "1.0.0",
+  "Systems": {
+    "@odata.id": "/redfish/v1/Systems/"
+  },
+  "Chassis": {
+    "@odata.id": "/redfish/v1/Chassis/"
+  },
+  "Managers": {
+    "@odata.id": "/redfish/v1/Managers/"
+  },
+  "SessionService": {
+    "@odata.id": "/redfish/v1/SessionService/"
+  },
+  "Oem": {
+    "Hp": {
+      "Type": "iLO 4",
+      "Manager": [
+        {
+          "ManagerType": "iLO 4",
+          "FirmwareVersion": "2.78"
+        }
+      ]
+    }
+  }
+}

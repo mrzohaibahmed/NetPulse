@@ -1,0 +1,35 @@
+{
+  "@odata.context": "/redfish/v1/$metadata#ServiceRoot.ServiceRoot",
+  "@odata.id": "/redfish/v1/",
+  "@odata.type": "#ServiceRoot.v1_5_0.ServiceRoot",
+  "Id": "RootService",
+  "Name": "HPE iLO 5 Service Root",
+  "RedfishVersion": "1.8.0",
+  "UUID": "95a67c29-3a3d-4c31-8933-289b415a7721",
+  "Systems": {
+    "@odata.id": "/redfish/v1/Systems/"
+  },
+  "Chassis": {
+    "@odata.id": "/redfish/v1/Chassis/"
+  },
+  "Managers": {
+    "@odata.id": "/redfish/v1/Managers/"
+  },
+  "SessionService": {
+    "@odata.id": "/redfish/v1/SessionService/"
+  },
+  "UpdateService": {
+    "@odata.id": "/redfish/v1/UpdateService/"
+  },
+  "Oem": {
+    "Hpe": {
+      "@odata.type": "#HpeServiceRootExt.v2_0_0.HpeServiceRootExt",
+      "Manager": [
+        {
+          "ManagerType": "iLO 5",
+          "FirmwareVersion": "iLO 5 v2.72"
+        }
+      ]
+    }
+  }
+}

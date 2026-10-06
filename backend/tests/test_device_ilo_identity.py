@@ -263,5 +263,94 @@ class DeviceIndexMigrationTests(unittest.TestCase):
         self.assertNotIn("uniq_devices_ipAddress_partial_mig", state["indexes"])
 
 
+class DeviceRouteIloMatrixTests(unittest.TestCase):
+    def setUp(self):
+        from app import app
+        from utils.auth import create_access_token
+
+        self.app = app
+        self.client = app.test_client()
+        admin_id = str(ObjectId())
+        token = create_access_token(user_id=admin_id, username="admin", role="admin")
+        self.auth_headers = {"Authorization": f"Bearer {token}"}
+
+    @patch("routes.device_routes.db")
+    def test_add_device_ilo_matrix_routes(self, mock_db):
+        inserted_id = ObjectId("507f1f77bcf86cd799439011")
+        mock_db.devices.insert_one.return_value.inserted_id = inserted_id
+        mock_db.users.find_one.return_value = {"_id": ObjectId(), "username": "admin", "active": True}
+
+        def mock_find_one(query):
+            if query.get("_id") == inserted_id:
+                return {
+                    "_id": inserted_id,
+                    "hostname": "srv-ilo1",
+                    "deviceType": "Server",
+                    "iloAddress": "ilo.example.com",
+                    "credentials": {"iloUsername": "admin", "iloPassword": "npenc:secretpassword"},
+                    "monitor": False,
+                }
+            return None
+
+        mock_db.devices.find_one.side_effect = mock_find_one
+
+        # 1. iLO-only server record -> Success
+        payload_ilo_only = {
+            "hostname": "srv-ilo1",
+            "deviceType": "Server",
+            "iloAddress": "ilo.example.com",
+            "credentials": {"iloUsername": "admin", "iloPassword": "secretpassword"}
+        }
+        res = self.client.post("/api/devices", json=payload_ilo_only, headers=self.auth_headers)
+        self.assertEqual(res.status_code, 201)
+        data = res.get_json()["data"]
+        self.assertIsNone(data.get("ipAddress"))
+        self.assertEqual(data.get("iloAddress"), "ilo.example.com")
+        self.assertNotIn("iloPassword", data["credentials"])
+
+        # 2. iLO-only non-server deviceType -> Rejection (400)
+        payload_bad_type = {
+            "hostname": "sw-ilo",
+            "deviceType": "Switch",
+            "iloAddress": "10.0.0.50"
+        }
+        res_bad = self.client.post("/api/devices", json=payload_bad_type, headers=self.auth_headers)
+        self.assertEqual(res_bad.status_code, 400)
+        self.assertIn("iLO-only devices must use device type", res_bad.get_json()["message"])
+
+        # 3. Neither address -> Rejection (400)
+        res_empty = self.client.post("/api/devices", json={"hostname": "no-addr", "deviceType": "Server"}, headers=self.auth_headers)
+        self.assertEqual(res_empty.status_code, 400)
+        self.assertIn("At least one of ipAddress or iloAddress is required", res_empty.get_json()["message"])
+
+        # 4. Malformed iloAddress URL -> Rejection (400)
+        res_url = self.client.post("/api/devices", json={
+            "hostname": "bad-url",
+            "deviceType": "Server",
+            "iloAddress": "https://10.0.0.1/redfish"
+        }, headers=self.auth_headers)
+        self.assertEqual(res_url.status_code, 400)
+        self.assertIn("iloAddress must not be a URL", res_url.get_json()["message"])
+
+    @patch("routes.device_routes.db")
+    def test_update_device_ilo_address_routes(self, mock_db):
+        oid = ObjectId("507f1f77bcf86cd799439011")
+        existing = {
+            "_id": oid,
+            "hostname": "srv1",
+            "deviceType": "Server",
+            "ipAddress": "10.0.0.10",
+            "monitor": True
+        }
+        mock_db.devices.find_one.side_effect = lambda query: existing if query.get("_id") == oid else None
+        mock_db.users.find_one.return_value = {"_id": ObjectId(), "username": "admin", "active": True}
+
+        # Add iloAddress to existing OS device -> Success
+        res = self.client.put(f"/api/devices/{oid}", json={"iloAddress": "ILO.Server1.Local"}, headers=self.auth_headers)
+        self.assertEqual(res.status_code, 200)
+        mock_db.devices.update_one.assert_called()
+
+
 if __name__ == "__main__":
     unittest.main()
+
