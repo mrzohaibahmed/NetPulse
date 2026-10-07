@@ -33,3 +33,13 @@ export function displayDeviceType(
 ): string {
   return (deviceType || 'Unknown Device').trim() || 'Unknown Device'
 }
+
+export const SERVER_HARDWARE_DEVICE_TYPES = ['Server', 'Linux Server', 'ESXi Server'] as const
+
+export type ServerHardwareDeviceType = (typeof SERVER_HARDWARE_DEVICE_TYPES)[number]
+
+export function isServerHardwareDevice(deviceType: string | null | undefined): boolean {
+  if (!deviceType) return false
+  return SERVER_HARDWARE_DEVICE_TYPES.includes(deviceType.trim() as ServerHardwareDeviceType)
+}
+

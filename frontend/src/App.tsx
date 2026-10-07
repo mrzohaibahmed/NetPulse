@@ -25,6 +25,9 @@ const DashboardPage = lazy(() =>
 const DevicesPage = lazy(() =>
   import('@/modules/ping/pages/DevicesPage').then((m) => ({ default: m.DevicesPage })),
 )
+const ServerHardwarePage = lazy(() =>
+  import('@/modules/ping/pages/ServerHardwarePage').then((m) => ({ default: m.ServerHardwarePage })),
+)
 const InterfacesPage = lazy(() =>
   import('@/modules/storm/pages/InterfacesEnterprisePage').then((m) => ({
     default: m.InterfacesEnterprisePage,
@@ -106,6 +109,7 @@ export default function App() {
                     <Route element={<Layout />}>
                       <Route index element={<DashboardPage />} />
                       <Route path="devices/:deviceId?" element={<DevicesPage />} />
+                      <Route path="server-hardware/:deviceId?" element={<ServerHardwarePage />} />
                       <Route path="interfaces" element={<InterfacesPage />} />
                       <Route
                         path="interfaces/:deviceId/:interfaceName"

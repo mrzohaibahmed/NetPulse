@@ -19,6 +19,8 @@ from services.server_hardware import (
     evaluate_server_hardware_health,
     get_current_server_hardware,
 )
+from services.server_hardware.collection_state import get_ilo_collection_state
+from services.server_hardware.freshness import evaluate_telemetry_freshness
 from utils.auth import require_auth
 from utils.management_address import (
     IPV4_RE,
@@ -460,6 +462,26 @@ def get_device(device_id):
         return internal_error_response(error, message="Failed to get device")
 
 
+def _format_api_datetime(dt: datetime | None) -> str | None:
+    if isinstance(dt, datetime):
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.isoformat().replace("+00:00", "Z")
+    return None
+
+
+def _format_collection_state_payload(state: dict) -> dict:
+    return {
+        "lastAttemptAt": _format_api_datetime(state.get("lastAttemptAt")),
+        "lastSuccessAt": _format_api_datetime(state.get("lastSuccessAt")),
+        "lastFailureAt": _format_api_datetime(state.get("lastFailureAt")),
+        "lastPollStatus": state.get("lastPollStatus") or "NEVER_POLLED",
+        "consecutiveFailures": int(state.get("consecutiveFailures") or 0),
+        "lastError": state.get("lastError"),
+        "updatedAt": _format_api_datetime(state.get("updatedAt")),
+    }
+
+
 @device_bp.route("/devices/<device_id>/server-hardware/health", methods=["GET"])
 @require_auth()
 def get_device_server_hardware_health(device_id: str):
@@ -476,22 +498,28 @@ def get_device_server_hardware_health(device_id: str):
         if device_type not in eligible_types:
             return jsonify({"success": False, "message": "Device is not an eligible server"}), 400
 
+        collection_state = get_ilo_collection_state(device["_id"], database=db)
         snapshot = get_current_server_hardware(device["_id"])
+
         if not snapshot:
+            freshness_eval = evaluate_telemetry_freshness(None, collection_state)
             return jsonify({
-                "success": False,
-                "message": "No hardware snapshot available for this server",
-            }), 404
+                "success": True,
+                "data": {
+                    "deviceId": str(device["_id"]),
+                    "observedAt": None,
+                    "freshness": freshness_eval.to_dict(),
+                    "collection": _format_collection_state_payload(collection_state),
+                    "health": None,
+                },
+            }), 200
 
         hardware = deserialize_server_hardware(snapshot)
         health_eval = evaluate_server_hardware_health(hardware)
 
         observed_at = snapshot.get("observedAt")
-        observed_at_str = None
-        if isinstance(observed_at, datetime):
-            if observed_at.tzinfo is None:
-                observed_at = observed_at.replace(tzinfo=timezone.utc)
-            observed_at_str = observed_at.isoformat().replace("+00:00", "Z")
+        observed_at_str = _format_api_datetime(observed_at)
+        freshness_eval = evaluate_telemetry_freshness(observed_at, collection_state)
 
         health_dict = health_eval.to_dict()
 
@@ -500,6 +528,8 @@ def get_device_server_hardware_health(device_id: str):
             "data": {
                 "deviceId": str(device["_id"]),
                 "observedAt": observed_at_str,
+                "freshness": freshness_eval.to_dict(),
+                "collection": _format_collection_state_payload(collection_state),
                 "health": {
                     "overallHealth": health_dict["overall_health"],
                     "powerState": health_dict["power_state"],

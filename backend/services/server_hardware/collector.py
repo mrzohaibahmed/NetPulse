@@ -19,6 +19,12 @@ from services.scheduler_ownership import (
     CycleLeadershipGuard,
     require_scheduler_leadership,
 )
+from services.server_hardware.collection_state import (
+    CollectionStateError,
+    record_ilo_poll_attempt,
+    record_ilo_poll_failure,
+    record_ilo_poll_success,
+)
 from services.server_hardware.models import ServerHardware
 from services.server_hardware.persistence import (
     append_server_hardware_history,
@@ -44,6 +50,42 @@ JOB_ID = "ilo_hardware_poll_job"
 ELIGIBLE_DEVICE_TYPES = ["Server", "Linux Server", "ESXi Server"]
 HISTORY_CADENCE_SECONDS = 600.0  # 10 minutes
 MAX_CONCURRENT_DEVICES = 5
+
+
+def _classify_redfish_exception(exc: Exception) -> str:
+    """Map Redfish client and network exceptions to Step 1 collection status categories."""
+    if isinstance(exc, RedfishAuthenticationError):
+        return "AUTHENTICATION_ERROR"
+    if isinstance(exc, RedfishTimeoutError):
+        return "TIMEOUT"
+    if isinstance(exc, RedfishTLSVerificationError):
+        return "TLS_ERROR"
+    if isinstance(exc, RedfishConnectionError):
+        return "CONNECTION_ERROR"
+    if isinstance(exc, RedfishError):
+        return "REDFISH_ERROR"
+    return "UNKNOWN_ERROR"
+
+
+def _safe_record_attempt(device_id: Any, attempt_at: datetime, database: Any) -> None:
+    try:
+        record_ilo_poll_attempt(device_id, attempt_at, database=database)
+    except CollectionStateError as exc:
+        logger.error("[ILO_COLLECTOR] Failed to record poll attempt | deviceId=%s | %s", device_id, exc)
+
+
+def _safe_record_failure(device_id: Any, attempt_at: datetime, error: Exception | str, status: str, database: Any) -> None:
+    try:
+        record_ilo_poll_failure(device_id, attempt_at, error, status=status, database=database)
+    except CollectionStateError as exc:
+        logger.error("[ILO_COLLECTOR] Failed to record poll failure | deviceId=%s | %s", device_id, exc)
+
+
+def _safe_record_success(device_id: Any, attempt_at: datetime, database: Any) -> None:
+    try:
+        record_ilo_poll_success(device_id, attempt_at, success_at=utc_now(), database=database)
+    except CollectionStateError as exc:
+        logger.error("[ILO_COLLECTOR] Failed to record poll success | deviceId=%s | %s", device_id, exc)
 
 
 def _resolve_collection_members(client: RedfishClient, data: Any) -> Any:
@@ -97,6 +139,9 @@ def poll_single_device_ilo_hardware(
         )
         return False
 
+    attempt_at = utc_now()
+    _safe_record_attempt(device_id, attempt_at, database)
+
     try:
         decrypted_password = decrypt_secret(password_raw)
     except Exception as exc:  # noqa: BLE001
@@ -105,12 +150,16 @@ def poll_single_device_ilo_hardware(
             device_id,
             exc,
         )
+        _safe_record_failure(device_id, attempt_at, exc, status="AUTHENTICATION_ERROR", database=database)
         return False
 
     if not decrypted_password:
         logger.info(
             "[ILO_COLLECTOR] Skipping device with empty decrypted iLO password | deviceId=%s",
             device_id,
+        )
+        _safe_record_failure(
+            device_id, attempt_at, "Decrypted iLO password is empty", status="AUTHENTICATION_ERROR", database=database
         )
         return False
 
@@ -148,10 +197,14 @@ def poll_single_device_ilo_hardware(
                     device_id,
                     exc,
                 )
+                _safe_record_failure(device_id, attempt_at, exc, status=_classify_redfish_exception(exc), database=database)
                 return False
 
             if not isinstance(service_root_data, dict):
                 logger.warning("[ILO_COLLECTOR] Invalid Service Root format | deviceId=%s", device_id)
+                _safe_record_failure(
+                    device_id, attempt_at, "Invalid Service Root response payload", status="REDFISH_ERROR", database=database
+                )
                 return False
 
             # Essential Resource 2: ComputerSystem Data
@@ -176,10 +229,14 @@ def poll_single_device_ilo_hardware(
                     device_id,
                     exc,
                 )
+                _safe_record_failure(device_id, attempt_at, exc, status=_classify_redfish_exception(exc), database=database)
                 return False
 
             if not isinstance(system_data, dict):
                 logger.warning("[ILO_COLLECTOR] Invalid System payload format | deviceId=%s", device_id)
+                _safe_record_failure(
+                    device_id, attempt_at, "Invalid System response payload", status="REDFISH_ERROR", database=database
+                )
                 return False
 
             # Optional Sub-Resources (individual safe try/except)
@@ -265,13 +322,14 @@ def poll_single_device_ilo_hardware(
             except Exception:  # noqa: BLE001
                 power_chassis_data = None
 
-    except (RedfishAuthenticationError, RedfishConnectionError, RedfishTLSVerificationError, RedfishTimeoutError) as exc:
+    except (RedfishAuthenticationError, RedfishConnectionError, RedfishTLSVerificationError, RedfishTimeoutError, RedfishError) as exc:
         logger.warning(
             "[ILO_COLLECTOR] Redfish collection failed for device | deviceId=%s | hostname=%s | %s",
             device_id,
             hostname,
             exc,
         )
+        _safe_record_failure(device_id, attempt_at, exc, status=_classify_redfish_exception(exc), database=database)
         return False
     except Exception as exc:  # noqa: BLE001
         logger.error(
@@ -280,6 +338,7 @@ def poll_single_device_ilo_hardware(
             hostname,
             exc,
         )
+        _safe_record_failure(device_id, attempt_at, exc, status="UNKNOWN_ERROR", database=database)
         return False
 
     # Step 2: Normalize Collected Hardware Payloads
@@ -303,6 +362,7 @@ def poll_single_device_ilo_hardware(
             device_id,
             exc,
         )
+        _safe_record_failure(device_id, attempt_at, exc, status="UNKNOWN_ERROR", database=database)
         return False
 
     observed_at = utc_now()
@@ -321,6 +381,7 @@ def poll_single_device_ilo_hardware(
             device_id,
             exc,
         )
+        _safe_record_failure(device_id, attempt_at, exc, status="UNKNOWN_ERROR", database=database)
         return False
 
     if not current_saved:
@@ -329,9 +390,15 @@ def poll_single_device_ilo_hardware(
             device_id,
             observed_at,
         )
+        _safe_record_failure(
+            device_id, attempt_at, "Stale observation ignored", status="UNKNOWN_ERROR", database=database
+        )
         return False
 
-    # Step 4: Check 10-Minute History Retention Cadence
+    # Step 4: Record Collection State SUCCESS
+    _safe_record_success(device_id, attempt_at, database=database)
+
+    # Step 5: Check 10-Minute History Retention Cadence
     _maybe_append_history(device_id, hardware, observed_at, database=database)
     return True
 

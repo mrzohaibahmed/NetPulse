@@ -1152,14 +1152,44 @@ export interface ServerSubsystemHealth {
   reasons: string[]
 }
 
+export type ServerHardwareFreshnessStatus =
+  | 'FRESH'
+  | 'STALE'
+  | 'FAILING'
+  | 'NEVER_POLLED'
+
+export interface ServerHardwareFreshnessData {
+  status: ServerHardwareFreshnessStatus
+  dataAgeSeconds: number | null
+  staleThresholdSeconds: number
+  isStale: boolean
+  observedAt: string | null
+  lastPollStatus: string | null
+}
+
+export interface ServerHardwareCollectionData {
+  lastAttemptAt: string | null
+  lastSuccessAt: string | null
+  lastFailureAt: string | null
+  lastPollStatus: string | null
+  consecutiveFailures: number
+  lastError: string | null
+  updatedAt: string | null
+}
+
+export interface ServerHardwareHealthDetails {
+  overallHealth: 'OK' | 'WARNING' | 'CRITICAL' | 'UNKNOWN'
+  powerState: string | null
+  summaryReasons: string[]
+  subsystems: Record<string, ServerSubsystemHealth>
+}
+
 export interface ServerHardwareHealthData {
   deviceId: string
   observedAt: string | null
-  health: {
-    overallHealth: 'OK' | 'WARNING' | 'CRITICAL' | 'UNKNOWN'
-    powerState: string | null
-    summaryReasons: string[]
-    subsystems: Record<string, ServerSubsystemHealth>
-  }
+  freshness: ServerHardwareFreshnessData
+  collection: ServerHardwareCollectionData
+  health: ServerHardwareHealthDetails | null
 }
+
 

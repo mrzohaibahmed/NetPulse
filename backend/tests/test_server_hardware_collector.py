@@ -71,6 +71,61 @@ class MockMongoCollection:
 
         return type("Result", (), {"matched_count": 0, "modified_count": 0})()
 
+    def update_one(self, filter_dict, update_doc):
+        oid = filter_dict.get("_id")
+        doc = None
+        for d in self.docs:
+            if d.get("_id") == oid:
+                doc = d
+                break
+
+        if not doc:
+            return type("Result", (), {"matched_count": 0, "modified_count": 0})()
+
+        existing_state = doc.get("iloCollectionState")
+        match = False
+        if not existing_state:
+            match = True
+        else:
+            last_attempt = existing_state.get("lastAttemptAt")
+            if last_attempt is None:
+                match = True
+            else:
+                or_conds = filter_dict.get("$or", [])
+                for cond in or_conds:
+                    sub_cond = cond.get("iloCollectionState.lastAttemptAt")
+                    if isinstance(sub_cond, dict) and "$lte" in sub_cond:
+                        target_lte = sub_cond["$lte"]
+                        if last_attempt <= target_lte:
+                            match = True
+                            break
+
+        if not match:
+            return type("Result", (), {"matched_count": 0, "modified_count": 0})()
+
+        if "iloCollectionState" not in doc:
+            doc["iloCollectionState"] = {}
+
+        state = doc["iloCollectionState"]
+
+        if "$set" in update_doc:
+            for k, v in update_doc["$set"].items():
+                if k.startswith("iloCollectionState."):
+                    field = k.replace("iloCollectionState.", "")
+                    state[field] = v
+                else:
+                    doc[k] = v
+
+        if "$inc" in update_doc:
+            for k, v in update_doc["$inc"].items():
+                if k.startswith("iloCollectionState."):
+                    field = k.replace("iloCollectionState.", "")
+                    state[field] = state.get(field, 0) + v
+                else:
+                    doc[k] = doc.get(k, 0) + v
+
+        return type("Result", (), {"matched_count": 1, "modified_count": 1})()
+
     def find_one(self, filter_dict, projection=None):
         for existing in self.docs:
             if self._matches(existing, filter_dict):
@@ -550,3 +605,102 @@ def test_collector_credential_and_token_redaction(caplog):
             log_text = caplog.text.lower()
             assert "super_secret_pass" not in log_text
             assert "secret_token_value" not in log_text
+
+
+# ---------------------------------------------------------------------------
+# 8. Step 2 Collection State Integration Tests
+# ---------------------------------------------------------------------------
+
+def test_collector_step2_records_success_state(mock_db, ilo5_root):
+    """Successful poll records SUCCESS in iloCollectionState on db.devices."""
+    dev_id = ObjectId()
+    dev = {
+        "_id": dev_id,
+        "hostname": "srv-step2-succ",
+        "deviceType": "Server",
+        "iloAddress": "10.0.0.101",
+        "credentials": {"iloUsername": "admin", "iloPassword": encrypt_secret("pass123")},
+    }
+    mock_db.devices.docs.append(dict(dev))
+
+    def mock_get(endpoint):
+        if endpoint == "/redfish/v1/":
+            return ilo5_root
+        if "/Systems/1/" in endpoint:
+            return {"HostName": "srv-step2-succ"}
+        return {"Members": []}
+
+    with patch("services.server_hardware.collector.RedfishClient") as mock_client_cls:
+        mock_client = MagicMock()
+        mock_client_cls.return_value.__enter__.return_value = mock_client
+        mock_client.get.side_effect = mock_get
+
+        saved = poll_single_device_ilo_hardware(dev, database=mock_db)
+        assert saved is True
+
+        dev_in_db = mock_db.devices.find_one({"_id": dev_id})
+        assert "iloCollectionState" in dev_in_db
+        state = dev_in_db["iloCollectionState"]
+        assert state["lastPollStatus"] == "SUCCESS"
+        assert state["consecutiveFailures"] == 0
+        assert state["lastSuccessAt"] is not None
+        assert state["lastError"] is None
+
+
+def test_collector_step2_records_auth_failure_state(mock_db):
+    """Authentication failure records AUTHENTICATION_ERROR and does not touch current snapshot."""
+    dev_id = ObjectId()
+    dev = {
+        "_id": dev_id,
+        "hostname": "srv-step2-auth",
+        "deviceType": "Server",
+        "iloAddress": "10.0.0.102",
+        "credentials": {"iloUsername": "admin", "iloPassword": encrypt_secret("badpass")},
+    }
+    mock_db.devices.docs.append(dict(dev))
+
+    with patch("services.server_hardware.collector.RedfishClient") as mock_client_cls:
+        mock_client = MagicMock()
+        mock_client_cls.return_value.__enter__.return_value = mock_client
+        mock_client.get.side_effect = RedfishAuthenticationError("401 Unauthorized password='badpass'")
+
+        saved = poll_single_device_ilo_hardware(dev, database=mock_db)
+        assert saved is False
+
+        dev_in_db = mock_db.devices.find_one({"_id": dev_id})
+        assert "iloCollectionState" in dev_in_db
+        state = dev_in_db["iloCollectionState"]
+        assert state["lastPollStatus"] == "AUTHENTICATION_ERROR"
+        assert state["consecutiveFailures"] == 1
+        assert "badpass" not in state["lastError"]
+
+        # Hardware snapshot remains untouched
+        curr = mock_db.server_hardware_current.find_one({"deviceId": dev_id})
+        assert curr is None
+
+
+def test_collector_step2_records_timeout_failure_state(mock_db):
+    """Timeout failure records TIMEOUT and increments consecutive failures."""
+    dev_id = ObjectId()
+    dev = {
+        "_id": dev_id,
+        "hostname": "srv-step2-timeout",
+        "deviceType": "Server",
+        "iloAddress": "10.0.0.103",
+        "credentials": {"iloUsername": "admin", "iloPassword": encrypt_secret("pass123")},
+    }
+    mock_db.devices.docs.append(dict(dev))
+
+    with patch("services.server_hardware.collector.RedfishClient") as mock_client_cls:
+        mock_client = MagicMock()
+        mock_client_cls.return_value.__enter__.return_value = mock_client
+        mock_client.get.side_effect = RedfishTimeoutError("Socket read timeout")
+
+        saved = poll_single_device_ilo_hardware(dev, database=mock_db)
+        assert saved is False
+
+        dev_in_db = mock_db.devices.find_one({"_id": dev_id})
+        state = dev_in_db["iloCollectionState"]
+        assert state["lastPollStatus"] == "TIMEOUT"
+        assert state["consecutiveFailures"] == 1
+

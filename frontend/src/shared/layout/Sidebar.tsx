@@ -107,6 +107,7 @@ export function Sidebar({ pinned, onPinnedChange, mobileOpen, onMobileOpenChange
       defaultOpen: true,
       items: [
         { id: 'ping-devices', to: '/devices', label: 'Devices', icon: Server },
+        { id: 'ping-server-hardware', to: '/server-hardware', label: 'Server Hardware', icon: Cpu },
         {
           id: 'ping-discovery',
           to: '/discovery',

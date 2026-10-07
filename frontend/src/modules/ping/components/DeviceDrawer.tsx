@@ -10,6 +10,8 @@ import {
 } from 'recharts'
 import {
   Activity,
+  AlertCircle,
+  AlertTriangle,
   Cpu,
   Globe,
   Loader2,
@@ -119,7 +121,7 @@ export function DeviceDrawer({ deviceId, open, onOpenChange }: DeviceDrawerProps
             <TabButton active={activeTab === 'hardware'} onClick={() => setActiveTab('hardware')}>
               <Cpu className="h-3.5 w-3.5" />
               Hardware Health
-              {hardwareQuery.data ? (
+              {hardwareQuery.data?.health ? (
                 <span
                   className={`ml-1.5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
                     hardwareQuery.data.health.overallHealth === 'OK'
@@ -132,6 +134,14 @@ export function DeviceDrawer({ deviceId, open, onOpenChange }: DeviceDrawerProps
                   }`}
                 >
                   {hardwareQuery.data.health.overallHealth}
+                </span>
+              ) : hardwareQuery.data?.freshness?.status === 'FAILING' ? (
+                <span className="ml-1.5 rounded-full bg-danger/20 px-1.5 py-0.5 text-[10px] font-semibold text-danger">
+                  Failing
+                </span>
+              ) : hardwareQuery.data?.freshness?.status === 'NEVER_POLLED' ? (
+                <span className="ml-1.5 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
+                  Never Polled
                 </span>
               ) : null}
             </TabButton>
@@ -305,7 +315,7 @@ export function DeviceDrawer({ deviceId, open, onOpenChange }: DeviceDrawerProps
                         icon={<Activity className="h-4 w-4" />}
                         title="Response time trend"
                       />
-                      {(data?.responseTimeTrend.length ?? 0) === 0 ? (
+                      {(data?.responseTimeTrend?.length ?? 0) === 0 ? (
                         <EmptyState title="No successful pings in this range" className="py-8" />
                       ) : (
                         <div className="h-56 rounded-xl border border-border/60 bg-secondary/20 p-3">
@@ -563,7 +573,17 @@ export function DeviceDrawer({ deviceId, open, onOpenChange }: DeviceDrawerProps
                     {hardwareQuery.isLoading ? (
                       <LoadingState label="Loading hardware health telemetry…" />
                     ) : null}
-                    {hardwareQuery.isError || (!hardwareQuery.isLoading && !hardwareQuery.data) ? (
+                    {hardwareQuery.isError ? (
+                      <ErrorState
+                        message={
+                          hardwareQuery.error instanceof Error
+                            ? hardwareQuery.error.message
+                            : 'Failed to load hardware health'
+                        }
+                        onRetry={() => void hardwareQuery.refetch()}
+                      />
+                    ) : null}
+                    {!hardwareQuery.isLoading && !hardwareQuery.isError && !hardwareQuery.data ? (
                       <EmptyState
                         icon={Server}
                         title="Hardware Telemetry Unavailable"
@@ -571,108 +591,251 @@ export function DeviceDrawer({ deviceId, open, onOpenChange }: DeviceDrawerProps
                       />
                     ) : null}
 
-                    {hardwareQuery.data && (
-                      <>
-                        <Card className="glass rounded-xl border-l-[3px] border-l-primary">
-                          <CardHeader className="pb-2">
-                            <CardTitle className="flex items-center justify-between text-base">
-                              <span className="flex items-center gap-2">
-                                <Activity className="h-4 w-4 text-primary" />
-                                Overall Hardware Status
-                              </span>
-                              <span
-                                className={`inline-flex items-center rounded-md px-2.5 py-1 text-xs font-bold ${
-                                  hardwareQuery.data.health.overallHealth === 'OK'
-                                    ? 'bg-success/20 text-success border border-success/30'
-                                    : hardwareQuery.data.health.overallHealth === 'WARNING'
-                                      ? 'bg-warning/20 text-warning border border-warning/30'
-                                      : hardwareQuery.data.health.overallHealth === 'CRITICAL'
-                                        ? 'bg-danger/20 text-danger border border-danger/30'
-                                        : 'bg-muted text-muted-foreground border border-border'
-                                }`}
-                              >
-                                {hardwareQuery.data.health.overallHealth}
-                              </span>
-                            </CardTitle>
-                          </CardHeader>
-                          <CardContent className="space-y-3 pt-0">
-                            <div className="grid gap-3 sm:grid-cols-2">
-                              <Meta label="Power State" value={hardwareQuery.data.health.powerState || 'Unknown'} />
-                              <Meta
-                                label="Telemetry Timestamp"
-                                value={
-                                  hardwareQuery.data.observedAt
-                                    ? formatDateTime(hardwareQuery.data.observedAt)
-                                    : '—'
-                                }
-                                mono
-                              />
-                            </div>
+                    {hardwareQuery.data && (() => {
+                      const hwData = hardwareQuery.data
+                      const { freshness, collection, health, observedAt } = hwData
 
-                            {hardwareQuery.data.health.summaryReasons.length > 0 && (
-                              <div className="rounded-xl border border-warning/30 bg-warning/10 p-3 text-xs text-warning">
-                                <p className="font-semibold uppercase tracking-wider text-[10px] mb-1">Status Reasons:</p>
-                                <ul className="list-disc list-inside space-y-0.5">
-                                  {hardwareQuery.data.health.summaryReasons.map((r, idx) => (
-                                    <li key={idx}>{r}</li>
-                                  ))}
-                                </ul>
-                              </div>
-                            )}
-                          </CardContent>
-                        </Card>
-
-                        <section className="space-y-3">
-                          <SectionHeading icon={<Cpu className="h-4 w-4" />} title="Hardware Subsystems" />
-                          <div className="grid gap-3 sm:grid-cols-2">
-                            {Object.entries(hardwareQuery.data.health.subsystems).map(([key, sub]) => (
-                              <div
-                                key={key}
-                                className="rounded-xl border border-border/60 bg-card p-3.5 space-y-2"
-                              >
-                                <div className="flex items-center justify-between">
-                                  <span className="text-sm font-semibold capitalize">{sub.name}</span>
-                                  <span
-                                    className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                                      sub.status === 'OK'
-                                        ? 'bg-success/20 text-success'
-                                        : sub.status === 'WARNING'
-                                          ? 'bg-warning/20 text-warning'
-                                          : sub.status === 'CRITICAL'
-                                            ? 'bg-danger/20 text-danger'
-                                            : 'bg-muted text-muted-foreground'
-                                    }`}
-                                  >
-                                    {sub.status}
+                      return (
+                        <>
+                          <Card className="glass rounded-xl border border-border/80">
+                            <CardHeader className="pb-3">
+                              <CardTitle className="flex items-center justify-between text-sm font-semibold">
+                                <span className="flex items-center gap-2">
+                                  <Activity className="h-4 w-4 text-primary" />
+                                  iLO Telemetry & Collection Status
+                                </span>
+                                {freshness?.status === 'FRESH' && (
+                                  <span className="inline-flex items-center rounded-md border border-success/30 bg-success/20 px-2 py-0.5 text-xs font-semibold text-success">
+                                    Fresh
                                   </span>
-                                </div>
-
-                                <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                                  <span>Total: <strong className="text-foreground">{sub.totalComponents}</strong></span>
-                                  {sub.healthyComponents > 0 && (
-                                    <span className="text-success">Healthy: {sub.healthyComponents}</span>
-                                  )}
-                                  {sub.warningComponents > 0 && (
-                                    <span className="text-warning font-medium">Warning: {sub.warningComponents}</span>
-                                  )}
-                                  {sub.criticalComponents > 0 && (
-                                    <span className="text-danger font-medium">Critical: {sub.criticalComponents}</span>
-                                  )}
-                                </div>
-
-                                {sub.reasons.length > 0 && (
-                                  <ul className="mt-1 list-disc list-inside text-[11px] text-warning space-y-0.5">
-                                    {sub.reasons.map((r, i) => (
-                                      <li key={i}>{r}</li>
-                                    ))}
-                                  </ul>
                                 )}
+                                {freshness?.status === 'STALE' && (
+                                  <span className="inline-flex items-center rounded-md border border-warning/30 bg-warning/20 px-2 py-0.5 text-xs font-semibold text-warning">
+                                    Stale
+                                  </span>
+                                )}
+                                {freshness?.status === 'FAILING' && (
+                                  <span className="inline-flex items-center rounded-md border border-danger/30 bg-danger/20 px-2 py-0.5 text-xs font-semibold text-danger">
+                                    Collection Failing
+                                  </span>
+                                )}
+                                {freshness?.status === 'NEVER_POLLED' && (
+                                  <span className="inline-flex items-center rounded-md border border-border bg-muted px-2 py-0.5 text-xs font-semibold text-muted-foreground">
+                                    Never Polled
+                                  </span>
+                                )}
+                              </CardTitle>
+                            </CardHeader>
+                            <CardContent className="space-y-3 pt-0">
+                              <div className="grid gap-3 sm:grid-cols-2">
+                                <Meta
+                                  label="Last Poll Attempt"
+                                  value={collection?.lastAttemptAt ? formatRelative(collection.lastAttemptAt) : 'Never'}
+                                  title={collection?.lastAttemptAt ? formatDateTime(collection.lastAttemptAt) : undefined}
+                                  mono
+                                />
+                                <Meta
+                                  label="Last Successful Poll"
+                                  value={collection?.lastSuccessAt ? formatRelative(collection.lastSuccessAt) : 'Never'}
+                                  title={collection?.lastSuccessAt ? formatDateTime(collection.lastSuccessAt) : undefined}
+                                  mono
+                                />
+                                <Meta
+                                  label="Last Hardware Observation"
+                                  value={
+                                    freshness?.observedAt || observedAt
+                                      ? formatRelative(freshness?.observedAt || observedAt)
+                                      : 'Never'
+                                  }
+                                  title={
+                                    freshness?.observedAt || observedAt
+                                      ? formatDateTime(freshness?.observedAt || observedAt)
+                                      : undefined
+                                  }
+                                  mono
+                                />
+                                <Meta
+                                  label="Consecutive Failures"
+                                  value={String(collection?.consecutiveFailures ?? 0)}
+                                />
                               </div>
-                            ))}
-                          </div>
-                        </section>
-                      </>
-                    )}
+                            </CardContent>
+                          </Card>
+
+                          {(freshness?.status === 'FAILING' || (collection?.consecutiveFailures ?? 0) > 0) && health !== null && (
+                            <div className="rounded-xl border border-danger/40 bg-danger/10 p-4 text-xs text-danger-foreground">
+                              <div className="flex items-center gap-2 font-semibold text-danger">
+                                <AlertCircle className="h-4 w-4" />
+                                <span>Hardware collection is failing</span>
+                              </div>
+                              <p className="mt-1 text-muted-foreground">
+                                NetPulse could not retrieve the latest iLO telemetry.
+                                {collection?.lastSuccessAt
+                                  ? ` Last successful collection: ${formatRelative(collection.lastSuccessAt)} (${formatDateTime(collection.lastSuccessAt)}).`
+                                  : ''}
+                              </p>
+                              {collection?.lastError && (
+                                <div className="mt-2 rounded-lg border border-danger/30 bg-card/80 p-2.5 font-mono text-[11px] text-danger">
+                                  <span className="mb-0.5 block text-[10px] font-semibold uppercase text-muted-foreground">
+                                    Error Detail:
+                                  </span>
+                                  {collection.lastError}
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {freshness?.isStale && health !== null && (
+                            <div className="rounded-xl border border-warning/40 bg-warning/10 p-4 text-xs text-warning-foreground">
+                              <div className="flex items-center gap-2 font-semibold text-warning">
+                                <AlertTriangle className="h-4 w-4" />
+                                <span>Telemetry is stale</span>
+                              </div>
+                              <p className="mt-1 text-muted-foreground">
+                                The hardware information shown below may not reflect the server's current state. Telemetry is older than 30 minutes.
+                              </p>
+                            </div>
+                          )}
+
+                          {health === null && (collection?.consecutiveFailures ?? 0) > 0 ? (
+                            <Card className="glass rounded-xl border border-danger/40 bg-danger/5">
+                              <CardContent className="space-y-3 py-6 text-center">
+                                <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-danger/20 text-danger">
+                                  <AlertCircle className="h-5 w-5" />
+                                </div>
+                                <div>
+                                  <h4 className="font-semibold text-foreground">Hardware polling is failing</h4>
+                                  <p className="mt-1 text-xs text-muted-foreground">
+                                    This server is configured for iLO monitoring, but NetPulse has not successfully collected hardware telemetry yet.
+                                  </p>
+                                </div>
+                                {collection?.lastError && (
+                                  <div className="mx-auto max-w-md rounded-lg border border-danger/30 bg-card p-3 text-left font-mono text-xs text-danger">
+                                    <span className="mb-1 block text-[10px] font-semibold uppercase text-muted-foreground">
+                                      Collection Error:
+                                    </span>
+                                    {collection.lastError}
+                                  </div>
+                                )}
+                              </CardContent>
+                            </Card>
+                          ) : health === null ? (
+                            <EmptyState
+                              icon={Server}
+                              title="Hardware telemetry has not been collected yet"
+                              description="This server is configured for iLO monitoring. Telemetry has not been polled yet."
+                            />
+                          ) : null}
+
+                          {health !== null && (
+                            <>
+                              <Card className="glass rounded-xl border-l-[3px] border-l-primary">
+                                <CardHeader className="pb-2">
+                                  <CardTitle className="flex items-center justify-between text-base">
+                                    <span className="flex items-center gap-2">
+                                      <Activity className="h-4 w-4 text-primary" />
+                                      Overall Hardware Status
+                                    </span>
+                                    <span
+                                      className={`inline-flex items-center rounded-md px-2.5 py-1 text-xs font-bold ${
+                                        health.overallHealth === 'OK'
+                                          ? 'border border-success/30 bg-success/20 text-success'
+                                          : health.overallHealth === 'WARNING'
+                                            ? 'border border-warning/30 bg-warning/20 text-warning'
+                                            : health.overallHealth === 'CRITICAL'
+                                              ? 'border border-danger/30 bg-danger/20 text-danger'
+                                              : 'border border-border bg-muted text-muted-foreground'
+                                      }`}
+                                    >
+                                      {health.overallHealth}
+                                    </span>
+                                  </CardTitle>
+                                </CardHeader>
+                                <CardContent className="space-y-3 pt-0">
+                                  <div className="grid gap-3 sm:grid-cols-2">
+                                    <Meta label="Power State" value={health.powerState || 'Unknown'} />
+                                    <Meta
+                                      label="Telemetry Timestamp"
+                                      value={observedAt ? formatDateTime(observedAt) : '—'}
+                                      mono
+                                    />
+                                  </div>
+
+                                  {health.summaryReasons.length > 0 && (
+                                    <div className="rounded-xl border border-warning/30 bg-warning/10 p-3 text-xs text-warning">
+                                      <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider">
+                                        Status Reasons:
+                                      </p>
+                                      <ul className="list-inside list-disc space-y-0.5">
+                                        {health.summaryReasons.map((r, idx) => (
+                                          <li key={idx}>{r}</li>
+                                        ))}
+                                      </ul>
+                                    </div>
+                                  )}
+                                </CardContent>
+                              </Card>
+
+                              <section className="space-y-3">
+                                <SectionHeading icon={<Cpu className="h-4 w-4" />} title="Hardware Subsystems" />
+                                <div className="grid gap-3 sm:grid-cols-2">
+                                  {Object.entries(health.subsystems).map(([key, sub]) => (
+                                    <div
+                                      key={key}
+                                      className="space-y-2 rounded-xl border border-border/60 bg-card p-3.5"
+                                    >
+                                      <div className="flex items-center justify-between">
+                                        <span className="text-sm font-semibold capitalize">{sub.name}</span>
+                                        <span
+                                          className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                                            sub.status === 'OK'
+                                              ? 'bg-success/20 text-success'
+                                              : sub.status === 'WARNING'
+                                                ? 'bg-warning/20 text-warning'
+                                                : sub.status === 'CRITICAL'
+                                                  ? 'bg-danger/20 text-danger'
+                                                  : 'bg-muted text-muted-foreground'
+                                          }`}
+                                        >
+                                          {sub.status}
+                                        </span>
+                                      </div>
+
+                                      <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                                        <span>
+                                          Total: <strong className="text-foreground">{sub.totalComponents}</strong>
+                                        </span>
+                                        {sub.healthyComponents > 0 && (
+                                          <span className="text-success">Healthy: {sub.healthyComponents}</span>
+                                        )}
+                                        {sub.warningComponents > 0 && (
+                                          <span className="font-medium text-warning">
+                                            Warning: {sub.warningComponents}
+                                          </span>
+                                        )}
+                                        {sub.criticalComponents > 0 && (
+                                          <span className="font-medium text-danger">
+                                            Critical: {sub.criticalComponents}
+                                          </span>
+                                        )}
+                                      </div>
+
+                                      {sub.reasons.length > 0 && (
+                                        <ul className="mt-1 list-inside list-disc text-[11px] text-warning space-y-0.5">
+                                          {sub.reasons.map((r, i) => (
+                                            <li key={i}>{r}</li>
+                                          ))}
+                                        </ul>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              </section>
+                            </>
+                          )}
+                        </>
+                      )
+                    })()}
                   </div>
                 )}
               </>
@@ -717,9 +880,9 @@ function SectionHeading({ icon, title }: { icon: React.ReactNode; title: string 
   )
 }
 
-function Meta({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+function Meta({ label, value, mono, title }: { label: string; value: string; mono?: boolean; title?: string }) {
   return (
-    <div className="rounded-xl border border-border/60 bg-secondary/30 px-3 py-2.5">
+    <div className="rounded-xl border border-border/60 bg-secondary/30 px-3 py-2.5" title={title}>
       <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">{label}</p>
       <p className={`mt-1 text-sm font-medium ${mono ? 'mono' : ''}`}>{value}</p>
     </div>
