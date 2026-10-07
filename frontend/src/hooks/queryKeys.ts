@@ -56,4 +56,5 @@ export const queryKeys = {
     ['switch-hardware-outage', id, incidentId] as const,
   switchHardwareFleet: (deviceIdsKey: string) =>
     ['switch-hardware-fleet', deviceIdsKey] as const,
+  serverHardwareHealth: (id: string) => ['server-hardware-health', id] as const,
 }

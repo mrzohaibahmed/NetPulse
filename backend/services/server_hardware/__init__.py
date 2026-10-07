@@ -127,6 +127,9 @@ from services.server_hardware.health import (
     evaluate_server_hardware_health,
     resolve_component_health,
 )
+from services.server_hardware.hydration import (
+    deserialize_server_hardware,
+)
 from services.server_hardware.indexes import (
     ensure_server_hardware_indexes,
 )
@@ -163,6 +166,7 @@ __all__ = [
     "TemperatureSensor",
     "append_server_hardware_history",
     "collect_all_server_hardware",
+    "deserialize_server_hardware",
     "ensure_server_hardware_indexes",
     "evaluate_server_hardware_health",
     "get_current_server_hardware",

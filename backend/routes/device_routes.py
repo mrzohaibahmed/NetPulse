@@ -14,6 +14,11 @@ from models.device import create_device, normalize_device_credentials
 from models.location import validate_location
 from services.audit_service import log_audit
 from services.discovery.identity_management import ownership_for_device_edit
+from services.server_hardware import (
+    deserialize_server_hardware,
+    evaluate_server_hardware_health,
+    get_current_server_hardware,
+)
 from utils.auth import require_auth
 from utils.management_address import (
     IPV4_RE,
@@ -453,6 +458,70 @@ def get_device(device_id):
 
     except Exception as error:
         return internal_error_response(error, message="Failed to get device")
+
+
+@device_bp.route("/devices/<device_id>/server-hardware/health", methods=["GET"])
+@require_auth()
+def get_device_server_hardware_health(device_id: str):
+    try:
+        if not ObjectId.is_valid(device_id):
+            return jsonify({"success": False, "message": "Invalid device ID"}), 400
+
+        device = db.devices.find_one({"_id": ObjectId(device_id)})
+        if not device:
+            return jsonify({"success": False, "message": "Device not found"}), 404
+
+        device_type = (device.get("deviceType") or device.get("type") or "").strip()
+        eligible_types = ["Server", "Linux Server", "ESXi Server"]
+        if device_type not in eligible_types:
+            return jsonify({"success": False, "message": "Device is not an eligible server"}), 400
+
+        snapshot = get_current_server_hardware(device["_id"])
+        if not snapshot:
+            return jsonify({
+                "success": False,
+                "message": "No hardware snapshot available for this server",
+            }), 404
+
+        hardware = deserialize_server_hardware(snapshot)
+        health_eval = evaluate_server_hardware_health(hardware)
+
+        observed_at = snapshot.get("observedAt")
+        observed_at_str = None
+        if isinstance(observed_at, datetime):
+            if observed_at.tzinfo is None:
+                observed_at = observed_at.replace(tzinfo=timezone.utc)
+            observed_at_str = observed_at.isoformat().replace("+00:00", "Z")
+
+        health_dict = health_eval.to_dict()
+
+        return jsonify({
+            "success": True,
+            "data": {
+                "deviceId": str(device["_id"]),
+                "observedAt": observed_at_str,
+                "health": {
+                    "overallHealth": health_dict["overall_health"],
+                    "powerState": health_dict["power_state"],
+                    "summaryReasons": health_dict["summary_reasons"],
+                    "subsystems": {
+                        k: {
+                            "name": v["name"],
+                            "status": v["status"],
+                            "totalComponents": v["total_components"],
+                            "healthyComponents": v["healthy_components"],
+                            "warningComponents": v["warning_components"],
+                            "criticalComponents": v["critical_components"],
+                            "reasons": v["reasons"],
+                        }
+                        for k, v in health_dict["subsystems"].items()
+                    },
+                },
+            },
+        }), 200
+
+    except Exception as error:
+        return internal_error_response(error, message="Failed to evaluate server hardware health")
 
 
 @device_bp.route("/devices/<device_id>", methods=["PUT"])

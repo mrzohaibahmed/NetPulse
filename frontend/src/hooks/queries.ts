@@ -34,6 +34,7 @@ import {
   getNetworkHint,
   getRecentHistory,
   getSiteMonitoring,
+  getServerHardwareHealth,
   getRiskResults,
   getSafetyResults,
   getSettings,
@@ -1393,5 +1394,16 @@ export function useSwitchHardwareCollectMutation(deviceId: string) {
       ])
     },
     onError: (err: Error) => toast.error(err.message),
+  })
+}
+
+export function useServerHardwareHealthQuery(deviceId: string, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.serverHardwareHealth(deviceId),
+    queryFn: async () => {
+      const res = await getServerHardwareHealth(deviceId)
+      return res.data
+    },
+    enabled: enabled && Boolean(deviceId),
   })
 }

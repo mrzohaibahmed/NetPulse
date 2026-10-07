@@ -172,7 +172,8 @@ export interface IspConnectionPayload {
 export interface SiteMonitoringServer {
   id: string
   hostname: string
-  ipAddress: string
+  ipAddress?: string | null
+  iloAddress?: string | null
   deviceType: string
   status: DeviceStatus
   responseTime: number | null
@@ -1139,5 +1140,26 @@ export interface NetworkProfile {
   devices: number
   switches: number
   online: number
+}
+
+export interface ServerSubsystemHealth {
+  name: string
+  status: 'OK' | 'WARNING' | 'CRITICAL' | 'UNKNOWN'
+  totalComponents: number
+  healthyComponents: number
+  warningComponents: number
+  criticalComponents: number
+  reasons: string[]
+}
+
+export interface ServerHardwareHealthData {
+  deviceId: string
+  observedAt: string | null
+  health: {
+    overallHealth: 'OK' | 'WARNING' | 'CRITICAL' | 'UNKNOWN'
+    powerState: string | null
+    summaryReasons: string[]
+    subsystems: Record<string, ServerSubsystemHealth>
+  }
 }
 

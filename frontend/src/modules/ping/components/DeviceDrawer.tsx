@@ -20,7 +20,12 @@ import {
   Shield,
   Wifi,
 } from 'lucide-react'
-import { useDeviceHistoryQuery, useDeviceMutations, useNmapScanMutation } from '@/hooks/queries'
+import {
+  useDeviceHistoryQuery,
+  useDeviceMutations,
+  useNmapScanMutation,
+  useServerHardwareHealthQuery,
+} from '@/hooks/queries'
 import { useAuth } from '@/shared/auth/AuthContext'
 import { formatDateTime, formatMs, formatPercent, formatRelative } from '@/utils/format'
 import { StatusBadge } from '@/shared/components/StatusBadge'
@@ -50,7 +55,7 @@ interface DeviceDrawerProps {
   onOpenChange: (open: boolean) => void
 }
 
-type TabId = 'overview' | 'network'
+type TabId = 'overview' | 'network' | 'hardware'
 
 export function DeviceDrawer({ deviceId, open, onOpenChange }: DeviceDrawerProps) {
   const { isUser } = useAuth()
@@ -69,6 +74,12 @@ export function DeviceDrawer({ deviceId, open, onOpenChange }: DeviceDrawerProps
   const data = query.data
   const device = data?.device
   const networkInfo: NetworkInfo | null | undefined = device?.networkInfo
+
+  const isServerDevice = ['Server', 'Linux Server', 'ESXi Server'].includes(device?.deviceType || '')
+  const hardwareQuery = useServerHardwareHealthQuery(
+    deviceId || '',
+    open && Boolean(deviceId) && isServerDevice,
+  )
 
   const openPorts = networkInfo?.ports?.filter((p) => p.state === 'open') ?? []
 
@@ -104,6 +115,27 @@ export function DeviceDrawer({ deviceId, open, onOpenChange }: DeviceDrawerProps
               </span>
             )}
           </TabButton>
+          {isServerDevice ? (
+            <TabButton active={activeTab === 'hardware'} onClick={() => setActiveTab('hardware')}>
+              <Cpu className="h-3.5 w-3.5" />
+              Hardware Health
+              {hardwareQuery.data ? (
+                <span
+                  className={`ml-1.5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
+                    hardwareQuery.data.health.overallHealth === 'OK'
+                      ? 'bg-success/20 text-success'
+                      : hardwareQuery.data.health.overallHealth === 'WARNING'
+                        ? 'bg-warning/20 text-warning'
+                        : hardwareQuery.data.health.overallHealth === 'CRITICAL'
+                          ? 'bg-danger/20 text-danger'
+                          : 'bg-muted text-muted-foreground'
+                  }`}
+                >
+                  {hardwareQuery.data.health.overallHealth}
+                </span>
+              ) : null}
+            </TabButton>
+          ) : null}
         </div>
 
         <ScrollArea className="flex-1">
@@ -524,6 +556,124 @@ export function DeviceDrawer({ deviceId, open, onOpenChange }: DeviceDrawerProps
                       </div>
                     )}
                   </>
+                )}
+
+                {activeTab === 'hardware' && isServerDevice && (
+                  <div className="space-y-6">
+                    {hardwareQuery.isLoading ? (
+                      <LoadingState label="Loading hardware health telemetry…" />
+                    ) : null}
+                    {hardwareQuery.isError || (!hardwareQuery.isLoading && !hardwareQuery.data) ? (
+                      <EmptyState
+                        icon={Server}
+                        title="Hardware Telemetry Unavailable"
+                        description="No HPE iLO hardware snapshot is currently available for this server endpoint."
+                      />
+                    ) : null}
+
+                    {hardwareQuery.data && (
+                      <>
+                        <Card className="glass rounded-xl border-l-[3px] border-l-primary">
+                          <CardHeader className="pb-2">
+                            <CardTitle className="flex items-center justify-between text-base">
+                              <span className="flex items-center gap-2">
+                                <Activity className="h-4 w-4 text-primary" />
+                                Overall Hardware Status
+                              </span>
+                              <span
+                                className={`inline-flex items-center rounded-md px-2.5 py-1 text-xs font-bold ${
+                                  hardwareQuery.data.health.overallHealth === 'OK'
+                                    ? 'bg-success/20 text-success border border-success/30'
+                                    : hardwareQuery.data.health.overallHealth === 'WARNING'
+                                      ? 'bg-warning/20 text-warning border border-warning/30'
+                                      : hardwareQuery.data.health.overallHealth === 'CRITICAL'
+                                        ? 'bg-danger/20 text-danger border border-danger/30'
+                                        : 'bg-muted text-muted-foreground border border-border'
+                                }`}
+                              >
+                                {hardwareQuery.data.health.overallHealth}
+                              </span>
+                            </CardTitle>
+                          </CardHeader>
+                          <CardContent className="space-y-3 pt-0">
+                            <div className="grid gap-3 sm:grid-cols-2">
+                              <Meta label="Power State" value={hardwareQuery.data.health.powerState || 'Unknown'} />
+                              <Meta
+                                label="Telemetry Timestamp"
+                                value={
+                                  hardwareQuery.data.observedAt
+                                    ? formatDateTime(hardwareQuery.data.observedAt)
+                                    : '—'
+                                }
+                                mono
+                              />
+                            </div>
+
+                            {hardwareQuery.data.health.summaryReasons.length > 0 && (
+                              <div className="rounded-xl border border-warning/30 bg-warning/10 p-3 text-xs text-warning">
+                                <p className="font-semibold uppercase tracking-wider text-[10px] mb-1">Status Reasons:</p>
+                                <ul className="list-disc list-inside space-y-0.5">
+                                  {hardwareQuery.data.health.summaryReasons.map((r, idx) => (
+                                    <li key={idx}>{r}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+                          </CardContent>
+                        </Card>
+
+                        <section className="space-y-3">
+                          <SectionHeading icon={<Cpu className="h-4 w-4" />} title="Hardware Subsystems" />
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            {Object.entries(hardwareQuery.data.health.subsystems).map(([key, sub]) => (
+                              <div
+                                key={key}
+                                className="rounded-xl border border-border/60 bg-card p-3.5 space-y-2"
+                              >
+                                <div className="flex items-center justify-between">
+                                  <span className="text-sm font-semibold capitalize">{sub.name}</span>
+                                  <span
+                                    className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                                      sub.status === 'OK'
+                                        ? 'bg-success/20 text-success'
+                                        : sub.status === 'WARNING'
+                                          ? 'bg-warning/20 text-warning'
+                                          : sub.status === 'CRITICAL'
+                                            ? 'bg-danger/20 text-danger'
+                                            : 'bg-muted text-muted-foreground'
+                                    }`}
+                                  >
+                                    {sub.status}
+                                  </span>
+                                </div>
+
+                                <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                                  <span>Total: <strong className="text-foreground">{sub.totalComponents}</strong></span>
+                                  {sub.healthyComponents > 0 && (
+                                    <span className="text-success">Healthy: {sub.healthyComponents}</span>
+                                  )}
+                                  {sub.warningComponents > 0 && (
+                                    <span className="text-warning font-medium">Warning: {sub.warningComponents}</span>
+                                  )}
+                                  {sub.criticalComponents > 0 && (
+                                    <span className="text-danger font-medium">Critical: {sub.criticalComponents}</span>
+                                  )}
+                                </div>
+
+                                {sub.reasons.length > 0 && (
+                                  <ul className="mt-1 list-disc list-inside text-[11px] text-warning space-y-0.5">
+                                    {sub.reasons.map((r, i) => (
+                                      <li key={i}>{r}</li>
+                                    ))}
+                                  </ul>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </section>
+                      </>
+                    )}
+                  </div>
                 )}
               </>
             ) : null}

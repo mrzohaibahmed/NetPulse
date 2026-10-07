@@ -41,6 +41,7 @@ import type {
   ReportFilterOptions,
   StormIncidentDetail,
   StormManagementReport,
+  ServerHardwareHealthData,
   User,
   UserRole,
 } from '../types'
@@ -974,4 +975,10 @@ export const getDiscoveryEnrichmentStatus = (ipAddresses: string[]) =>
     method: 'POST',
     body: { ipAddresses },
   })
+
+export const getServerHardwareHealth = (deviceId: string) =>
+  apiRequest<{
+    success: boolean
+    data: ServerHardwareHealthData
+  }>(`/api/devices/${deviceId}/server-hardware/health`)
 
