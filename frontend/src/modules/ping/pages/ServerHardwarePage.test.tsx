@@ -120,6 +120,21 @@ describe('ServerHardwarePage Component', () => {
       createdAt: '2026-09-01T00:00:00Z',
       updatedAt: '2026-10-07T12:00:00Z',
     },
+    {
+      _id: 'srv-no-ilo',
+      hostname: 'unconfigured-server-01',
+      ipAddress: '192.168.1.105',
+      iloAddress: null,
+      deviceType: 'Server',
+      critical: false,
+      monitor: true,
+      showOnDashboard: false,
+      status: 'Online',
+      lastSeen: '2026-10-07T12:00:00Z',
+      responseTime: 1.0,
+      createdAt: '2026-09-01T00:00:00Z',
+      updatedAt: '2026-10-07T12:00:00Z',
+    },
   ]
 
   beforeEach(() => {
@@ -141,13 +156,14 @@ describe('ServerHardwarePage Component', () => {
     })
   })
 
-  it('1. Renders only eligible server devices (Server, Linux Server, ESXi Server) and excludes non-servers', async () => {
+  it('1. Renders only eligible server devices with configured iLO addresses', async () => {
     renderWithProviders(<ServerHardwarePage />)
 
     expect(await screen.findByText('app-server-01')).toBeInTheDocument()
     expect(screen.getByText('db-linux-01')).toBeInTheDocument()
     expect(screen.getByText('esxi-hypervisor-01')).toBeInTheDocument()
 
+    expect(screen.queryByText('unconfigured-server-01')).not.toBeInTheDocument()
     expect(screen.queryByText('core-switch-01')).not.toBeInTheDocument()
     expect(screen.queryByText('edge-router-01')).not.toBeInTheDocument()
   })
@@ -178,7 +194,7 @@ describe('ServerHardwarePage Component', () => {
 
     expect(await screen.findByText('No server hardware devices')).toBeInTheDocument()
     expect(
-      screen.getByText(/No Server, Linux Server, or ESXi Server devices are currently configured/i),
+      screen.getByText(/No Server, Linux Server, or ESXi Server devices with a configured iLO/i),
     ).toBeInTheDocument()
   })
 

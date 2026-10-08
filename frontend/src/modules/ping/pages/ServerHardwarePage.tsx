@@ -64,7 +64,9 @@ export function ServerHardwarePage() {
   const allDevices: Device[] = devicesQuery.data ?? []
 
   const eligibleServers = useMemo(() => {
-    return allDevices.filter((d) => isServerHardwareDevice(d.deviceType))
+    return allDevices.filter(
+      (d) => isServerHardwareDevice(d.deviceType) && Boolean(d.iloAddress && d.iloAddress.trim()),
+    )
   }, [allDevices])
 
   const filteredServers = useMemo(() => {
@@ -288,7 +290,7 @@ export function ServerHardwarePage() {
             <EmptyState
               icon={Server}
               title="No server hardware devices"
-              description="No Server, Linux Server, or ESXi Server devices are currently configured for hardware monitoring."
+              description="No Server, Linux Server, or ESXi Server devices with a configured iLO management address were found."
             />
           ) : filteredServers.length === 0 ? (
             <EmptyState
