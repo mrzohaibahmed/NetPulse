@@ -87,8 +87,9 @@ export function ServerHardwarePage() {
       }
 
       if (monitorFilter !== 'all') {
-        if (monitorFilter === 'monitored' && !device.monitor) return false
-        if (monitorFilter === 'disabled' && device.monitor) return false
+        const isHwMonitored = device.hardwareMonitoringEnabled ?? true
+        if (monitorFilter === 'monitored' && !isHwMonitored) return false
+        if (monitorFilter === 'disabled' && isHwMonitored) return false
       }
 
       if (searchQuery.trim()) {
@@ -116,7 +117,7 @@ export function ServerHardwarePage() {
 
   const kpis = useMemo(() => {
     const total = eligibleServers.length
-    const monitored = eligibleServers.filter((d) => d.monitor).length
+    const monitored = eligibleServers.filter((d) => d.hardwareMonitoringEnabled ?? true).length
     const online = eligibleServers.filter((d) => d.status === 'Online').length
     const criticalOffline = eligibleServers.filter(
       (d) => d.status === 'Offline (Critical)' || d.critical,
@@ -342,7 +343,7 @@ export function ServerHardwarePage() {
                       <TableHead>Server Hostname</TableHead>
                       <TableHead>Management IP / iLO</TableHead>
                       <TableHead>Device Type</TableHead>
-                      <TableHead>Monitoring</TableHead>
+                      <TableHead>Hardware Monitoring</TableHead>
                       <TableHead>Ping Status</TableHead>
                       <TableHead>Response Time</TableHead>
                       <TableHead>Last Checked</TableHead>
@@ -350,57 +351,59 @@ export function ServerHardwarePage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {pagination.pageItems.map((device) => (
-                      <TableRow
-                        key={device._id}
-                        className="cursor-pointer hover:bg-muted/50 transition-colors"
-                        onClick={() => handleOpenDrawer(device._id)}
-                      >
-                        <TableCell className="font-semibold text-foreground">
-                          <div className="flex items-center gap-2">
-                            <span>{device.hostname}</span>
-                            {device.critical ? <Badge variant="danger">Critical</Badge> : null}
-                          </div>
-                        </TableCell>
-                        <TableCell className="mono text-xs text-muted-foreground">
-                          <div>
-                            {device.ipAddress ? (
-                              <span>OS: {device.ipAddress}</span>
-                            ) : (
-                              <span>OS: —</span>
-                            )}
-                          </div>
-                          {device.iloAddress ? (
-                            <div className="text-primary">iLO: {device.iloAddress}</div>
-                          ) : null}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant="secondary" className="font-mono text-xs">
-                            {device.deviceType}
-                          </Badge>
-                        </TableCell>
-                        <TableCell onClick={(e) => e.stopPropagation()}>
-                          <label className="flex items-center gap-2 cursor-pointer text-xs font-medium select-none">
-                            <Checkbox
-                              aria-label={`Toggle monitoring for ${device.hostname}`}
-                              checked={Boolean(device.monitor)}
-                              disabled={!isAdmin || deviceMutations.update.isPending}
-                              onCheckedChange={() =>
-                                isAdmin &&
-                                deviceMutations.update.mutate({
-                                  id: device._id,
-                                  payload: { monitor: !device.monitor },
-                                })
-                              }
-                            />
-                            <Badge
-                              variant={device.monitor ? 'success' : 'outline'}
-                              className="text-[11px] px-1.5 py-0"
-                            >
-                              {device.monitor ? 'Monitored' : 'Disabled'}
+                    {pagination.pageItems.map((device) => {
+                      const isHwMonitored = device.hardwareMonitoringEnabled ?? true
+                      return (
+                        <TableRow
+                          key={device._id}
+                          className="cursor-pointer hover:bg-muted/50 transition-colors"
+                          onClick={() => handleOpenDrawer(device._id)}
+                        >
+                          <TableCell className="font-semibold text-foreground">
+                            <div className="flex items-center gap-2">
+                              <span>{device.hostname}</span>
+                              {device.critical ? <Badge variant="danger">Critical</Badge> : null}
+                            </div>
+                          </TableCell>
+                          <TableCell className="mono text-xs text-muted-foreground">
+                            <div>
+                              {device.ipAddress ? (
+                                <span>OS: {device.ipAddress}</span>
+                              ) : (
+                                <span>OS: —</span>
+                              )}
+                            </div>
+                            {device.iloAddress ? (
+                              <div className="text-primary">iLO: {device.iloAddress}</div>
+                            ) : null}
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant="secondary" className="font-mono text-xs">
+                              {device.deviceType}
                             </Badge>
-                          </label>
-                        </TableCell>
+                          </TableCell>
+                          <TableCell onClick={(e) => e.stopPropagation()}>
+                            <label className="flex items-center gap-2 cursor-pointer text-xs font-medium select-none">
+                              <Checkbox
+                                aria-label={`Toggle hardware monitoring for ${device.hostname}`}
+                                checked={isHwMonitored}
+                                disabled={!isAdmin || deviceMutations.update.isPending}
+                                onCheckedChange={() =>
+                                  isAdmin &&
+                                  deviceMutations.update.mutate({
+                                    id: device._id,
+                                    payload: { hardwareMonitoringEnabled: !isHwMonitored },
+                                  })
+                                }
+                              />
+                              <Badge
+                                variant={isHwMonitored ? 'success' : 'outline'}
+                                className="text-[11px] px-1.5 py-0"
+                              >
+                                {isHwMonitored ? 'Enabled' : 'Disabled'}
+                              </Badge>
+                            </label>
+                          </TableCell>
                         <TableCell>
                           <StatusBadge status={device.status} pulse={false} />
                         </TableCell>
@@ -422,7 +425,7 @@ export function ServerHardwarePage() {
                           </Button>
                         </TableCell>
                       </TableRow>
-                    ))}
+                    )})}
                   </TableBody>
                 </Table>
               </div>

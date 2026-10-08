@@ -190,6 +190,7 @@ class MockMongoDatabase:
         self.devices = MockMongoCollection()
         self.server_hardware_current = MockMongoCollection()
         self.server_hardware_history = MockMongoCollection()
+        self.settings = MockMongoCollection()
 
     def command(self, *args, **kwargs):
         return {"ok": 1}
@@ -703,4 +704,132 @@ def test_collector_step2_records_timeout_failure_state(mock_db):
         state = dev_in_db["iloCollectionState"]
         assert state["lastPollStatus"] == "TIMEOUT"
         assert state["consecutiveFailures"] == 1
+
+
+# ---------------------------------------------------------------------------
+# 7. Dedicated Per-Device Hardware Monitoring Tests
+# ---------------------------------------------------------------------------
+
+def test_hardware_monitoring_enabled_defaults_to_true_when_missing(mock_db, ilo5_root):
+    """Existing device without hardwareMonitoringEnabled field defaults to enabled and collects normally."""
+    dev_id = ObjectId()
+    dev = {
+        "_id": dev_id,
+        "hostname": "srv-missing-field",
+        "deviceType": "Server",
+        "iloAddress": "10.0.0.110",
+        "credentials": {"iloUsername": "admin", "iloPassword": encrypt_secret("pass123")},
+    }
+    mock_db.devices.docs.append(dict(dev))
+
+    with patch("services.server_hardware.collector.RedfishClient") as mock_client_cls:
+        mock_client = MagicMock()
+        mock_client_cls.return_value.__enter__.return_value = mock_client
+        mock_client.get.side_effect = lambda uri: ilo5_root if uri == "/redfish/v1/" else {"Members": []}
+
+        saved = poll_single_device_ilo_hardware(dev, database=mock_db)
+        assert saved is True
+
+
+def test_hardware_monitoring_enabled_false_skips_network_io_and_state(mock_db):
+    """When hardwareMonitoringEnabled=False, Redfish I/O, decrypt, snapshot, and failure states are completely skipped."""
+    dev_id = ObjectId()
+    dev = {
+        "_id": dev_id,
+        "hostname": "srv-disabled-hw",
+        "deviceType": "Server",
+        "iloAddress": "10.0.0.111",
+        "hardwareMonitoringEnabled": False,
+        "credentials": {"iloUsername": "admin", "iloPassword": "invalid_unencrypted_secret"},
+    }
+    mock_db.devices.docs.append(dict(dev))
+
+    with patch("services.server_hardware.collector.RedfishClient") as mock_client_cls, \
+         patch("services.server_hardware.collector.decrypt_secret") as mock_decrypt:
+        saved = poll_single_device_ilo_hardware(dev, database=mock_db)
+        assert saved is False
+        mock_decrypt.assert_not_called()
+        mock_client_cls.assert_not_called()
+
+        curr = mock_db.server_hardware_current.find_one({"deviceId": dev_id})
+        assert curr is None
+
+        hist = mock_db.server_hardware_history.find_one({"deviceId": dev_id})
+        assert hist is None
+
+        dev_in_db = mock_db.devices.find_one({"_id": dev_id})
+        assert "iloCollectionState" not in dev_in_db
+
+
+def test_hardware_monitoring_reenabled_resumes_collection(mock_db, ilo5_root):
+    """Re-enabling hardwareMonitoringEnabled allows collection on next cycle."""
+    dev_id = ObjectId()
+    dev = {
+        "_id": dev_id,
+        "hostname": "srv-reenable",
+        "deviceType": "Server",
+        "iloAddress": "10.0.0.112",
+        "hardwareMonitoringEnabled": False,
+        "credentials": {"iloUsername": "admin", "iloPassword": encrypt_secret("pass123")},
+    }
+    mock_db.devices.docs.append(dict(dev))
+
+    with patch("services.server_hardware.collector.RedfishClient") as mock_client_cls:
+        # First poll while disabled
+        saved1 = poll_single_device_ilo_hardware(dev, database=mock_db)
+        assert saved1 is False
+
+        # Re-enable flag
+        dev["hardwareMonitoringEnabled"] = True
+        mock_client = MagicMock()
+        mock_client_cls.return_value.__enter__.return_value = mock_client
+        mock_client.get.side_effect = lambda uri: ilo5_root if uri == "/redfish/v1/" else {"Members": []}
+
+        saved2 = poll_single_device_ilo_hardware(dev, database=mock_db)
+        assert saved2 is True
+
+
+def test_device_monitor_false_does_not_disable_hardware_collection(mock_db, ilo5_root):
+    """device.monitor=False (ping disabled) does NOT disable iLO hardware collection when hardwareMonitoringEnabled=True."""
+    dev_id = ObjectId()
+    dev = {
+        "_id": dev_id,
+        "hostname": "srv-ping-disabled-hw-enabled",
+        "deviceType": "Server",
+        "iloAddress": "10.0.0.113",
+        "monitor": False,
+        "hardwareMonitoringEnabled": True,
+        "credentials": {"iloUsername": "admin", "iloPassword": encrypt_secret("pass123")},
+    }
+    mock_db.devices.docs.append(dict(dev))
+
+    with patch("services.server_hardware.collector.RedfishClient") as mock_client_cls:
+        mock_client = MagicMock()
+        mock_client_cls.return_value.__enter__.return_value = mock_client
+        mock_client.get.side_effect = lambda uri: ilo5_root if uri == "/redfish/v1/" else {"Members": []}
+
+        saved = poll_single_device_ilo_hardware(dev, database=mock_db)
+        assert saved is True
+
+
+def test_global_server_hardware_monitoring_disabled_overrides_everything(mock_db):
+    """When master serverHardwareMonitoringEnabled=False, all iLO hardware collection is skipped regardless of per-device flags."""
+    dev_id = ObjectId()
+    dev = {
+        "_id": dev_id,
+        "hostname": "srv-hw-enabled",
+        "deviceType": "Server",
+        "iloAddress": "10.0.0.114",
+        "hardwareMonitoringEnabled": True,
+        "credentials": {"iloUsername": "admin", "iloPassword": encrypt_secret("pass123")},
+    }
+    mock_db.devices.docs.append(dict(dev))
+    mock_db.settings.docs.append({"_id": "global", "serverHardwareMonitoringEnabled": False})
+
+    with patch("services.server_hardware.collector.require_scheduler_leadership", return_value=True), \
+         patch("services.server_hardware.collector.RedfishClient") as mock_client_cls:
+        res = collect_all_server_hardware(database=mock_db)
+        assert res["total"] == 0
+        mock_client_cls.assert_not_called()
+
 

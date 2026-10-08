@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timedelta, timezone
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from bson import ObjectId
 import pytest
@@ -496,4 +496,44 @@ def test_api_security_contains_no_secrets(client, auth_headers):
         assert "super_secret_pass" not in raw_body.lower()
         assert "x-auth-token" not in raw_body.lower()
         assert "@odata" not in raw_body
+
+
+def test_api_admin_can_update_hardware_monitoring_enabled(client, auth_headers):
+    """Admin user can update hardwareMonitoringEnabled via PUT /api/devices/<id>."""
+    device_id = str(ObjectId())
+    dev_doc = {
+        "_id": ObjectId(device_id),
+        "hostname": "server-04",
+        "deviceType": "Server",
+        "iloAddress": "10.0.0.120",
+        "hardwareMonitoringEnabled": True,
+    }
+
+    updated_doc = dict(dev_doc)
+    updated_doc["hardwareMonitoringEnabled"] = False
+
+    with patch("routes.device_routes.db") as mock_db:
+        mock_db.devices.find_one.side_effect = [dev_doc, updated_doc]
+        mock_db.devices.update_one.return_value = MagicMock(modified_count=1)
+
+        resp = client.put(
+            f"/api/devices/{device_id}",
+            json={"hardwareMonitoringEnabled": False},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json["success"] is True
+        assert resp.json["data"]["hardwareMonitoringEnabled"] is False
+
+
+def test_api_non_admin_cannot_update_hardware_monitoring_enabled(client):
+    """Non-admin user cannot update hardwareMonitoringEnabled via PUT /api/devices/<id>."""
+    device_id = str(ObjectId())
+    # Unauthenticated or non-admin token
+    resp = client.put(
+        f"/api/devices/{device_id}",
+        json={"hardwareMonitoringEnabled": False},
+    )
+    assert resp.status_code == 401
+
 

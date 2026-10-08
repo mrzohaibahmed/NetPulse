@@ -583,6 +583,7 @@ def update_device(device_id):
             "deviceType",
             "critical",
             "monitor",
+            "hardwareMonitoringEnabled",
             "showOnDashboard",
             "pingInterval",
             "pingTimeoutMs",
@@ -596,6 +597,9 @@ def update_device(device_id):
         for field in allowed_fields:
             if field in data:
                 update_data[field] = data[field]
+
+        if "hardwareMonitoringEnabled" in update_data:
+            update_data["hardwareMonitoringEnabled"] = bool(update_data["hardwareMonitoringEnabled"])
 
         if "showOnDashboard" in update_data:
             update_data["showOnDashboard"] = bool(update_data["showOnDashboard"])

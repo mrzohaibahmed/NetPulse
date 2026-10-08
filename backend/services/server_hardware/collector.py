@@ -121,6 +121,15 @@ def poll_single_device_ilo_hardware(
     """
     device_id = device.get("_id")
     hostname = device.get("hostname") or str(device_id)
+
+    if not device.get("hardwareMonitoringEnabled", True):
+        logger.info(
+            "[ILO_COLLECTOR] Skipping device with hardwareMonitoringEnabled=False | deviceId=%s | hostname=%s",
+            device_id,
+            hostname,
+        )
+        return False
+
     ilo_address = device.get("iloAddress")
 
     if not ilo_address or not isinstance(ilo_address, str) or not ilo_address.strip():
@@ -526,6 +535,14 @@ def collect_all_server_hardware(*, database: Any = None) -> dict[str, int]:
                     "[ILO_COLLECTOR] Scheduler leadership lost during dispatch — aborting remaining device queue"
                 )
                 break
+
+            if not dev.get("hardwareMonitoringEnabled", True):
+                logger.info(
+                    "[ILO_COLLECTOR] Skipping iLO hardware collection — hardwareMonitoringEnabled is False | deviceId=%s | hostname=%s",
+                    dev.get("_id"),
+                    dev.get("hostname"),
+                )
+                continue
 
             dispatched_count += 1
             guard.note_device_visited()

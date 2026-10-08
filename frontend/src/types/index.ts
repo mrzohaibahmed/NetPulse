@@ -54,6 +54,8 @@ export interface Device {
   deviceType: string
   critical: boolean
   monitor: boolean
+  /** Admin-togglable per-server iLO hardware monitoring master switch (defaults to true if omitted). */
+  hardwareMonitoringEnabled?: boolean
   /** When true and deviceType is Server, include on Site Monitoring dashboard. */
   showOnDashboard: boolean
   status: DeviceStatus
@@ -91,6 +93,7 @@ export interface DevicePayload {
   deviceType: string
   critical?: boolean
   monitor?: boolean
+  hardwareMonitoringEnabled?: boolean
   showOnDashboard?: boolean
   pingInterval?: number | null
   pingTimeoutMs?: number | null

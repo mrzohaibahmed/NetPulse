@@ -213,17 +213,21 @@ describe('ServerHardwarePage Component', () => {
     expect(screen.getByRole('dialog')).toBeInTheDocument()
   })
 
-  it('6. Clicking monitoring checkbox triggers device update mutation', async () => {
+  it('6. Clicking hardware monitoring checkbox triggers device update mutation with hardwareMonitoringEnabled payload', async () => {
     renderWithProviders(<ServerHardwarePage />)
 
     const checkbox = await screen.findByRole('checkbox', {
-      name: 'Toggle monitoring for app-server-01',
+      name: 'Toggle hardware monitoring for app-server-01',
     })
     fireEvent.click(checkbox)
 
     expect(mockUpdateMutate).toHaveBeenCalledWith({
       id: 'srv-1',
-      payload: { monitor: false },
+      payload: { hardwareMonitoringEnabled: false },
     })
+
+    expect(mockUpdateMutate).not.toHaveBeenCalledWith(
+      expect.objectContaining({ payload: expect.objectContaining({ monitor: false }) }),
+    )
   })
 })
