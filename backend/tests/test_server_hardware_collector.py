@@ -578,7 +578,7 @@ def test_scheduler_job_registration():
         assert mock_add_job.call_count == 1
         kwargs = mock_add_job.call_args[1]
         assert kwargs["id"] == ILO_HARDWARE_POLL_JOB_ID
-        assert kwargs["seconds"] == 60
+        assert kwargs["seconds"] == 300
         assert kwargs["max_instances"] == 1
         assert kwargs["coalesce"] is True
 

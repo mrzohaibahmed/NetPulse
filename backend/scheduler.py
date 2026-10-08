@@ -1,4 +1,5 @@
 import atexit
+import os
 import threading
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -86,18 +87,19 @@ def _run_ilo_hardware_poll_job() -> None:
 
 
 def _start_ilo_hardware_poll_job() -> None:
-    """Register periodic iLO server hardware collection job (60s default)."""
+    """Register periodic iLO server hardware collection job (300s default / 5 minutes)."""
     try:
+        poll_interval = int(os.getenv("SERVER_HARDWARE_POLL_INTERVAL_SECONDS", "300"))
         scheduler.add_job(
             func=_run_ilo_hardware_poll_job,
             trigger="interval",
-            seconds=60,
+            seconds=poll_interval,
             id=ILO_HARDWARE_POLL_JOB_ID,
             replace_existing=True,
             max_instances=1,
             coalesce=True,
         )
-        logger.info("iLO server hardware polling job registered | interval=60s")
+        logger.info("iLO server hardware polling job registered | interval=%ss", poll_interval)
     except Exception as exc:  # noqa: BLE001
         logger.warning("iLO server hardware polling job could not be registered: %s", exc)
 
