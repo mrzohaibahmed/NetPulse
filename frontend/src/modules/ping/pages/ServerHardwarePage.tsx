@@ -28,6 +28,9 @@ import { Input } from '@/shared/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table'
 import type { Device } from '@/types'
+import { useAuth } from '@/shared/auth/AuthContext'
+import { useDeviceMutations } from '@/hooks/queries'
+import { Checkbox } from '@/shared/ui/checkbox'
 import { fetchAllListPages } from '@/utils/fetchAllPages'
 import { formatMs, formatRelative } from '@/utils/format'
 import { useClientPagination } from '@/hooks/useClientPagination'
@@ -38,6 +41,8 @@ export function ServerHardwarePage() {
   const navigate = useNavigate()
   const { deviceId: routeDeviceId } = useParams()
   const [searchParams, setSearchParams] = useSearchParams()
+  const { isAdmin } = useAuth()
+  const deviceMutations = useDeviceMutations()
 
   const queryParamDevice = searchParams.get('device')
   const drawerDeviceId = routeDeviceId || queryParamDevice || null
@@ -45,6 +50,7 @@ export function ServerHardwarePage() {
   const [searchQuery, setSearchQuery] = useState('')
   const [typeFilter, setTypeFilter] = useState<string>('all')
   const [statusFilter, setStatusFilter] = useState<string>('all')
+  const [monitorFilter, setMonitorFilter] = useState<string>('all')
 
   const devicesQuery = useQuery({
     queryKey: ['server-hardware-devices'],
@@ -71,6 +77,11 @@ export function ServerHardwarePage() {
         return false
       }
 
+      if (monitorFilter !== 'all') {
+        if (monitorFilter === 'monitored' && !device.monitor) return false
+        if (monitorFilter === 'disabled' && device.monitor) return false
+      }
+
       if (searchQuery.trim()) {
         const q = searchQuery.trim().toLowerCase()
         const textBlob = [
@@ -90,7 +101,7 @@ export function ServerHardwarePage() {
 
       return true
     })
-  }, [eligibleServers, typeFilter, statusFilter, searchQuery])
+  }, [eligibleServers, typeFilter, statusFilter, monitorFilter, searchQuery])
 
   const pagination = useClientPagination(filteredServers, DEFAULT_PAGE_SIZE)
 
@@ -164,16 +175,21 @@ export function ServerHardwarePage() {
         title="Server Hardware"
         description="HPE iLO server hardware inventory, operational freshness, and collection diagnostics."
         actions={
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            onClick={() => void devicesQuery.refetch()}
-            disabled={devicesQuery.isFetching}
-          >
-            <RefreshCw className={`h-4 w-4 ${devicesQuery.isFetching ? 'animate-spin' : ''}`} />
-            Refresh
-          </Button>
+          <div className="flex items-center gap-3">
+            <Badge variant="outline" className="px-3 py-1.5 font-medium text-xs">
+              Monitoring: {kpis.monitored}/{kpis.total} Monitored
+            </Badge>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => void devicesQuery.refetch()}
+              disabled={devicesQuery.isFetching}
+            >
+              <RefreshCw className={`h-4 w-4 ${devicesQuery.isFetching ? 'animate-spin' : ''}`} />
+              Refresh
+            </Button>
+          </div>
         }
       />
 
@@ -254,6 +270,17 @@ export function ServerHardwarePage() {
                   <SelectItem value="Unknown">Unknown</SelectItem>
                 </SelectContent>
               </Select>
+
+              <Select value={monitorFilter} onValueChange={setMonitorFilter}>
+                <SelectTrigger className="w-[160px]">
+                  <SelectValue placeholder="All Monitoring" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Monitoring</SelectItem>
+                  <SelectItem value="monitored">Monitored Only</SelectItem>
+                  <SelectItem value="disabled">Disabled Only</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
           </div>
 
@@ -267,7 +294,7 @@ export function ServerHardwarePage() {
             <EmptyState
               icon={Search}
               title="No matching server devices"
-              description="Try adjusting your search query or status/type filters."
+              description="Try adjusting your search query or status/type/monitoring filters."
             />
           ) : (
             <>
@@ -278,6 +305,7 @@ export function ServerHardwarePage() {
                       <TableHead>Server Hostname</TableHead>
                       <TableHead>Management IP / iLO</TableHead>
                       <TableHead>Device Type</TableHead>
+                      <TableHead>Monitoring</TableHead>
                       <TableHead>Ping Status</TableHead>
                       <TableHead>Response Time</TableHead>
                       <TableHead>Last Checked</TableHead>
@@ -313,6 +341,28 @@ export function ServerHardwarePage() {
                           <Badge variant="secondary" className="font-mono text-xs">
                             {device.deviceType}
                           </Badge>
+                        </TableCell>
+                        <TableCell onClick={(e) => e.stopPropagation()}>
+                          <label className="flex items-center gap-2 cursor-pointer text-xs font-medium select-none">
+                            <Checkbox
+                              aria-label={`Toggle monitoring for ${device.hostname}`}
+                              checked={Boolean(device.monitor)}
+                              disabled={!isAdmin || deviceMutations.update.isPending}
+                              onCheckedChange={() =>
+                                isAdmin &&
+                                deviceMutations.update.mutate({
+                                  id: device._id,
+                                  payload: { monitor: !device.monitor },
+                                })
+                              }
+                            />
+                            <Badge
+                              variant={device.monitor ? 'success' : 'outline'}
+                              className="text-[11px] px-1.5 py-0"
+                            >
+                              {device.monitor ? 'Monitored' : 'Disabled'}
+                            </Badge>
+                          </label>
                         </TableCell>
                         <TableCell>
                           <StatusBadge status={device.status} pulse={false} />

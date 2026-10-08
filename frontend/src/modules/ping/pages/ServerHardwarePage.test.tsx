@@ -16,11 +16,15 @@ vi.mock('@/utils/fetchAllPages', () => ({
 
 const mockUseServerHardwareHealthQuery = vi.fn()
 const mockUseDeviceHistoryQuery = vi.fn()
+const mockUpdateMutate = vi.fn()
 
 vi.mock('@/hooks/queries', () => ({
   useServerHardwareHealthQuery: (...args: unknown[]) => mockUseServerHardwareHealthQuery(...args),
   useDeviceHistoryQuery: (...args: unknown[]) => mockUseDeviceHistoryQuery(...args),
-  useDeviceMutations: () => ({ scan: { isPending: false, mutate: vi.fn() } }),
+  useDeviceMutations: () => ({
+    scan: { isPending: false, mutate: vi.fn() },
+    update: { isPending: false, mutate: mockUpdateMutate },
+  }),
   useNmapScanMutation: () => ({ isPending: false, mutate: vi.fn() }),
 }))
 
@@ -120,7 +124,7 @@ describe('ServerHardwarePage Component', () => {
 
   beforeEach(() => {
     vi.resetAllMocks()
-    mockFetchAllListPages.mockResolvedValue(sampleDevices)
+    mockFetchAllListPages.mockResolvedValue({ data: sampleDevices, total: sampleDevices.length })
     mockUseServerHardwareHealthQuery.mockReturnValue({
       data: {
         deviceId: 'srv-1',
@@ -162,10 +166,13 @@ describe('ServerHardwarePage Component', () => {
   })
 
   it('4. Displays empty state when no eligible servers exist in the system', async () => {
-    mockFetchAllListPages.mockResolvedValue([
-      sampleDevices[3], // Switch
-      sampleDevices[4], // Router
-    ])
+    mockFetchAllListPages.mockResolvedValue({
+      data: [
+        sampleDevices[3], // Switch
+        sampleDevices[4], // Router
+      ],
+      total: 2,
+    })
 
     renderWithProviders(<ServerHardwarePage />)
 
@@ -183,5 +190,19 @@ describe('ServerHardwarePage Component', () => {
 
     // DeviceDrawer opens
     expect(screen.getByRole('dialog')).toBeInTheDocument()
+  })
+
+  it('6. Clicking monitoring checkbox triggers device update mutation', async () => {
+    renderWithProviders(<ServerHardwarePage />)
+
+    const checkbox = await screen.findByRole('checkbox', {
+      name: 'Toggle monitoring for app-server-01',
+    })
+    fireEvent.click(checkbox)
+
+    expect(mockUpdateMutate).toHaveBeenCalledWith({
+      id: 'srv-1',
+      payload: { monitor: false },
+    })
   })
 })
