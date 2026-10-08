@@ -26,6 +26,11 @@ vi.mock('@/hooks/queries', () => ({
     update: { isPending: false, mutate: mockUpdateMutate },
   }),
   useNmapScanMutation: () => ({ isPending: false, mutate: vi.fn() }),
+  useSettingsQuery: () => ({
+    data: { serverHardwareMonitoringEnabled: true },
+    isLoading: false,
+  }),
+  useSettingsMutation: () => ({ isPending: false, mutate: vi.fn() }),
 }))
 
 function renderWithProviders(ui: React.ReactElement, initialEntry = '/server-hardware') {

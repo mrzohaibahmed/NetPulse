@@ -104,6 +104,10 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "SWITCH_HARDWARE_MONITORING_ENABLED", "false"
     ).lower()
     in ("1", "true", "yes"),
+    "serverHardwareMonitoringEnabled": os.getenv(
+        "SERVER_HARDWARE_MONITORING_ENABLED", "true"
+    ).lower()
+    in ("1", "true", "yes"),
     "updatedAt": None,
 }
 
@@ -112,17 +116,17 @@ def ensure_settings():
     existing = db.settings.find_one({"_id": SETTINGS_ID})
     if existing:
         # Backfill new keys on existing deployments without overwriting operator choices.
+        updates = {}
         if "switchHardwareMonitoringEnabled" not in existing:
-            db.settings.update_one(
-                {"_id": SETTINGS_ID},
-                {
-                    "$set": {
-                        "switchHardwareMonitoringEnabled": DEFAULT_SETTINGS[
-                            "switchHardwareMonitoringEnabled"
-                        ]
-                    }
-                },
-            )
+            updates["switchHardwareMonitoringEnabled"] = DEFAULT_SETTINGS[
+                "switchHardwareMonitoringEnabled"
+            ]
+        if "serverHardwareMonitoringEnabled" not in existing:
+            updates["serverHardwareMonitoringEnabled"] = DEFAULT_SETTINGS[
+                "serverHardwareMonitoringEnabled"
+            ]
+        if updates:
+            db.settings.update_one({"_id": SETTINGS_ID}, {"$set": updates})
             return db.settings.find_one({"_id": SETTINGS_ID})
         return existing
 
@@ -195,6 +199,12 @@ def get_public_settings():
             settings.get(
                 "switchHardwareMonitoringEnabled",
                 DEFAULT_SETTINGS["switchHardwareMonitoringEnabled"],
+            )
+        ),
+        "serverHardwareMonitoringEnabled": bool(
+            settings.get(
+                "serverHardwareMonitoringEnabled",
+                DEFAULT_SETTINGS["serverHardwareMonitoringEnabled"],
             )
         ),
         "whatsapp": get_public_whatsapp_status(),
@@ -364,6 +374,14 @@ def update_settings(payload: dict):
     ):
         update["switchHardwareMonitoringEnabled"] = bool(
             payload["switchHardwareMonitoringEnabled"]
+        )
+
+    if (
+        "serverHardwareMonitoringEnabled" in payload
+        and payload["serverHardwareMonitoringEnabled"] is not None
+    ):
+        update["serverHardwareMonitoringEnabled"] = bool(
+            payload["serverHardwareMonitoringEnabled"]
         )
 
     db.settings.update_one({"_id": SETTINGS_ID}, {"$set": update})

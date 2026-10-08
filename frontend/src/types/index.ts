@@ -320,6 +320,8 @@ export interface AppSettings {
   }
   /** Admin-togglable Cisco switch hardware monitoring master switch. */
   switchHardwareMonitoringEnabled?: boolean
+  /** Admin-togglable HPE iLO server hardware monitoring master switch. */
+  serverHardwareMonitoringEnabled?: boolean
   updatedAt: string | null
 }
 

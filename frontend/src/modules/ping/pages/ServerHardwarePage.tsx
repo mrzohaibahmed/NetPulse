@@ -29,7 +29,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table'
 import type { Device } from '@/types'
 import { useAuth } from '@/shared/auth/AuthContext'
-import { useDeviceMutations } from '@/hooks/queries'
+import { useDeviceMutations, useSettingsMutation, useSettingsQuery } from '@/hooks/queries'
 import { Checkbox } from '@/shared/ui/checkbox'
 import { fetchAllListPages } from '@/utils/fetchAllPages'
 import { formatMs, formatRelative } from '@/utils/format'
@@ -43,6 +43,13 @@ export function ServerHardwarePage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const { isAdmin } = useAuth()
   const deviceMutations = useDeviceMutations()
+  const settingsQuery = useSettingsQuery(true)
+  const settingsMutation = useSettingsMutation()
+  const monitoringEnabled = Boolean(settingsQuery.data?.serverHardwareMonitoringEnabled)
+
+  const toggleMonitoring = (enabled: boolean) => {
+    settingsMutation.mutate({ serverHardwareMonitoringEnabled: enabled })
+  }
 
   const queryParamDevice = searchParams.get('device')
   const drawerDeviceId = routeDeviceId || queryParamDevice || null
@@ -179,8 +186,24 @@ export function ServerHardwarePage() {
         actions={
           <div className="flex items-center gap-3">
             <Badge variant="outline" className="px-3 py-1.5 font-medium text-xs">
-              Monitoring: {kpis.monitored}/{kpis.total} Monitored
+              {kpis.monitored}/{kpis.total} Monitored
             </Badge>
+            {isAdmin ? (
+              <label className="flex items-center gap-2 rounded-lg border border-border/70 bg-card px-3 py-2 text-sm">
+                <Checkbox
+                  checked={monitoringEnabled}
+                  disabled={settingsQuery.isLoading || settingsMutation.isPending}
+                  onCheckedChange={(checked) => toggleMonitoring(Boolean(checked))}
+                />
+                <span className="font-medium">
+                  {monitoringEnabled ? 'Monitoring enabled' : 'Enable hardware monitoring'}
+                </span>
+              </label>
+            ) : (
+              <Badge variant={monitoringEnabled ? 'success' : 'warning'}>
+                {monitoringEnabled ? 'Monitoring on' : 'Monitoring off'}
+              </Badge>
+            )}
             <Button
               type="button"
               variant="secondary"
@@ -194,6 +217,18 @@ export function ServerHardwarePage() {
           </div>
         }
       />
+
+      {!monitoringEnabled ? (
+        <div className="rounded-xl border border-warning/40 bg-warning/10 px-4 py-3 text-sm">
+          <p className="font-medium text-foreground">Hardware monitoring is disabled</p>
+          <p className="mt-1 text-muted-foreground">
+            Scheduled iLO collection stays idle until an admin enables monitoring.
+            {isAdmin
+              ? ' Use the toggle above to turn it on.'
+              : ' Ask an administrator to enable it.'}
+          </p>
+        </div>
+      ) : null}
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <KpiCard

@@ -464,6 +464,18 @@ def _maybe_append_history(
         )
 
 
+def is_server_hardware_monitoring_enabled(database: Any = None) -> bool:
+    """Check whether master server hardware monitoring is enabled in Mongo settings."""
+    target_db = database if database is not None else db
+    try:
+        settings = target_db.settings.find_one({"_id": "global"}) or {}
+        if "serverHardwareMonitoringEnabled" in settings:
+            return bool(settings.get("serverHardwareMonitoringEnabled"))
+    except Exception:
+        pass
+    return True
+
+
 def collect_all_server_hardware(*, database: Any = None) -> dict[str, int]:
     """
     Master collector entry point executed periodically by scheduler job.
@@ -475,6 +487,10 @@ def collect_all_server_hardware(*, database: Any = None) -> dict[str, int]:
         return {"total": 0, "polled": 0, "success": 0, "failed": 0, "skipped": 0}
 
     target_db = database if database is not None else db
+
+    if not is_server_hardware_monitoring_enabled(database=target_db):
+        logger.info("[ILO_COLLECTOR] Skipping iLO hardware collection — serverHardwareMonitoringEnabled is False")
+        return {"total": 0, "polled": 0, "success": 0, "failed": 0, "skipped": 0}
 
     query = {
         "deviceType": {"$in": ELIGIBLE_DEVICE_TYPES},
