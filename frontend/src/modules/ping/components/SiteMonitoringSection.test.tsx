@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
+import { TooltipProvider } from '@/shared/ui/tooltip'
 import { SiteMonitoringSection } from '@/modules/ping/components/SiteMonitoringSection'
 import type { SiteMonitoringSite } from '@/types'
 
@@ -72,12 +73,20 @@ const sampleSites: SiteMonitoringSite[] = [
   },
 ]
 
+function Wrapper({ children }: { children: React.ReactNode }) {
+  return (
+    <MemoryRouter>
+      <TooltipProvider>{children}</TooltipProvider>
+    </MemoryRouter>
+  )
+}
+
 describe('SiteMonitoringSection', () => {
   it('renders all site panels', () => {
     render(
-      <MemoryRouter>
+      <Wrapper>
         <SiteMonitoringSection sites={sampleSites} />
-      </MemoryRouter>,
+      </Wrapper>,
     )
 
     expect(screen.getByText('Mills')).toBeInTheDocument()
@@ -87,9 +96,9 @@ describe('SiteMonitoringSection', () => {
 
   it('renders ISP cards and server cards independently', () => {
     render(
-      <MemoryRouter>
+      <Wrapper>
         <SiteMonitoringSection sites={sampleSites} />
-      </MemoryRouter>,
+      </Wrapper>,
     )
 
     expect(screen.getByText('Multinet')).toBeInTheDocument()
@@ -103,11 +112,11 @@ describe('SiteMonitoringSection', () => {
 
   it('shows empty server state when no servers configured for a site', () => {
     render(
-      <MemoryRouter>
+      <Wrapper>
         <SiteMonitoringSection sites={sampleSites} />
-      </MemoryRouter>,
+      </Wrapper>,
     )
 
-    expect(screen.getAllByText('No server devices configured').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('No servers configured').length).toBeGreaterThan(0)
   })
 })
