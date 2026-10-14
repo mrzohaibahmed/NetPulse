@@ -315,8 +315,8 @@ function IspSection({
         <div className="w-full max-w-full overflow-x-auto rounded-lg border border-border/50 sm:overflow-x-hidden">
           <table className="w-full min-w-[410px] table-fixed text-[13px] sm:min-w-0" aria-label={`ISP links for ${locationName}`}>
             <colgroup>
-              <col className="w-[14%]" />
-              <col className="w-[45%]" />
+              <col className="w-[22%]" />
+              <col className="w-[37%]" />
               <col className="w-[27%]" />
               <col className="w-[14%]" />
             </colgroup>
@@ -331,18 +331,23 @@ function IspSection({
             <tbody className="divide-y divide-border/40">
               {classified.map(({ isp, cls }) => (
                 <tr key={isp.id} className="hover:bg-secondary/10">
-                  <td className="whitespace-nowrap px-2 py-2 font-medium text-foreground">{isp.name}</td>
-                  <td className="truncate px-2 py-2 font-mono text-muted-foreground">
+                  <td className="truncate px-2 py-2 font-medium text-foreground" title={isp.name}>
+                    {isp.name}
+                  </td>
+                  <td
+                    className="truncate px-2 py-2 font-mono text-muted-foreground"
+                    title={isp.target || 'No target configured'}
+                  >
                     {isp.target ? (
                       isp.target
                     ) : (
                       <span className="italic text-slate-500">No target configured</span>
                     )}
                   </td>
-                  <td className="px-2 py-2">
-                    <span className={cn('inline-flex whitespace-nowrap items-center gap-1.5 font-medium', ispStatusTextClass(cls))}>
+                  <td className="overflow-hidden px-2 py-2" title={cls}>
+                    <span className={cn('inline-flex max-w-full items-center gap-1.5 font-medium', ispStatusTextClass(cls))}>
                       <StatusDot dotClass={ispStatusDotClass(cls)} />
-                      {cls}
+                      <span className="truncate">{cls}</span>
                     </span>
                   </td>
                   <td className="whitespace-nowrap px-2 py-2 text-right font-mono text-muted-foreground">

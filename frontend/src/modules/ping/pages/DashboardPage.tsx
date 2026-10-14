@@ -119,7 +119,7 @@ export function DashboardPage() {
   if (dash.isLoading && !dash.summary) {
     return (
       <div className="np-page">
-        <PageHeader title="Enterprise Dashboard" />
+        <PageHeader title="Enterprise Dashboard - NetPulse" align="center" />
         <DashboardSkeleton />
       </div>
     )
@@ -128,7 +128,7 @@ export function DashboardPage() {
   if (dash.error && !dash.summary) {
     return (
       <div className="np-page">
-        <PageHeader title="Enterprise Dashboard" />
+        <PageHeader title="Enterprise Dashboard - NetPulse" align="center" />
         <ErrorState message={dash.error} onRetry={() => void dash.refetchAll()} />
       </div>
     )
@@ -143,7 +143,8 @@ export function DashboardPage() {
     >
       <motion.div variants={fadeUp}>
         <PageHeader
-          title="Enterprise Dashboard"
+          title="Enterprise Dashboard - NetPulse"
+          align="center"
           actions={
             <Button type="button" variant="secondary" onClick={() => void dash.refetchAll()}>
               <RefreshCw className="mr-2 h-4 w-4" />
