@@ -312,8 +312,14 @@ function IspSection({
 
       {/* Full-width table */}
       {classified.length > 0 && (
-        <div className="w-full max-w-full overflow-x-auto rounded-lg border border-border/50">
-          <table className="w-full min-w-[410px] text-[13px]" aria-label={`ISP links for ${locationName}`}>
+        <div className="w-full max-w-full overflow-x-auto rounded-lg border border-border/50 sm:overflow-x-hidden">
+          <table className="w-full min-w-[410px] table-fixed text-[13px] sm:min-w-0" aria-label={`ISP links for ${locationName}`}>
+            <colgroup>
+              <col className="w-[14%]" />
+              <col className="w-[45%]" />
+              <col className="w-[27%]" />
+              <col className="w-[14%]" />
+            </colgroup>
             <thead>
               <tr className="border-b border-border/50 bg-secondary/20">
                 <th className="px-2 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">ISP</th>
@@ -326,7 +332,7 @@ function IspSection({
               {classified.map(({ isp, cls }) => (
                 <tr key={isp.id} className="hover:bg-secondary/10">
                   <td className="whitespace-nowrap px-2 py-2 font-medium text-foreground">{isp.name}</td>
-                  <td className="whitespace-nowrap px-2 py-2 font-mono text-muted-foreground">
+                  <td className="truncate px-2 py-2 font-mono text-muted-foreground">
                     {isp.target ? (
                       isp.target
                     ) : (
@@ -423,8 +429,14 @@ function ServerSection({
 
       {/* Full-width table */}
       {classified.length > 0 && (
-        <div className="w-full max-w-full overflow-x-auto rounded-lg border border-border/50">
-          <table className="w-full min-w-[410px] text-[13px]" aria-label={`Server monitoring for ${locationName}`}>
+        <div className="w-full max-w-full overflow-x-auto rounded-lg border border-border/50 sm:overflow-x-hidden">
+          <table className="w-full min-w-[410px] table-fixed text-[13px] sm:min-w-0" aria-label={`Server monitoring for ${locationName}`}>
+            <colgroup>
+              <col className="w-[22%]" />
+              <col className="w-[34%]" />
+              <col className="w-[24%]" />
+              <col className="w-[20%]" />
+            </colgroup>
             <thead>
               <tr className="border-b border-border/50 bg-secondary/20">
                 <th className="px-2 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Device</th>
