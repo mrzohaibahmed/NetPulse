@@ -28,6 +28,7 @@ from services.switch_hardware.models import (
 from services.switch_hardware.snmp_collector import collect_snmp_hardware
 from services.switch_hardware.ssh_collector import collect_ssh_hardware
 from services.switch_hardware.vendor_detection import (
+    detect_platform,
     get_ineligibility_reason,
     is_eligible_switch,
     platform_label,
@@ -172,7 +173,7 @@ def _ssh_connection_error(ssh_data: dict | None) -> str | None:
 
 def _has_hardware_payload(snapshot: dict) -> bool:
     inventory = snapshot.get("inventory") or {}
-    if any(inventory.get(key) for key in ("model", "serialNumber", "iosVersion", "hostname")):
+    if any(inventory.get(key) for key in ("model", "serialNumber", "iosVersion", "firmwareVersion", "hostname")):
         return True
     temperature = snapshot.get("temperature") or {}
     if temperature.get("sensors"):
@@ -219,7 +220,7 @@ def collect_device_hardware(
         raise ValueError("Device not found")
     if not is_eligible_switch(device):
         raise ValueError(
-            get_ineligibility_reason(device) or "Device is not an eligible Cisco switch"
+            get_ineligibility_reason(device) or "Device is not an eligible switch"
         )
 
     key = str(device_id)
@@ -291,9 +292,8 @@ def collect_device_hardware(
         if ssh_data:
             platform = ssh_data.get("platform")
         if not platform and snmp_data:
-            from services.switch_hardware.vendor_detection import detect_platform
-
             platform = detect_platform(device, sys_descr=snmp_data.get("sysDescr"))
+        platform = platform or detect_platform(device)
         platform_label_value = platform_label(platform) or (previous or {}).get("platform")
 
         if not has_payload and not errors:
@@ -313,6 +313,7 @@ def collect_device_hardware(
         now = utc_now()
         doc = build_current_document(
             device_id,
+            vendor="Juniper" if platform == "juniper_junos" else "Cisco",
             platform=platform_label_value,
             collection_status=collection_status,
             overall_health=merged.get("overallHealth", "unknown"),

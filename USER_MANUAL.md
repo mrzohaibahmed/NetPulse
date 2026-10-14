@@ -1277,11 +1277,17 @@ Sweep pings hosts in range; online hosts can be registered into `devices` with m
 | `cisco_ios` | cisco, ios | CDP + LLDP detail |
 | `cisco_xe` | ios-xe, ios_xe | CDP + LLDP |
 | `cisco_nxos` | nxos, nx-os | CDP + LLDP |
-| `juniper_junos` | juniper, junos | terse interfaces only (no CDP/LLDP in command set) |
+| `juniper_junos` | juniper, junos | terse interfaces, descriptions, switching/VLAN detail, LLDP neighbors, media speed (optional details) |
 | `aruba_os` | aruba | brief interfaces |
 | `generic` | fallback | status/description/switchport, no CDP/LLDP |
 
-Required command keys for a successful inventory parse: `status` or `terse`. CDP/LLDP are optional (soft-fail).
+Required command key for a successful inventory parse: `status`. Juniper uses
+`show interfaces terse` once; optional Junos detail commands soft-fail.
+Physical interfaces are inventoried and logical units enrich their parent.
+If no SSH vendor is set, a Juniper device vendor selects `juniper_junos` even
+when the SSH default vendor is Cisco. VLAN IDs require an operational tag or
+a name-to-ID mapping from the switch configuration; unresolvable values remain
+unknown.
 
 Privileges: the SSH user must be allowed to run those show commands. Enable secret may be supplied as `sshSecret`. **Do not store real passwords in this manual.**
 
@@ -1297,6 +1303,10 @@ During Cisco IOS/XE/NX-OS discovery, NetPulse runs:
 
 - `show cdp neighbors detail`
 - `show lldp neighbors detail`
+
+Juniper discovery uses `show lldp neighbors detail` for neighbors. CDP remains
+Cisco-only. The Juniper SSH user needs permission for the optional `show`
+commands to populate those fields.
 
 Neighbors are stored on `interfaces.neighbor`. Topology is **computed on read**; there is no topology collection and no SNMP neighbor walk.
 
@@ -1326,7 +1336,8 @@ Stale edges use a distinct color. Offline device status in the UI includes strin
 ### Why a connection may not appear
 
 - Interface discovery not run or failed
-- CDP/LLDP disabled or not in vendor command set (Juniper/Aruba/generic)
+- CDP/LLDP disabled or not in vendor command set (Aruba/generic), or Juniper
+  LLDP detail unsupported/unauthorized
 - Neighbor dict empty
 - Selected switch has no `interfaces` with neighbors
 - Frontend filter/view showing the other level
@@ -1842,7 +1853,7 @@ Database name: **`DATABASE_NAME` from `.env`** (example `NetworkMonitor`).
 
 ### Retention
 
-TTL indexes (Mongo native) on telemetry collections using `dataRetentionDays` (default 90). Cisco switch hardware history (`switch_hardware_history`) uses its own `switchHardwareHistoryRetentionDays` window (default 90), independent of `dataRetentionDays`. Mitigation/recovery logs use `incidentRetentionDays` (default 365). **RESOLVED** incidents are purged by the daily job (03:15 UTC cron), not by TTL on active incidents.
+TTL indexes (Mongo native) on telemetry collections using `dataRetentionDays` (default 90). Switch hardware history (`switch_hardware_history`) uses its own `switchHardwareHistoryRetentionDays` window (default 90), independent of `dataRetentionDays`. Mitigation/recovery logs use `incidentRetentionDays` (default 365). **RESOLVED** incidents are purged by the daily job (03:15 UTC cron), not by TTL on active incidents.
 
 NTP accuracy matters for TTL.
 

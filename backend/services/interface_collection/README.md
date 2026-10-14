@@ -191,7 +191,14 @@ Called from:
 | `cdp` | `show cdp neighbors detail` | Optional |
 | `lldp` | `show lldp neighbors detail` | Optional |
 
-**Juniper:** `show interfaces terse` only (limited inventory).  
+**Juniper:** `show interfaces terse` is required. Optional commands add descriptions
+(`show interfaces descriptions`), access/trunk mode and VLANs
+(`show ethernet-switching interfaces detail`, plus interface/VLAN configuration
+in `display set` form), LLDP neighbors (`show lldp neighbors detail`), and
+speed/MAC/ifIndex (`show interfaces media`). Physical interfaces are inventory
+rows; logical units enrich their parent. Unsupported or unauthorized optional
+commands leave their fields unknown without failing discovery. An explicit
+`sshVendor` wins; otherwise a Juniper device vendor selects `juniper_junos`.
 **Aruba / generic:** brief/status-style commands; limited switchport/neighbor coverage.
 
 > If CDP/LLDP/switchport are disabled or fail, discovery **still succeeds** using status (+ description when available).

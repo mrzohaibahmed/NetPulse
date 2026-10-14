@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from services.switch_hardware.vendor_detection import (
+    detect_platform,
     get_ineligibility_reason,
     is_cisco_device,
     is_eligible_switch,
@@ -40,15 +41,31 @@ class SwitchHardwareVendorTests(unittest.TestCase):
         reason = get_ineligibility_reason(device) or ""
         self.assertIn("credentials", reason.lower())
 
-    def test_explicit_non_cisco_is_rejected(self):
+    def test_juniper_is_eligible_and_detected(self):
         device = {
             "monitor": True,
             "vendor": "Juniper",
             "deviceType": "switch",
             "credentials": {"sshUsername": "admin", "sshPassword": "x"},
         }
+        self.assertTrue(is_eligible_switch(device))
+        self.assertEqual(detect_platform(device), "juniper_junos")
+        self.assertEqual(get_ineligibility_reason(device), None)
+
+    def test_junos_ssh_vendor_is_eligible(self):
+        device = {
+            "monitor": True,
+            "vendor": "",
+            "deviceType": "switch",
+            "credentials": {"sshVendor": "juniper_junos"},
+        }
+        self.assertTrue(is_eligible_switch(device))
+        self.assertEqual(detect_platform(device), "juniper_junos")
+
+    def test_unsupported_vendor_is_rejected(self):
+        device = {"monitor": True, "vendor": "Aruba", "deviceType": "switch"}
         self.assertFalse(is_eligible_switch(device))
-        self.assertEqual(get_ineligibility_reason(device), "Device vendor is not Cisco")
+        self.assertIn("not supported", get_ineligibility_reason(device) or "")
 
     def test_named_non_cisco_without_hint_list_gets_guidance(self):
         device = {

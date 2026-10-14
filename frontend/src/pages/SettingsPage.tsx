@@ -605,7 +605,7 @@ export function SettingsPage() {
                 {...form.register('switchHardwareHistoryRetentionDays', { valueAsNumber: true })}
               />
               <p className="text-xs text-muted-foreground">
-                Cisco switch hardware polling snapshots in switch_hardware_history.
+                Switch hardware polling snapshots in switch_hardware_history.
               </p>
             </div>
             <div className="space-y-1.5">

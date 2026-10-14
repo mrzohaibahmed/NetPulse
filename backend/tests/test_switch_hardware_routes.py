@@ -78,6 +78,22 @@ class SwitchHardwareRouteTests(unittest.TestCase):
         self.assertTrue(body["success"])
         self.assertNotIn("password", str(body).lower())
 
+    @patch("routes.switch_hardware_routes.db")
+    def test_juniper_hardware_read_is_allowed(self, mock_db):
+        mock_db.devices.find_one.return_value = {
+            "_id": ObjectId(self.device_id),
+            "deviceType": "Managed Switch",
+            "vendor": "Juniper",
+            "monitor": True,
+        }
+        mock_db.switch_hardware_current.find_one.return_value = None
+        response = self.client.get(
+            f"/api/switches/{self.device_id}/hardware",
+            headers=self._headers("user"),
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()["success"])
+
 
 if __name__ == "__main__":
     unittest.main()

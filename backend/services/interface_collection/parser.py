@@ -776,7 +776,9 @@ def parse_interface_outputs(
         )
 
     if vendor_key in ("juniper", "juniper_junos", "junos"):
-        return parse_juniper_terse(outputs.get("status", "") or outputs.get("terse", ""))
+        from services.interface_collection.juniper_parser import parse_juniper_outputs
+
+        return parse_juniper_outputs(outputs)
 
     # Generic fallback: try Cisco status parser (many vendors mimic it)
     logger.info("[IFACE] Using generic/Cisco status parser for vendor=%s", vendor_key)
@@ -786,38 +788,10 @@ def parse_interface_outputs(
 
 
 def parse_juniper_terse(output: str) -> list[dict]:
-    """
-    Parse ``show interfaces terse`` (Juniper Junos).
+    """Backward-compatible entry point for Junos terse-only discovery."""
+    from services.interface_collection.juniper_parser import parse_terse
 
-    Columns: Interface  Admin  Link  Proto  Local  Remote
-    """
-    interfaces: list[dict] = []
-    if not output:
-        return interfaces
-
-    for line in output.replace("\r", "").splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.lower().startswith("interface"):
-            continue
-        parts = stripped.split()
-        if len(parts) < 3:
-            continue
-        name, admin, link = parts[0], parts[1], parts[2]
-        if name.endswith("."):  # unit-only continuation
-            continue
-        interfaces.append({
-            "name": expand_cisco_name(name),
-            "admin_status": admin.lower(),
-            "oper_status": link.lower(),
-            "mode": "unknown",
-            "vlan": "",
-            "speed": "",
-            "duplex": "",
-            "description": "",
-            "vendor": "juniper",
-        })
-
-    return interfaces
+    return parse_terse(output)
 
 
 def dedupe_by_name(interfaces: Iterable[dict]) -> list[dict]:

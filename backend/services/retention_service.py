@@ -56,7 +56,7 @@ DATA_TTL_TARGETS: tuple[tuple[str, str, str], ...] = (
     ("storm_safety_history", "timestamp", "idx_storm_safety_timestamp_ttl"),
 )
 
-# Cisco switch hardware polling history — own window (switchHardwareHistoryRetentionDays),
+# Switch hardware polling history — own window (switchHardwareHistoryRetentionDays),
 # independent of dataRetentionDays. Same index name/field as before this setting existed;
 # only the controlling retention window changed, so the existing index is collMod'd in
 # place rather than dropped and recreated.

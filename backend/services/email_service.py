@@ -512,12 +512,12 @@ def send_isp_recovery_alert(
 
 
 # ---------------------------------------------------------------------------
-# Switch hardware alerts (Cisco switch temperature/fan/PSU/CPU/memory faults)
+# Switch hardware alerts (temperature/fan/PSU/CPU/memory faults)
 # ---------------------------------------------------------------------------
 
 
 def send_switch_hardware_alert_email(device: dict, alert: dict) -> bool:
-    """Send one Cisco switch hardware fault notification email."""
+    """Send one switch hardware fault notification email."""
     hostname = device.get("hostname", "Unknown")
     ip_address = device.get("ipAddress", "Unknown")
     title = alert.get("title", "Hardware Alert")
@@ -556,7 +556,7 @@ def send_switch_hardware_alert_email(device: dict, alert: dict) -> bool:
 
 
 def send_switch_hardware_recovery_alert_email(device: dict, alert: dict) -> bool:
-    """Send one Cisco switch hardware recovery notification email."""
+    """Send one switch hardware recovery notification email."""
     hostname = device.get("hostname", "Unknown")
     ip_address = device.get("ipAddress", "Unknown")
     title = alert.get("title", "Hardware Alert")

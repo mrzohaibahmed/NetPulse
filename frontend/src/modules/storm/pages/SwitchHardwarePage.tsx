@@ -39,22 +39,25 @@ import { fetchAllListPages } from '@/utils/fetchAllPages'
 import { formatDateTime, formatRelative } from '@/utils/format'
 import type { SwitchHardwareCurrent } from '@/api/switchHardwareService'
 
-function isCiscoSignal(device: Device): boolean {
+function isSupportedVendorSignal(device: Device): boolean {
   const vendor = (device.vendor || '').toLowerCase()
   const sshVendor = (device.credentials?.sshVendor || '').toLowerCase()
   const deviceType = (device.deviceType || '').toLowerCase()
   return (
     vendor.includes('cisco') ||
+    vendor.includes('juniper') ||
+    vendor.includes('junos') ||
     sshVendor.includes('cisco') ||
+    sshVendor.includes('juniper') ||
+    sshVendor.includes('junos') ||
     deviceType.includes('cisco')
   )
 }
 
-function isExplicitNonCisco(device: Device): boolean {
-  if (isCiscoSignal(device)) return false
+function isUnsupportedVendor(device: Device): boolean {
+  if (isSupportedVendorSignal(device)) return false
   const blob = `${device.vendor || ''} ${device.credentials?.sshVendor || ''}`.toLowerCase()
   const hints = [
-    'juniper',
     'aruba',
     'hewlett',
     'procurve',
@@ -89,11 +92,11 @@ function isUnknownVendor(device: Device): boolean {
 }
 
 /** Matches backend ``is_eligible_switch`` for the fleet list. */
-function isCiscoCandidate(device: Device): boolean {
+function isHardwareCandidate(device: Device): boolean {
   if (device.monitor === false) return false
   if (!isManagedSwitch(device.deviceType)) return false
-  if (isExplicitNonCisco(device)) return false
-  if (isCiscoSignal(device)) return true
+  if (isUnsupportedVendor(device)) return false
+  if (isSupportedVendorSignal(device)) return true
   // Discovery often leaves vendor blank on real Cisco gear.
   return isUnknownVendor(device) && hasUsableCredentials(device)
 }
@@ -141,7 +144,7 @@ export function SwitchHardwarePage() {
   })
 
   const switchDevices = useMemo(
-    () => (devicesQuery.data?.data ?? []).filter(isCiscoCandidate),
+    () => (devicesQuery.data?.data ?? []).filter(isHardwareCandidate),
     [devicesQuery.data],
   )
 
@@ -217,7 +220,7 @@ export function SwitchHardwarePage() {
     <div className="np-page space-y-6">
       <PageHeader
         title="Hardware Health"
-        description="Cisco switch chassis health — temperature, fans, power supplies, CPU, memory, and outage evidence."
+        description="Cisco and Juniper switch chassis health — temperature, fans, power supplies, CPU, memory, and outage evidence."
         actions={
           <div className="flex flex-wrap items-center gap-3">
             {isAdmin ? (
@@ -318,8 +321,8 @@ export function SwitchHardwarePage() {
         <TableSkeleton rows={8} />
       ) : filtered.length === 0 ? (
         <EmptyState
-          title="No eligible Cisco switches"
-          description="Only monitored switches with a Cisco vendor (or blank vendor plus SSH/SNMP credentials) appear here. Set Vendor to Cisco on Devices, add credentials, then enable hardware monitoring."
+          title="No eligible Cisco or Juniper switches"
+          description="Monitored Cisco and Juniper switches appear here. Switches with a blank vendor also appear when credentials are configured. Add SSH or SNMP credentials and enable hardware monitoring."
           action={
             <Button asChild variant="secondary" size="sm">
               <Link to="/switches">Open Switches</Link>

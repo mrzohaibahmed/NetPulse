@@ -28,12 +28,12 @@ export function InventorySection({ inventory, vendor, platform }: InventorySecti
   }
 
   const fields = [
-    { label: 'Vendor', value: vendor || 'Cisco' },
+    { label: 'Vendor', value: vendor },
     { label: 'Model', value: inventory.model },
     { label: 'Serial number', value: inventory.serialNumber },
     { label: 'Product ID', value: inventory.productId },
     { label: 'Platform', value: platform },
-    { label: 'IOS / firmware', value: inventory.iosVersion || inventory.firmwareVersion },
+    { label: 'OS / firmware', value: inventory.iosVersion || inventory.firmwareVersion },
     { label: 'Hostname', value: inventory.hostname },
     { label: 'Uptime', value: inventory.uptime },
     { label: 'Boot reason', value: inventory.bootReason },

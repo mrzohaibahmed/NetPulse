@@ -1,4 +1,4 @@
-"""Configuration for Cisco switch hardware monitoring (Phase 1)."""
+"""Configuration for switch hardware monitoring."""
 
 from __future__ import annotations
 

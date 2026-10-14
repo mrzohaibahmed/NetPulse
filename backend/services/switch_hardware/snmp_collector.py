@@ -1,4 +1,4 @@
-"""SNMP hardware collector for Cisco switches (Phase 1: v2c community)."""
+"""SNMP hardware collector using standard ENTITY MIBs and Cisco extensions."""
 
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ from services.switch_hardware.models import (
     empty_power_supplies,
     empty_temperature,
 )
+from services.switch_hardware.vendor_detection import detect_platform
 from utils.monitor_logger import get_monitor_logger
 
 logger = get_monitor_logger("switch_hardware.snmp")
@@ -35,6 +36,8 @@ OID_ENT_PHYSICAL_MODEL = "1.3.6.1.2.1.47.1.1.1.1.13"
 
 # ENTITY-SENSOR-MIB
 OID_ENT_SENSOR_TYPE = "1.3.6.1.2.1.99.1.1.1.1"
+OID_ENT_SENSOR_SCALE = "1.3.6.1.2.1.99.1.1.1.2"
+OID_ENT_SENSOR_PRECISION = "1.3.6.1.2.1.99.1.1.1.3"
 OID_ENT_SENSOR_VALUE = "1.3.6.1.2.1.99.1.1.1.4"
 OID_ENT_SENSOR_STATUS = "1.3.6.1.2.1.99.1.1.1.5"
 OID_ENT_SENSOR_UNITS = "1.3.6.1.2.1.99.1.1.1.6"
@@ -63,10 +66,11 @@ _CISCO_ENV_STATE = {
 
 
 class SwitchHardwareSNMPCollector:
-    def __init__(self, credentials: SNMPCredentials):
+    def __init__(self, credentials: SNMPCredentials, *, platform: str | None = None):
         if not snmp_available():
             raise SNMPCollectorError("pysnmp is not installed")
         self.credentials = credentials
+        self.platform = platform
 
     def collect(self) -> dict[str, Any]:
         try:
@@ -87,11 +91,19 @@ class SwitchHardwareSNMPCollector:
             "sensor_value": OID_ENT_SENSOR_VALUE,
             "sensor_status": OID_ENT_SENSOR_STATUS,
             "sensor_units": OID_ENT_SENSOR_UNITS,
-            "cisco_temp_value": OID_CISCO_ENV_TEMP_VALUE,
-            "cisco_temp_state": OID_CISCO_ENV_TEMP_STATE,
-            "cisco_fan_state": OID_CISCO_ENV_FAN_STATE,
-            "cisco_supply_state": OID_CISCO_ENV_SUPPLY_STATE,
         }
+        if self.platform != "juniper_junos":
+            keys.update({
+                "cisco_temp_value": OID_CISCO_ENV_TEMP_VALUE,
+                "cisco_temp_state": OID_CISCO_ENV_TEMP_STATE,
+                "cisco_fan_state": OID_CISCO_ENV_FAN_STATE,
+                "cisco_supply_state": OID_CISCO_ENV_SUPPLY_STATE,
+            })
+        else:
+            keys.update({
+                "sensor_scale": OID_ENT_SENSOR_SCALE,
+                "sensor_precision": OID_ENT_SENSOR_PRECISION,
+            })
         tables: dict[str, dict[int, Any]] = {}
         for key, oid in keys.items():
             try:
@@ -235,39 +247,59 @@ class SwitchHardwareSNMPCollector:
             inventory["iosVersion"] = None
 
         ent_descr = tables.get("ent_descr") or {}
+        ent_class = tables.get("ent_class") or {}
+        ent_name = tables.get("ent_name") or {}
         ent_serial = tables.get("ent_serial") or {}
         ent_model = tables.get("ent_model") or {}
         modules = []
         for idx, descr in ent_descr.items():
             modules.append(
                 {
-                    "name": str(descr),
+                    "name": str(ent_name.get(idx) or descr) if self.platform == "juniper_junos" else str(descr),
                     "serialNumber": str(ent_serial.get(idx) or "") or None,
                     "productId": str(ent_model.get(idx) or "") or None,
                 }
             )
         if modules:
             inventory["modules"] = modules
-            inventory["model"] = modules[0].get("productId")
-            inventory["serialNumber"] = modules[0].get("serialNumber")
-            inventory["productId"] = modules[0].get("productId")
+            chassis_idx = next(
+                (idx for idx in ent_descr if str(ent_class.get(idx)).strip() in ("3", "chassis(3)")),
+                None,
+            ) if self.platform == "juniper_junos" else None
+            primary = next(
+                (item for item in modules if item["name"] == str(ent_name.get(chassis_idx) or ent_descr.get(chassis_idx))),
+                modules[0],
+            ) if chassis_idx is not None else modules[0]
+            inventory["model"] = primary.get("productId")
+            inventory["serialNumber"] = primary.get("serialNumber")
+            inventory["productId"] = primary.get("productId")
 
         sensors: list[dict[str, Any]] = []
         sensor_type = tables.get("sensor_type") or {}
         sensor_value = tables.get("sensor_value") or {}
         sensor_status = tables.get("sensor_status") or {}
+        sensor_scale = tables.get("sensor_scale") or {}
+        sensor_precision = tables.get("sensor_precision") or {}
         for idx, stype in sensor_type.items():
             try:
                 stype_int = int(stype)
             except (TypeError, ValueError):
                 continue
-            name = f"Sensor {idx}"
+            name = str(ent_name.get(idx) or f"Sensor {idx}") if self.platform == "juniper_junos" else f"Sensor {idx}"
             if stype_int == SENSOR_TYPE_CELSIUS:
                 try:
-                    value = float(sensor_value.get(idx, 0)) / 1000.0
-                except (TypeError, ValueError):
+                    if self.platform == "juniper_junos":
+                        value = _scaled_entity_sensor_value(
+                            sensor_value[idx], sensor_scale.get(idx, 9), sensor_precision.get(idx, 0)
+                        )
+                    else:
+                        value = float(sensor_value.get(idx, 0)) / 1000.0
+                except (KeyError, TypeError, ValueError):
                     value = None
-                status = _map_sensor_status(sensor_status.get(idx))
+                status = (
+                    _map_entity_sensor_status(sensor_status.get(idx))
+                    if self.platform == "juniper_junos" else _map_sensor_status(sensor_status.get(idx))
+                )
                 sensors.append(
                     build_sensor(
                         name=name,
@@ -279,11 +311,22 @@ class SwitchHardwareSNMPCollector:
                 )
             elif stype_int == SENSOR_TYPE_RPM:
                 try:
-                    rpm = int(float(sensor_value.get(idx, 0)))
-                except (TypeError, ValueError):
+                    if self.platform == "juniper_junos":
+                        rpm = int(_scaled_entity_sensor_value(
+                            sensor_value[idx], sensor_scale.get(idx, 9), sensor_precision.get(idx, 0)
+                        ))
+                    else:
+                        rpm = int(float(sensor_value.get(idx, 0)))
+                except (KeyError, TypeError, ValueError):
                     rpm = None
                 fans.setdefault("_rpm_items", []).append(
-                    build_fan(name=name, status="unknown", rpm=rpm, source="snmp")
+                    build_fan(
+                        name=name,
+                        status=_map_entity_sensor_status(sensor_status.get(idx))
+                        if self.platform == "juniper_junos" else "unknown",
+                        rpm=rpm,
+                        source="snmp",
+                    )
                 )
 
         cisco_temp_value = tables.get("cisco_temp_value") or {}
@@ -368,6 +411,22 @@ def _map_sensor_status(raw: Any) -> str:
     return "unknown"
 
 
+def _map_entity_sensor_status(raw: Any) -> str:
+    """ENTITY-SENSOR-MIB status: ok(1), unavailable(2), nonoperational(3)."""
+    try:
+        return {1: "healthy", 2: "not_available", 3: "critical"}.get(int(raw), "unknown")
+    except (TypeError, ValueError):
+        return "unknown"
+
+
+def _scaled_entity_sensor_value(raw: Any, scale: Any, precision: Any) -> float:
+    """Apply ENTITY-SENSOR-MIB SI scale and fixed-point precision (RFC 3433)."""
+    scale_number = int(scale)
+    if not 1 <= scale_number <= 17:
+        raise ValueError("Invalid entity sensor scale")
+    return float(raw) * (10 ** ((scale_number - 9) * 3 - int(precision)))
+
+
 def _worst_status(statuses) -> str:
     order = {"unknown": 0, "not_available": 1, "healthy": 2, "warning": 3, "critical": 4}
     best = "unknown"
@@ -388,5 +447,5 @@ def collect_snmp_hardware(device: dict, *, timeout: float | None = None) -> dict
             retries=creds.retries,
             version=creds.version,
         )
-    collector = SwitchHardwareSNMPCollector(creds)
+    collector = SwitchHardwareSNMPCollector(creds, platform=detect_platform(device))
     return collector.collect()

@@ -1,4 +1,4 @@
-"""REST API for Cisco switch hardware monitoring."""
+"""REST API for switch hardware monitoring."""
 
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ def _load_eligible_device(device_id: str):
     if not device:
         return None, (jsonify({"success": False, "message": "Device not found"}), 404)
     if not is_eligible_switch(device):
-        reason = get_ineligibility_reason(device) or "Device is not an eligible Cisco switch"
+        reason = get_ineligibility_reason(device) or "Device is not an eligible switch"
         return None, (jsonify({"success": False, "message": reason}), 400)
     return device, None
 

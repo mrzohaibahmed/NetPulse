@@ -87,7 +87,12 @@ COMMAND_SETS: dict[str, dict[str, str]] = {
     },
     "juniper_junos": {
         "status": "show interfaces terse",
-        "terse": "show interfaces terse",
+        "description": "show interfaces descriptions",
+        "switching": "show ethernet-switching interfaces detail",
+        "interface_config": "show configuration interfaces | display set",
+        "vlan_config": "show configuration vlans | display set",
+        "lldp": "show lldp neighbors detail",
+        "media": "show interfaces media",
     },
     "aruba_os": {
         "status": "show interfaces brief",
@@ -106,6 +111,7 @@ _REQUIRED_COMMAND_KEYS = frozenset({"status", "terse"})
 
 _OPTIONAL_COMMAND_KEYS = frozenset({
     "description", "switchport", "vlan_brief", "cdp", "lldp",
+    "switching", "interface_config", "vlan_config", "media",
 })
 
 _VENDOR_ALIASES: dict[str, str] = {
@@ -173,9 +179,14 @@ def resolve_ssh_credentials(device: dict) -> SSHCredentials:
     except ValueError:
         timeout = 30
 
+    device_vendor = str(device.get("vendor") or "").lower()
+    inferred_vendor = (
+        "juniper_junos" if "juniper" in device_vendor or "junos" in device_vendor else ""
+    )
     vendor_raw = (
         creds.get("sshVendor")
         or device.get("sshVendor")
+        or inferred_vendor
         or os.getenv("SSH_DEFAULT_VENDOR")
         or "cisco_ios"
     )

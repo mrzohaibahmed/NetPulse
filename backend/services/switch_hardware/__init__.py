@@ -1,1 +1,1 @@
-"""Cisco switch hardware monitoring (Phase 1)."""
+"""Cisco and Juniper switch hardware monitoring."""

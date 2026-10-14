@@ -68,7 +68,7 @@ export function OutageHistoryTable({
         {outages.length === 0 ? (
           <EmptyState
             title="No outage history"
-            description="Outages are opened from ping Offline transitions for eligible Cisco switches."
+            description="Outages are opened from ping Offline transitions for eligible switches."
           />
         ) : (
           <div className="overflow-x-auto">

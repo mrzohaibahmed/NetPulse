@@ -1,8 +1,8 @@
-# Cisco Switch Hardware Monitoring (Phase 1)
+# Switch Hardware Monitoring
 
 ## Overview
 
-Phase 1 adds Cisco switch hardware monitoring as an isolated capability under `backend/services/switch_hardware/`.
+Cisco and Juniper switch hardware monitoring lives under `backend/services/switch_hardware/`.
 
 Default state: **disabled** (`SWITCH_HARDWARE_MONITORING_ENABLED=false`).
 
@@ -11,11 +11,19 @@ Default state: **disabled** (`SWITCH_HARDWARE_MONITORING_ENABLED=false`).
 - Cisco IOS
 - Cisco IOS-XE
 - Cisco NX-OS
+- Juniper Junos (EX and QFX chassis CLI output)
 
 ## Access methods
 
 - **SNMP v2c** — reuses existing encrypted `snmpCommunity` credentials
 - **SSH** — read-only show commands via existing Paramiko infrastructure
+
+For Juniper devices, set Vendor to `Juniper` (and preferably SSH vendor to
+`juniper_junos`). SSH reads `show version`, `show chassis hardware`,
+`show chassis environment`, `show chassis routing-engine`, and
+`show chassis alarms`. SNMP uses standard ENTITY-MIB and ENTITY-SENSOR-MIB
+where the switch exposes them; Juniper enterprise chassis MIB polling is not
+implemented. Sensor availability varies by model and Junos release.
 
 SNMPv3 is deferred to Phase 2.
 

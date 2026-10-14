@@ -891,7 +891,7 @@ def start_scheduler():
         # Job 6: Data retention (TTL refresh + closed-incident purge) — daily.
         _start_retention_job()
 
-        # Job 7: Cisco switch hardware monitoring (feature-flagged).
+        # Job 7: Switch hardware monitoring (feature-flagged).
         _start_switch_hardware_jobs()
 
         # Job 8: iLO server hardware monitoring.

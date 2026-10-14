@@ -1,7 +1,8 @@
-"""Read-only SSH hardware collector for Cisco switches."""
+"""Read-only SSH hardware collector for supported switches."""
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 from services.interface_collection.ssh_collector import (
@@ -44,11 +45,18 @@ HARDWARE_COMMANDS: dict[str, dict[str, str]] = {
         "processes_memory": "show system resources",
         "logging": "show logging logfile | last 100",
     },
+    "juniper_junos": {
+        "version": "show version",
+        "inventory": "show chassis hardware",
+        "environment": "show chassis environment",
+        "routing_engine": "show chassis routing-engine",
+        "alarms": "show chassis alarms",
+    },
 }
 
 INVENTORY_COMMAND_KEYS = frozenset({"version", "inventory"})
 DIAGNOSTIC_COMMAND_KEYS = frozenset(
-    {"environment", "environment_all", "processes_cpu", "processes_memory", "logging"}
+    {"environment", "environment_all", "processes_cpu", "processes_memory", "routing_engine", "alarms", "logging"}
 )
 
 
@@ -81,6 +89,9 @@ def collect_ssh_hardware(
         )
 
     detected_platform = platform or detect_platform(device)
+    if detected_platform == "juniper_junos" and creds.vendor != detected_platform:
+        # The interface collector defaults to Cisco; Junos needs its own CLI setup.
+        creds = replace(creds, vendor=detected_platform)
     command_platform = detected_platform or creds.vendor or "cisco_ios"
     commands = get_hardware_commands(command_platform, include_inventory=include_inventory)
 
