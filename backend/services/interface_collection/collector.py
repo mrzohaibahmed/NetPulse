@@ -325,8 +325,10 @@ def discover_all_switch_interfaces() -> dict:
     Eligibility
     -----------
     - ``status == "Online"``
-    - ``deviceType`` looks like a switch/router/firewall, **or** the device
-      has an explicit ``credentials`` sub-document configured
+    - ``deviceType`` (or legacy ``type``) contains ``switch``
+
+    SSH credentials are validated during collection; they may be configured on
+    the device or supplied by the environment defaults.
 
     Returns
     -------
@@ -337,7 +339,7 @@ def discover_all_switch_interfaces() -> dict:
     start = time.monotonic()
 
     candidates = list(db.devices.find({"status": "Online"}))
-    eligible = [d for d in candidates if _is_interface_discovery_candidate(d)]
+    eligible = [d for d in candidates if _is_switch_discovery_candidate(d)]
     total = len(eligible)
 
     if total == 0:
@@ -446,7 +448,7 @@ def get_interfaces(
 
 
 def _is_interface_discovery_candidate(device: dict) -> bool:
-    """Return True when the device should be included in bulk discovery."""
+    """Legacy broad eligibility used by bulk interface statistics collection."""
     if device.get("credentials"):
         return True
 
@@ -455,3 +457,9 @@ def _is_interface_discovery_candidate(device: dict) -> bool:
         return True
     # Partial match: "Core Switch", "Layer-3 Switch", etc.
     return any(token in device_type for token in ("switch", "router", "firewall"))
+
+
+def _is_switch_discovery_candidate(device: dict) -> bool:
+    """Only switch-type devices belong in scheduled/manual bulk discovery."""
+    device_type = (device.get("deviceType") or device.get("type") or "").strip().lower()
+    return "switch" in device_type

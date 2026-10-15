@@ -13,7 +13,6 @@ import {
   formatHardwareValue,
   HardwareHealthBadge,
 } from '@/modules/storm/components/hardware/hardwareStatus'
-import { isManagedSwitch } from '@/modules/storm/components/stormShared'
 import { EmptyState } from '@/shared/components/EmptyState'
 import { ErrorState } from '@/shared/components/ErrorState'
 import { KpiCard } from '@/shared/components/KpiCard'
@@ -50,6 +49,7 @@ function isSupportedVendorSignal(device: Device): boolean {
     sshVendor.includes('cisco') ||
     sshVendor.includes('juniper') ||
     sshVendor.includes('junos') ||
+    ['ios', 'ios-xe', 'ios_xe', 'iosxe', 'nxos', 'nx-os', 'nx_os'].includes(sshVendor) ||
     deviceType.includes('cisco')
   )
 }
@@ -81,6 +81,7 @@ function hasUsableCredentials(device: Device): boolean {
   if (!creds) return false
   return Boolean(
     creds.sshPasswordConfigured ||
+      creds.sshSecretConfigured ||
       creds.snmpCommunityConfigured ||
       (creds.sshUsername || '').trim(),
   )
@@ -94,7 +95,8 @@ function isUnknownVendor(device: Device): boolean {
 /** Matches backend ``is_eligible_switch`` for the fleet list. */
 function isHardwareCandidate(device: Device): boolean {
   if (device.monitor === false) return false
-  if (!isManagedSwitch(device.deviceType)) return false
+  const deviceType = (device.deviceType || '').trim().toLowerCase()
+  if (deviceType && !['switch', 'router', 'firewall'].some((kind) => deviceType.includes(kind))) return false
   if (isUnsupportedVendor(device)) return false
   if (isSupportedVendorSignal(device)) return true
   // Discovery often leaves vendor blank on real Cisco gear.
@@ -136,9 +138,9 @@ export function SwitchHardwarePage() {
   }
 
   const devicesQuery = useQuery({
-    queryKey: ['devices', 'inventory', 'switch', 'hardware'],
+    queryKey: ['devices', 'inventory', 'hardware'],
     queryFn: () =>
-      fetchAllListPages((page, limit) => getDevices({ page, limit, deviceType: 'switch' })),
+      fetchAllListPages((page, limit) => getDevices({ page, limit })),
     refetchInterval: 30_000,
     staleTime: 10_000,
   })
@@ -220,7 +222,7 @@ export function SwitchHardwarePage() {
     <div className="np-page space-y-6">
       <PageHeader
         title="Hardware Health"
-        description="Cisco and Juniper switch chassis health — temperature, fans, power supplies, CPU, memory, and outage evidence."
+        description="Cisco and Juniper chassis health — temperature, fans, power supplies, CPU, memory, and outage evidence."
         actions={
           <div className="flex flex-wrap items-center gap-3">
             {isAdmin ? (
@@ -268,7 +270,7 @@ export function SwitchHardwarePage() {
       ) : null}
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
-        <KpiCard label="Total Switches" value={kpis.total} icon={Server} loading={loading} />
+        <KpiCard label="Total Devices" value={kpis.total} icon={Server} loading={loading} />
         <KpiCard label="Healthy" value={kpis.healthy} tone="success" icon={Cpu} loading={loading} />
         <KpiCard label="Warning" value={kpis.warning} tone="warning" icon={Thermometer} loading={loading} />
         <KpiCard label="Critical" value={kpis.critical} tone="danger" icon={AlertTriangle} loading={loading} />
@@ -321,11 +323,11 @@ export function SwitchHardwarePage() {
         <TableSkeleton rows={8} />
       ) : filtered.length === 0 ? (
         <EmptyState
-          title="No eligible Cisco or Juniper switches"
-          description="Monitored Cisco and Juniper switches appear here. Switches with a blank vendor also appear when credentials are configured. Add SSH or SNMP credentials and enable hardware monitoring."
+          title="No eligible Cisco or Juniper devices"
+          description="Monitored Cisco and Juniper switches, routers, and firewalls appear here. Devices with a blank vendor also appear when credentials are configured. Add SSH or SNMP credentials and enable hardware monitoring."
           action={
             <Button asChild variant="secondary" size="sm">
-              <Link to="/switches">Open Switches</Link>
+              <Link to="/devices">Open Devices</Link>
             </Button>
           }
         />
@@ -362,6 +364,11 @@ export function SwitchHardwarePage() {
                     <TableCell>{formatHardwareValue(hardware?.platform)}</TableCell>
                     <TableCell>
                       <HardwareHealthBadge status={hardware?.overallHealth} />
+                      {hardware?.collectionStatus === 'failed' ? (
+                        <span className="block text-xs text-warning">Last known — collection failed</span>
+                      ) : hardware?.collectionStatus === 'partial' ? (
+                        <span className="block text-xs text-warning">Collection partial</span>
+                      ) : null}
                     </TableCell>
                     <TableCell>
                       <HardwareHealthBadge status={hardware?.temperature?.status} />
@@ -383,13 +390,20 @@ export function SwitchHardwarePage() {
                       {formatHardwareValue(hardware?.memory?.utilizationPercent, '%')}
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">
-                      {hardware?.lastSuccessfulCollectionAt
-                        ? formatRelative(hardware.lastSuccessfulCollectionAt)
-                        : hardware?.lastError
-                          ? hardware.lastError
+                      {hardware?.collectionStatus === 'failed' || hardware?.collectionStatus === 'partial'
+                        ? hardware.lastAttemptedCollectionAt
+                          ? `${hardware.collectionStatus} ${formatRelative(hardware.lastAttemptedCollectionAt)}`
+                          : hardware.collectionStatus
+                        : hardware?.lastSuccessfulCollectionAt
+                          ? formatRelative(hardware.lastSuccessfulCollectionAt)
                           : hardware?.lastAttemptedCollectionAt
                             ? `Attempted ${formatDateTime(hardware.lastAttemptedCollectionAt)}`
                             : 'Not collected yet'}
+                      {hardware?.lastError ? (
+                        <span className="block max-w-60 truncate text-warning" title={hardware.lastError}>
+                          {hardware.lastError}
+                        </span>
+                      ) : null}
                     </TableCell>
                     <TableCell>
                       <StatusBadge status={device.status} />

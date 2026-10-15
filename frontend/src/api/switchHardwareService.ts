@@ -102,6 +102,8 @@ export interface SwitchHardwareCurrent {
   }
   lastSuccessfulCollectionAt: string | null
   lastAttemptedCollectionAt: string | null
+  lastSnmpCollectionAt?: string | null
+  lastSshCollectionAt?: string | null
   lastError: string | null
   updatedAt?: string | null
 }

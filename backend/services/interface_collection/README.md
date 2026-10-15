@@ -437,7 +437,7 @@ Auth: all routes require authentication; discover/collect require **admin**.
 | `GET` | `/interfaces` | any | Paginated inventory (`q`, `adminStatus`, `operStatus`, `mode`, `deviceId`) |
 | `GET` | `/interfaces/<device_id>` | any | Interfaces for one device |
 | `POST` | `/interfaces/discover/<device_id>` | admin | Discover one online device |
-| `POST` | `/interfaces/discover-all` | admin | Discover all eligible online devices |
+| `POST` | `/interfaces/discover-all` | admin | Discover all online switch-type devices |
 | `GET` | `/interfaces/<device_id>/stats` | any | Latest stats sample per interface |
 | `POST` | `/interfaces/<device_id>/stats/collect` | admin | Collect stats for one device |
 | `POST` | `/interfaces/stats/collect-all` | admin | Collect stats for all eligible devices |
@@ -549,7 +549,12 @@ API never returns secrets — only `sshPasswordConfigured`, `snmpCommunityConfig
 
 ## 16. Eligibility Rules
 
-A device is included in **bulk** discovery/stats when it is `Online` **and**:
+A device is included in **bulk interface discovery** when it is `Online` and
+`deviceType` (or legacy `type`) contains `switch`. SSH credentials can be
+configured per device or through environment defaults. Routers, firewalls, and
+other credentialed devices are not included in Discover all.
+
+The separate **bulk stats collection** retains its broader eligibility: `Online` **and**:
 
 - Has a `credentials` sub-document, **or**
 - `deviceType` is switch/router/firewall-like (exact set or contains those tokens)

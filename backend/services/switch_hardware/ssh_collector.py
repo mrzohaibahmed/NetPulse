@@ -17,6 +17,15 @@ from utils.monitor_logger import get_monitor_logger
 
 logger = get_monitor_logger("switch_hardware.ssh")
 
+_CLI_ERROR_MARKERS = (
+    "% invalid input", "% ambiguous command", "% incomplete command",
+    "syntax error", "unknown command", "error: command is not valid",
+)
+
+
+def _cli_command_error(output: str) -> bool:
+    return any(marker in output.lower() for marker in _CLI_ERROR_MARKERS)
+
 HARDWARE_COMMANDS: dict[str, dict[str, str]] = {
     "cisco_ios": {
         "version": "show version",
@@ -31,7 +40,6 @@ HARDWARE_COMMANDS: dict[str, dict[str, str]] = {
         "version": "show version",
         "inventory": "show inventory",
         "environment": "show environment all",
-        "environment_all": "show environment all",
         "processes_cpu": "show processes cpu",
         "processes_memory": "show processes memory",
         "logging": "show logging last 100",
@@ -40,7 +48,6 @@ HARDWARE_COMMANDS: dict[str, dict[str, str]] = {
         "version": "show version",
         "inventory": "show inventory",
         "environment": "show environment",
-        "environment_all": "show environment",
         "processes_cpu": "show processes cpu",
         "processes_memory": "show system resources",
         "logging": "show logging logfile | last 100",
@@ -103,7 +110,10 @@ def collect_ssh_hardware(
             for key, command in commands.items():
                 try:
                     safe_cmd = assert_read_only_command(command)
-                    outputs[key] = collector.run_command(safe_cmd)
+                    output = collector.run_command(safe_cmd)
+                    if _cli_command_error(output):
+                        raise SSHCollectorError(f"Device rejected '{command}'")
+                    outputs[key] = output
                 except Exception as exc:  # noqa: BLE001
                     outputs[key] = None
                     errors[key] = str(exc)
@@ -129,11 +139,14 @@ def collect_ssh_hardware(
     ) or command_platform
 
     parsed = parse_platform_outputs(platform, outputs)
-    parsed["availability"] = {"ssh": "available" if outputs.get("version") else "partial"}
+    successful = {key for key, output in outputs.items() if output is not None}
+    availability = "available" if not errors else ("partial" if successful else "unavailable")
+    parsed["availability"] = {"ssh": availability}
     return {
         "parsed": parsed,
         "outputs": {},
         "errors": errors,
+        "observed": [key for key, output in outputs.items() if output],
         "platform": platform,
-        "availability": parsed.get("availability", {"ssh": "available"}),
+        "availability": parsed["availability"],
     }

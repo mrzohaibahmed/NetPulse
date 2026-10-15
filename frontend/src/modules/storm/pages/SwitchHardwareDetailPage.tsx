@@ -275,6 +275,14 @@ export function SwitchHardwareDetailPage() {
                     : 'Not available'}
                 </p>
               </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Last SNMP data</p>
+                <p className="font-medium">{hardware.lastSnmpCollectionAt ? formatDateTime(hardware.lastSnmpCollectionAt) : 'Not available'}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Last SSH data (CPU / memory)</p>
+                <p className="font-medium">{hardware.lastSshCollectionAt ? formatDateTime(hardware.lastSshCollectionAt) : 'Not available'}</p>
+              </div>
               {hardware.lastError ? (
                 <div className="sm:col-span-2 lg:col-span-4 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-sm">
                   Last collection note: {hardware.lastError}

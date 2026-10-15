@@ -11,6 +11,7 @@ from services.switch_hardware.parsers.cisco_ios import (
     parse_show_version,
 )
 from services.switch_hardware.parsers.cisco_nxos import parse_cisco_nxos_outputs
+from services.switch_hardware.ssh_collector import get_hardware_commands
 
 
 IOS_VERSION = """
@@ -81,6 +82,20 @@ Kernel uptime is 2 day(s), 3 hour(s)
 """
         parsed = parse_cisco_nxos_outputs({"version": text})
         self.assertEqual(parsed["inventory"]["hostname"], "nx-sw1")
+
+    def test_nxos_environment_command_runs_once(self):
+        for include_inventory in (True, False):
+            commands = get_hardware_commands(
+                "cisco_nxos", include_inventory=include_inventory
+            )
+            self.assertEqual(list(commands.values()).count("show environment"), 1)
+            self.assertEqual(commands["environment"], "show environment")
+            self.assertNotIn("environment_all", commands)
+
+    def test_ios_xe_environment_command_runs_once(self):
+        for include_inventory in (True, False):
+            commands = get_hardware_commands("cisco_xe", include_inventory=include_inventory)
+            self.assertEqual(list(commands.values()).count("show environment all"), 1)
 
 
 if __name__ == "__main__":

@@ -106,6 +106,7 @@ def detect_hardware_events(
     if isinstance(device_id, str) and ObjectId.is_valid(device_id):
         device_id = ObjectId(device_id)
 
+    previous = previous or {}
     generated: list[str] = []
 
     for sensor in current.get("temperature", {}).get("sensors") or []:
@@ -224,5 +225,45 @@ def detect_hardware_events(
             source=source,
             active=True,
         )
+
+    # A successful authoritative read may remove a component or clear an alarm.
+    # Resolve its active event even though it no longer appears in current.
+    removed_groups = (
+        ("temperature", "sensors", "temperature", (
+            ("temperature_critical", "temperature_recovered"),
+            ("temperature_warning", "temperature_recovered"),
+        )),
+        ("fans", "items", "fan", (("fan_failed", "fan_recovered"),)),
+        ("powerSupplies", "items", "psu", (("psu_failed", "psu_recovered"),)),
+    )
+    for field, list_key, fallback, event_types in removed_groups:
+        current_names = {
+            item.get("name") or fallback
+            for item in (current.get(field) or {}).get(list_key) or []
+        }
+        for item in (previous.get(field) or {}).get(list_key) or []:
+            name = item.get("name") or fallback
+            if name in current_names:
+                continue
+            for active_type, recovery_type in event_types:
+                _ensure_event(
+                    device_id, active_type=active_type, recovery_type=recovery_type,
+                    component=name, severity="info", description=f"{name} removed",
+                    source=source, active=False,
+                )
+
+    current_alarms = {
+        (alarm.get("message") or "hardware alarm")[:80]
+        for alarm in current.get("hardwareAlarms") or []
+    }
+    for alarm in previous.get("hardwareAlarms") or []:
+        message = alarm.get("message") or "hardware alarm"
+        if message[:80] not in current_alarms:
+            _ensure_event(
+                device_id, active_type="hardware_alarm",
+                recovery_type="hardware_alarm_recovered", component=message[:80],
+                severity="info", description=f"{message} cleared", source=source,
+                active=False,
+            )
 
     return generated

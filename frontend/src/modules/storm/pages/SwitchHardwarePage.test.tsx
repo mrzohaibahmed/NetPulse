@@ -16,8 +16,16 @@ vi.mock('@/utils/fetchAllPages', () => ({
         status: 'Online',
         credentials: { sshVendor: 'cisco_ios' },
       },
+      {
+        _id: '507f1f77bcf86cd799439012',
+        hostname: 'juniper-router',
+        ipAddress: '10.0.0.2',
+        deviceType: 'Router',
+        vendor: 'Juniper',
+        status: 'Online',
+      },
     ],
-    total: 1,
+    total: 2,
   })),
 }))
 
@@ -55,6 +63,16 @@ vi.mock('@/hooks/queries', async (importOriginal) => {
             lastSuccessfulCollectionAt: '2026-09-14T08:00:00.000Z',
           },
         ],
+        [
+          '507f1f77bcf86cd799439012',
+          {
+            deviceId: '507f1f77bcf86cd799439012',
+            overallHealth: 'healthy',
+            collectionStatus: 'failed',
+            lastAttemptedCollectionAt: '2026-09-14T09:00:00.000Z',
+            lastError: 'SSH unavailable',
+          },
+        ],
       ]),
       isLoading: false,
       refetch: vi.fn(),
@@ -79,6 +97,9 @@ describe('SwitchHardwarePage', () => {
     expect(await screen.findByText('Hardware Health')).toBeInTheDocument()
     expect(await screen.findByText('sw1')).toBeInTheDocument()
     expect(screen.getByText('10.0.0.1')).toBeInTheDocument()
-    expect(screen.getByText('Total Switches')).toBeInTheDocument()
+    expect(screen.getByText('juniper-router')).toBeInTheDocument()
+    expect(screen.getByText('Last known — collection failed')).toBeInTheDocument()
+    expect(screen.getByText('SSH unavailable')).toBeInTheDocument()
+    expect(screen.getByText('Total Devices')).toBeInTheDocument()
   })
 })

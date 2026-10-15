@@ -21,6 +21,16 @@ from services.switch_hardware.models import (
 
 
 class SwitchHardwareCollectorTests(unittest.TestCase):
+    @patch("services.switch_hardware.collector.db")
+    @patch("services.switch_hardware.collector.hw_config.is_snmp_enabled", return_value=False)
+    @patch("services.switch_hardware.collector.hw_config.is_hardware_monitoring_enabled", return_value=True)
+    def test_disabled_snmp_poll_does_not_touch_devices(self, _enabled, _snmp, mock_db):
+        from services.switch_hardware.collector import collect_all_switch_hardware
+
+        result = collect_all_switch_hardware(mode="poll")
+        self.assertEqual(result, {"processed": 0, "skipped": "transport_disabled"})
+        mock_db.devices.find.assert_not_called()
+
     def test_merge_snmp_and_ssh(self):
         snmp = {
             "inventory": {"serialNumber": "SNMP123"},
@@ -198,6 +208,7 @@ class SwitchHardwareCollectorTests(unittest.TestCase):
         self.assertEqual(result["document"]["overallHealth"], "healthy")
         # But the failure itself must still be visible.
         self.assertIsNotNone(result["document"]["lastError"])
+        self.assertEqual(result["document"]["availability"]["ssh"], "unavailable")
 
     def _run_with_mode(self, mode: str):
         """Helper: run collect_device_hardware in a given mode with both
@@ -373,6 +384,7 @@ class SwitchHardwareProtocolAwarePreservationTests(unittest.TestCase):
             "powerSupplies": empty_power_supplies(),
             "hardwareAlarms": [],
             "availability": {"snmp": "unavailable", "ssh": "available"},
+            "lastSshCollectionAt": "2026-09-01T00:00:00Z",
         }
         snmp_return = {
             "inventory": {},
@@ -390,6 +402,8 @@ class SwitchHardwareProtocolAwarePreservationTests(unittest.TestCase):
         self.assertEqual(doc["cpu"]["utilizationPercent"], 12.0)
         self.assertEqual(doc["memory"]["utilizationPercent"], 30.0)
         self.assertEqual(doc["availability"]["ssh"], "available")
+        self.assertEqual(doc["lastSshCollectionAt"], "2026-09-01T00:00:00Z")
+        self.assertIsNotNone(doc["lastSnmpCollectionAt"])
         # SNMP-owned fields: fresh this cycle.
         self.assertEqual(doc["temperature"]["sensors"][0]["name"], "Sensor1")
         self.assertEqual(doc["availability"]["snmp"], "available")
@@ -651,6 +665,48 @@ class SwitchHardwareProtocolAwarePreservationTests(unittest.TestCase):
         self.assertEqual(history_doc["memory"]["utilizationPercent"], 30.0)
         self.assertEqual(history_doc["temperature"]["sensors"][0]["name"], "Sensor1")
         self.assertEqual(history_doc["collectionStatus"], result["document"]["collectionStatus"])
+
+    def test_observed_ssh_clear_removes_only_ssh_components_and_alarms(self):
+        previous = {
+            "inventory": empty_inventory(),
+            "temperature": empty_temperature(),
+            "fans": {"items": [
+                {"name": "SSH Fan", "status": "critical", "source": "ssh"},
+                {"name": "SNMP Fan", "status": "healthy", "source": "snmp"},
+            ]},
+            "powerSupplies": empty_power_supplies(),
+            "cpu": empty_cpu(),
+            "memory": empty_memory(),
+            "hardwareAlarms": [{"message": "Old alarm", "severity": "critical"}],
+            "evidence": {"logEvidence": [{"message": "Old log"}]},
+        }
+        ssh_return = {
+            "parsed": {
+                "fans": empty_fans(), "alarms": [], "logEvidence": [],
+                "cpu": {"utilizationPercent": 12.0},
+            },
+            "observed": ["environment", "alarms", "logging", "processes_cpu"],
+            "availability": {"ssh": "available"},
+            "errors": {},
+            "platform": "cisco_ios",
+        }
+        result, _ = self._run(mode="ssh", previous_doc=previous, ssh_return=ssh_return)
+        doc = result["document"]
+        self.assertEqual(doc["collectionStatus"], "success")
+        self.assertEqual([item["name"] for item in doc["fans"]["items"]], ["SNMP Fan"])
+        self.assertEqual(doc["hardwareAlarms"], [])
+        self.assertEqual(doc["evidence"]["logEvidence"], [])
+
+    def test_individual_ssh_command_error_marks_partial(self):
+        ssh_return = {
+            "parsed": {"cpu": {"utilizationPercent": 12.0}},
+            "availability": {"ssh": "partial"},
+            "errors": {"environment": "command timed out"},
+            "platform": "cisco_ios",
+        }
+        result, _ = self._run(mode="ssh", previous_doc=None, ssh_return=ssh_return)
+        self.assertEqual(result["document"]["collectionStatus"], "partial")
+        self.assertIn("environment", result["document"]["lastError"])
 
 
 if __name__ == "__main__":

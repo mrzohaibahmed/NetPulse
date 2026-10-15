@@ -66,20 +66,30 @@ _CISCO_ENV_STATE = {
 
 
 class SwitchHardwareSNMPCollector:
-    def __init__(self, credentials: SNMPCredentials, *, platform: str | None = None):
+    def __init__(
+        self, credentials: SNMPCredentials, *, platform: str | None = None,
+        overall_timeout: float | None = None,
+    ):
         if not snmp_available():
             raise SNMPCollectorError("pysnmp is not installed")
         self.credentials = credentials
         self.platform = platform
+        self.overall_timeout = overall_timeout
 
     def collect(self) -> dict[str, Any]:
         try:
-            tables = asyncio.run(self._walk_tables())
+            async def collect_tables():
+                walk = self._walk_tables()
+                return await asyncio.wait_for(walk, self.overall_timeout) if self.overall_timeout else await walk
+
+            tables = asyncio.run(collect_tables())
+        except TimeoutError as exc:
+            raise SNMPCollectorError("Hardware SNMP collection timed out") from exc
         except Exception as exc:  # noqa: BLE001
             raise SNMPCollectorError(str(exc)) from exc
         return self._normalize(tables)
 
-    async def _walk_tables(self) -> dict[str, dict[int, Any]]:
+    async def _walk_tables(self) -> dict[str, Any]:
         keys = {
             "sys_descr": OID_SYS_DESCR,
             "ent_descr": OID_ENT_PHYSICAL_DESCR,
@@ -88,6 +98,8 @@ class SwitchHardwareSNMPCollector:
             "ent_serial": OID_ENT_PHYSICAL_SERIAL,
             "ent_model": OID_ENT_PHYSICAL_MODEL,
             "sensor_type": OID_ENT_SENSOR_TYPE,
+            "sensor_scale": OID_ENT_SENSOR_SCALE,
+            "sensor_precision": OID_ENT_SENSOR_PRECISION,
             "sensor_value": OID_ENT_SENSOR_VALUE,
             "sensor_status": OID_ENT_SENSOR_STATUS,
             "sensor_units": OID_ENT_SENSOR_UNITS,
@@ -99,21 +111,22 @@ class SwitchHardwareSNMPCollector:
                 "cisco_fan_state": OID_CISCO_ENV_FAN_STATE,
                 "cisco_supply_state": OID_CISCO_ENV_SUPPLY_STATE,
             })
-        else:
-            keys.update({
-                "sensor_scale": OID_ENT_SENSOR_SCALE,
-                "sensor_precision": OID_ENT_SENSOR_PRECISION,
-            })
-        tables: dict[str, dict[int, Any]] = {}
+        tables: dict[str, Any] = {}
+        successful: set[str] = set()
+        errors: dict[str, str] = {}
         for key, oid in keys.items():
             try:
                 if oid.endswith(".0"):
                     tables[key] = await self._get_scalar(oid)
                 else:
                     tables[key] = await self._walk_oid(oid, max_rows=500)
+                successful.add(key)
             except SNMPCollectorError as exc:
                 logger.debug("[HW-SNMP] Optional OID unavailable | %s | %s", key, exc)
                 tables[key] = {} if not oid.endswith(".0") else None
+                errors[key] = str(exc)
+        tables["_successful"] = successful
+        tables["_errors"] = errors
         return tables
 
     async def _walk_oid(self, oid: str, max_rows: int = 500) -> dict[int, Any]:
@@ -288,18 +301,12 @@ class SwitchHardwareSNMPCollector:
             name = str(ent_name.get(idx) or f"Sensor {idx}") if self.platform == "juniper_junos" else f"Sensor {idx}"
             if stype_int == SENSOR_TYPE_CELSIUS:
                 try:
-                    if self.platform == "juniper_junos":
-                        value = _scaled_entity_sensor_value(
-                            sensor_value[idx], sensor_scale.get(idx, 9), sensor_precision.get(idx, 0)
-                        )
-                    else:
-                        value = float(sensor_value.get(idx, 0)) / 1000.0
+                    value = _scaled_entity_sensor_value(
+                        sensor_value[idx], sensor_scale.get(idx, 9), sensor_precision.get(idx, 0)
+                    )
                 except (KeyError, TypeError, ValueError):
                     value = None
-                status = (
-                    _map_entity_sensor_status(sensor_status.get(idx))
-                    if self.platform == "juniper_junos" else _map_sensor_status(sensor_status.get(idx))
-                )
+                status = _map_entity_sensor_status(sensor_status.get(idx))
                 sensors.append(
                     build_sensor(
                         name=name,
@@ -311,19 +318,15 @@ class SwitchHardwareSNMPCollector:
                 )
             elif stype_int == SENSOR_TYPE_RPM:
                 try:
-                    if self.platform == "juniper_junos":
-                        rpm = int(_scaled_entity_sensor_value(
-                            sensor_value[idx], sensor_scale.get(idx, 9), sensor_precision.get(idx, 0)
-                        ))
-                    else:
-                        rpm = int(float(sensor_value.get(idx, 0)))
+                    rpm = int(_scaled_entity_sensor_value(
+                        sensor_value[idx], sensor_scale.get(idx, 9), sensor_precision.get(idx, 0)
+                    ))
                 except (KeyError, TypeError, ValueError):
                     rpm = None
                 fans.setdefault("_rpm_items", []).append(
                     build_fan(
                         name=name,
-                        status=_map_entity_sensor_status(sensor_status.get(idx))
-                        if self.platform == "juniper_junos" else "unknown",
+                        status=_map_entity_sensor_status(sensor_status.get(idx)),
                         rpm=rpm,
                         source="snmp",
                     )
@@ -384,6 +387,25 @@ class SwitchHardwareSNMPCollector:
             psus["failedCount"] = sum(1 for p in psu_items if p["status"] == "critical")
             psus["healthyCount"] = sum(1 for p in psu_items if p["status"] == "healthy")
 
+        successful = set(tables.get("_successful") or [])
+        errors = tables.get("_errors") or {}
+        observed = []
+        component_keys = {
+            "temperature": {"sensor_type", "sensor_scale", "sensor_precision", "sensor_value", "sensor_status"},
+            "fans": {"sensor_type", "sensor_scale", "sensor_precision", "sensor_value", "sensor_status"},
+            "powerSupplies": set(),
+        }
+        if self.platform != "juniper_junos":
+            component_keys["temperature"].update({"cisco_temp_value", "cisco_temp_state"})
+            component_keys["fans"].add("cisco_fan_state")
+            component_keys["powerSupplies"].add("cisco_supply_state")
+        for field, keys in component_keys.items():
+            if keys and keys.issubset(successful):
+                observed.append(field)
+
+        availability = "unavailable" if not successful and errors else (
+            "partial" if errors else "available"
+        )
         return {
             "inventory": inventory,
             "temperature": temperature,
@@ -393,22 +415,10 @@ class SwitchHardwareSNMPCollector:
             "memory": empty_memory(),
             "alarms": [],
             "sysDescr": sys_descr,
-            "availability": {"snmp": "available"},
+            "availability": {"snmp": availability},
+            "observed": observed,
+            "errors": errors,
         }
-
-
-def _map_sensor_status(raw: Any) -> str:
-    try:
-        val = int(raw)
-    except (TypeError, ValueError):
-        return "unknown"
-    if val == 1:
-        return "healthy"
-    if val == 2:
-        return "warning"
-    if val in (3, 4):
-        return "critical"
-    return "unknown"
 
 
 def _map_entity_sensor_status(raw: Any) -> str:
@@ -438,14 +448,20 @@ def _worst_status(statuses) -> str:
 
 def collect_snmp_hardware(device: dict, *, timeout: float | None = None) -> dict[str, Any]:
     creds = resolve_snmp_credentials(device)
+    if creds.version not in ("2", "2c", "v2c"):
+        raise SNMPCollectorError(
+            f"SNMP version {creds.version!r} is not supported for hardware collection; use SNMPv2c or SSH"
+        )
     if timeout is not None:
         creds = SNMPCredentials(
             host=creds.host,
             community=creds.community,
             port=creds.port,
-            timeout=timeout,
+            timeout=min(creds.timeout, timeout),
             retries=creds.retries,
             version=creds.version,
         )
-    collector = SwitchHardwareSNMPCollector(creds, platform=detect_platform(device))
+    collector = SwitchHardwareSNMPCollector(
+        creds, platform=detect_platform(device), overall_timeout=timeout,
+    )
     return collector.collect()

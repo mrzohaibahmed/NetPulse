@@ -43,6 +43,16 @@ _lock_guard = threading.Lock()
 _inflight: set[str] = set()
 
 
+def _transport_disabled_for_mode(mode: str) -> bool:
+    if mode in ("poll", "snmp"):
+        return not hw_config.is_snmp_enabled()
+    if mode in ("ssh", "inventory"):
+        return not hw_config.is_ssh_enabled()
+    if mode == "full":
+        return not (hw_config.is_snmp_enabled() or hw_config.is_ssh_enabled())
+    return False
+
+
 def _device_lock(device_id: str) -> threading.Lock:
     with _lock_guard:
         if device_id not in _device_locks:
@@ -64,14 +74,25 @@ def _merge_dict(base: dict, incoming: dict) -> dict:
     return result
 
 
-def _merge_component_list(existing: dict, incoming: dict, list_key: str = "items") -> dict:
+def _merge_component_list(
+    existing: dict,
+    incoming: dict,
+    list_key: str = "items",
+    *,
+    source: str | None = None,
+    observed: bool = False,
+) -> dict:
     merged = dict(existing or {})
     incoming_items = incoming.get(list_key) or []
-    if not incoming_items:
+    if not incoming_items and not observed:
         return merged if merged.get(list_key) else incoming
-    if not merged.get(list_key):
+    if not merged.get(list_key) and not observed:
         return incoming
-    by_name = {i.get("name"): i for i in merged.get(list_key) or []}
+    retained = [
+        item for item in merged.get(list_key) or []
+        if not (observed and item.get("source") == source)
+    ]
+    by_name = {i.get("name"): i for i in retained}
     for item in incoming_items:
         name = item.get("name")
         if name and name in by_name:
@@ -126,33 +147,46 @@ def _merge_hardware(
     snapshot = _snapshot_baseline(previous)
 
     if snmp_data:
+        observed = set(snmp_data.get("observed") or [])
         snapshot["inventory"] = _merge_dict(snapshot["inventory"], snmp_data.get("inventory") or {})
         snapshot["temperature"] = _merge_component_list(
-            snapshot["temperature"], snmp_data.get("temperature") or {}, "sensors"
+            snapshot["temperature"], snmp_data.get("temperature") or {}, "sensors",
+            source="snmp", observed="temperature" in observed,
         )
-        snapshot["fans"] = _merge_component_list(snapshot["fans"], snmp_data.get("fans") or {})
+        snapshot["fans"] = _merge_component_list(
+            snapshot["fans"], snmp_data.get("fans") or {},
+            source="snmp", observed="fans" in observed,
+        )
         snapshot["powerSupplies"] = _merge_component_list(
-            snapshot["powerSupplies"], snmp_data.get("powerSupplies") or {}
+            snapshot["powerSupplies"], snmp_data.get("powerSupplies") or {},
+            source="snmp", observed="powerSupplies" in observed,
         )
         snapshot["availability"]["snmp"] = (snmp_data.get("availability") or {}).get("snmp", "available")
 
     if ssh_data:
         parsed = ssh_data.get("parsed") or {}
+        observed = set(ssh_data.get("observed") or [])
+        environment_observed = bool(observed.intersection({"environment", "environment_all"}))
         snapshot["inventory"] = _merge_dict(snapshot["inventory"], parsed.get("inventory") or {})
         snapshot["temperature"] = _merge_component_list(
-            snapshot["temperature"], parsed.get("temperature") or {}, "sensors"
+            snapshot["temperature"], parsed.get("temperature") or {}, "sensors",
+            source="ssh", observed=environment_observed,
         )
-        snapshot["fans"] = _merge_component_list(snapshot["fans"], parsed.get("fans") or {})
+        snapshot["fans"] = _merge_component_list(
+            snapshot["fans"], parsed.get("fans") or {},
+            source="ssh", observed=environment_observed,
+        )
         snapshot["powerSupplies"] = _merge_component_list(
-            snapshot["powerSupplies"], parsed.get("powerSupplies") or {}
+            snapshot["powerSupplies"], parsed.get("powerSupplies") or {},
+            source="ssh", observed=environment_observed,
         )
         snapshot["cpu"] = _merge_dict(snapshot["cpu"], parsed.get("cpu") or {})
         snapshot["memory"] = _merge_dict(snapshot["memory"], parsed.get("memory") or {})
         alarms = parsed.get("alarms") or []
-        if alarms:
+        if alarms or observed.intersection({"alarms", "environment", "environment_all"}):
             snapshot["hardwareAlarms"] = alarms
         logs = parsed.get("logEvidence") or []
-        if logs:
+        if logs or "logging" in observed:
             snapshot["evidence"]["logEvidence"] = logs
         snapshot["availability"]["ssh"] = (ssh_data.get("availability") or {}).get("ssh", "available")
 
@@ -167,6 +201,9 @@ def _ssh_connection_error(ssh_data: dict | None) -> str | None:
         return str(errors["connection"])
     availability = (ssh_data.get("availability") or {}).get("ssh")
     if availability == "unavailable":
+        if errors:
+            key, message = next(iter(errors.items()))
+            return f"{key}: {message}"
         return "SSH unavailable"
     return None
 
@@ -210,6 +247,9 @@ def collect_device_hardware(
             ],
         }
 
+    if _transport_disabled_for_mode(mode):
+        return {"success": False, "reason": "transport_disabled", "errors": ["Hardware transport is disabled"]}
+
     if isinstance(device_id, str):
         if not ObjectId.is_valid(device_id):
             raise ValueError("Invalid device id")
@@ -243,9 +283,16 @@ def collect_device_hardware(
         if hw_config.is_snmp_enabled() and snmp_available() and mode in ("full", "snmp", "poll"):
             try:
                 snmp_data = collect_snmp_hardware(device, timeout=timeout)
+                snmp_errors = snmp_data.get("errors") or {}
+                if snmp_errors:
+                    errors.append(f"SNMP: {len(snmp_errors)} OID queries failed")
             except SNMPCollectorError as exc:
                 errors.append(f"SNMP: {exc}")
                 logger.info("SNMP hardware unavailable | device=%s | %s", device_id, exc)
+                snmp_data = {"availability": {"snmp": "unavailable"}}
+        elif hw_config.is_snmp_enabled() and mode in ("full", "snmp", "poll"):
+            errors.append("SNMP: pysnmp is not installed")
+            snmp_data = {"availability": {"snmp": "unavailable"}}
 
         if hw_config.is_ssh_enabled() and mode in ("full", "ssh", "inventory"):
             try:
@@ -265,10 +312,15 @@ def collect_device_hardware(
                             "availability": {"ssh": "unavailable"},
                             "errors": ssh_data.get("errors") or {"connection": ssh_error},
                         }
+                else:
+                    errors.extend(
+                        f"SSH {key}: {message}"
+                        for key, message in (ssh_data.get("errors") or {}).items()
+                    )
             except Exception as exc:  # noqa: BLE001
                 errors.append(f"SSH: {exc}")
                 logger.info("SSH hardware unavailable | device=%s | %s", device_id, exc)
-                ssh_data = None
+                ssh_data = {"parsed": {}, "availability": {"ssh": "unavailable"}}
 
         previous = db.switch_hardware_current.find_one({"deviceId": device_id})
 
@@ -311,6 +363,8 @@ def collect_device_hardware(
             collection_status = "failed"
 
         now = utc_now()
+        snmp_has_payload = bool(snmp_data) and _has_hardware_payload(_merge_hardware(snmp_data, None))
+        ssh_has_payload = bool(ssh_data) and _has_hardware_payload(_merge_hardware(None, ssh_data))
         doc = build_current_document(
             device_id,
             vendor="Juniper" if platform == "juniper_junos" else "Cisco",
@@ -331,6 +385,8 @@ def collect_device_hardware(
                 "lastSuccessfulCollectionAt"
             ),
             last_attempted_collection_at=now,
+            last_snmp_collection_at=now if snmp_has_payload else (previous or {}).get("lastSnmpCollectionAt"),
+            last_ssh_collection_at=now if ssh_has_payload else (previous or {}).get("lastSshCollectionAt"),
         )
 
         # Field-level preservation already happened inside _merge_hardware()
@@ -372,6 +428,8 @@ def collect_device_hardware(
 def collect_all_switch_hardware(*, mode: str = "poll") -> dict[str, Any]:
     if not hw_config.is_hardware_monitoring_enabled():
         return {"processed": 0, "skipped": "disabled"}
+    if _transport_disabled_for_mode(mode):
+        return {"processed": 0, "skipped": "transport_disabled"}
 
     query = {"monitor": True}
     devices = list(db.devices.find(query))

@@ -153,6 +153,8 @@ def build_current_document(
     last_error: str | None = None,
     last_successful_collection_at=None,
     last_attempted_collection_at=None,
+    last_snmp_collection_at=None,
+    last_ssh_collection_at=None,
 ) -> dict[str, Any]:
     now = utc_now()
     return {
@@ -175,6 +177,8 @@ def build_current_document(
         "evidence": evidence or {},
         "lastSuccessfulCollectionAt": last_successful_collection_at,
         "lastAttemptedCollectionAt": last_attempted_collection_at or now,
+        "lastSnmpCollectionAt": last_snmp_collection_at,
+        "lastSshCollectionAt": last_ssh_collection_at,
         "lastError": last_error,
         "updatedAt": now,
     }

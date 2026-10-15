@@ -98,6 +98,40 @@ class JuniperHardwareTests(unittest.TestCase):
         self.assertEqual(collector_cls.call_args.args[0].vendor, "juniper_junos")
         self.assertEqual(result["parsed"]["inventory"]["serialNumber"], "PD3718110170")
 
+    @patch("services.switch_hardware.ssh_collector.resolve_ssh_credentials")
+    @patch("services.switch_hardware.ssh_collector.SSHInterfaceCollector")
+    def test_health_only_ssh_is_available_without_version_command(self, collector_cls, resolve):
+        resolve.return_value = SSHCredentials(host="192.0.2.1", username="admin", password="x", vendor="juniper_junos")
+        session = collector_cls.return_value.__enter__.return_value
+        session.run_command.side_effect = lambda command: {
+            "show chassis environment": JUNOS_OUTPUTS["environment"],
+            "show chassis routing-engine": JUNOS_OUTPUTS["routing_engine"],
+            "show chassis alarms": "No alarms currently active",
+        }[command]
+        result = collect_ssh_hardware(
+            {"vendor": "Juniper", "deviceType": "switch"}, include_inventory=False,
+        )
+        self.assertEqual(result["availability"]["ssh"], "available")
+        self.assertIn("alarms", result["observed"])
+        self.assertEqual(result["parsed"]["alarms"], [])
+
+    @patch("services.switch_hardware.ssh_collector.resolve_ssh_credentials")
+    @patch("services.switch_hardware.ssh_collector.SSHInterfaceCollector")
+    def test_rejected_ssh_command_is_not_treated_as_observed(self, collector_cls, resolve):
+        resolve.return_value = SSHCredentials(host="192.0.2.1", username="admin", password="x", vendor="juniper_junos")
+        session = collector_cls.return_value.__enter__.return_value
+        session.run_command.side_effect = lambda command: (
+            "syntax error, expecting <command>" if command == "show chassis environment"
+            else JUNOS_OUTPUTS["routing_engine"] if command == "show chassis routing-engine"
+            else "No alarms currently active"
+        )
+        result = collect_ssh_hardware(
+            {"vendor": "Juniper", "deviceType": "switch"}, include_inventory=False,
+        )
+        self.assertEqual(result["availability"]["ssh"], "partial")
+        self.assertIn("environment", result["errors"])
+        self.assertNotIn("environment", result["observed"])
+
     def test_juniper_snmp_uses_standard_entity_sensor_scaling(self):
         collector = object.__new__(SwitchHardwareSNMPCollector)
         collector.platform = "juniper_junos"
