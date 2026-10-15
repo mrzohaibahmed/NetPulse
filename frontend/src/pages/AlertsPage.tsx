@@ -30,6 +30,17 @@ import { TableSkeleton } from '@/shared/components/LoadingState'
 import { PageHeader } from '@/shared/components/PageHeader'
 import { PaginationControls } from '@/shared/components/PaginationControls'
 import { StatusBadge } from '@/shared/components/StatusBadge'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/shared/ui/alert-dialog'
 import { Badge } from '@/shared/ui/badge'
 import { Button } from '@/shared/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/shared/ui/card'
@@ -217,9 +228,10 @@ export function AlertsPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
 
   const alertsQuery = useAlertsQuery(status, 100)
+  const activeTotalsQuery = useAlertsQuery('active', 1)
   const acknowledgedTotalsQuery = useAlertsQuery('acknowledged', 1)
   const dismissedTotalsQuery = useAlertsQuery('dismissed', 1)
-  const { acknowledge, dismiss } = useAlertMutations()
+  const { acknowledge, acknowledgeAll, dismiss } = useAlertMutations()
   const healthQuery = useHealthQuery()
 
   const alerts = alertsQuery.data?.data ?? []
@@ -358,10 +370,48 @@ export function AlertsPage() {
         title="Operations Center"
         description="Real-time monitoring of network events, alerts and system health."
         actions={
-          <Button type="button" variant="secondary" onClick={() => void alertsQuery.refetch()}>
-            <RefreshCw className="mr-2 h-4 w-4" />
-            Refresh
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            {isUser ? (
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    disabled={
+                      !activeTotalsQuery.data?.total ||
+                      acknowledgeAll.isPending ||
+                      acknowledge.isPending ||
+                      dismiss.isPending
+                    }
+                  >
+                    <CheckCircle2 className="mr-2 h-4 w-4" />
+                    Acknowledge all
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Acknowledge all active alerts?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      This will acknowledge every active alert across all pages (currently{' '}
+                      {activeTotalsQuery.data?.total ?? 0}), including alerts hidden by the current
+                      filters. It will not resolve or dismiss them. New alerts will remain
+                      unacknowledged.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction onClick={() => acknowledgeAll.mutate()}>
+                      Acknowledge all
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            ) : null}
+            <Button type="button" variant="secondary" onClick={() => void alertsQuery.refetch()}>
+              <RefreshCw className="mr-2 h-4 w-4" />
+              Refresh
+            </Button>
+          </div>
         }
       />
 
@@ -530,7 +580,7 @@ export function AlertsPage() {
                       index={index}
                       selected={selectedId === alert._id}
                       canAct={isUser}
-                      busy={acknowledge.isPending || dismiss.isPending}
+                      busy={acknowledge.isPending || acknowledgeAll.isPending || dismiss.isPending}
                       onSelect={() => setSelectedId(alert._id)}
                       onAck={() => acknowledge.mutate(alert._id)}
                       onDismiss={() => dismiss.mutate(alert._id)}
@@ -630,7 +680,7 @@ export function AlertsPage() {
                   <AlertDetailPanel
                     alert={selected}
                     canAct={isUser}
-                    busy={acknowledge.isPending || dismiss.isPending}
+                    busy={acknowledge.isPending || acknowledgeAll.isPending || dismiss.isPending}
                     onAck={() => acknowledge.mutate(selected._id)}
                     onDismiss={() => dismiss.mutate(selected._id)}
                     onOpenStorm={isStormAlert(selected) ? () => openStorm(selected) : undefined}

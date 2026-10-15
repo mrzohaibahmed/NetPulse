@@ -74,7 +74,9 @@ export const deviceFormSchema = baseSchema.superRefine((values, ctx) => {
   if (!ip && !ilo) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
-      message: 'Provide an OS IP address and/or an iLO address',
+      message: isIloOnlyDeviceType(values.deviceType)
+        ? 'Provide an OS IP address and/or an iLO address'
+        : 'OS IP address is required',
       path: ['ipAddress'],
     })
   }
@@ -210,23 +212,26 @@ export function DeviceFormDialog({ open, onOpenChange, device }: DeviceFormDialo
     const nextIloUsername = values.iloUsername.trim()
     const ip = values.ipAddress.trim()
     const ilo = values.iloAddress.trim()
+    const includeIlo = isIloOnlyDeviceType(values.deviceType) || Boolean(
+      device?.iloAddress || device?.credentials?.iloUsername || device?.credentials?.iloPasswordConfigured,
+    )
 
     const credentialsPayload = device
       ? {
           sshUsername: nextUsername,
           sshVendor: values.vendor.trim(),
-          iloUsername: nextIloUsername,
+          ...(includeIlo ? { iloUsername: nextIloUsername } : {}),
           ...(nextPassword ? { sshPassword: nextPassword } : {}),
           ...(nextEnableSecret ? { sshSecret: nextEnableSecret } : {}),
-          ...(nextIloPassword ? { iloPassword: nextIloPassword } : {}),
+          ...(includeIlo && nextIloPassword ? { iloPassword: nextIloPassword } : {}),
         }
       : {
           ...(nextUsername ? { sshUsername: nextUsername } : {}),
           ...(values.vendor.trim() ? { sshVendor: values.vendor.trim() } : {}),
-          ...(nextIloUsername ? { iloUsername: nextIloUsername } : {}),
+          ...(includeIlo && nextIloUsername ? { iloUsername: nextIloUsername } : {}),
           ...(nextPassword ? { sshPassword: nextPassword } : {}),
           ...(nextEnableSecret ? { sshSecret: nextEnableSecret } : {}),
-          ...(nextIloPassword ? { iloPassword: nextIloPassword } : {}),
+          ...(includeIlo && nextIloPassword ? { iloPassword: nextIloPassword } : {}),
         }
 
     const isServer = values.deviceType.trim().toLowerCase() === 'server'
@@ -241,7 +246,7 @@ export function DeviceFormDialog({ open, onOpenChange, device }: DeviceFormDialo
       pingRetries: values.pingRetries ?? null,
       location: values.location?.trim() ? values.location.trim() : null,
       ipAddress: ip || null,
-      iloAddress: ilo || null,
+      iloAddress: includeIlo ? ilo || null : null,
     }
 
     if (device || Object.keys(credentialsPayload).length > 0) {
@@ -259,6 +264,9 @@ export function DeviceFormDialog({ open, onOpenChange, device }: DeviceFormDialo
   const saving = create.isPending || update.isPending
   const selectedDeviceType = form.watch('deviceType')
   const isServerType = selectedDeviceType.trim().toLowerCase() === 'server'
+  const showIloFields = isIloOnlyDeviceType(selectedDeviceType) || Boolean(
+    device?.iloAddress || device?.credentials?.iloUsername || device?.credentials?.iloPasswordConfigured,
+  )
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -268,7 +276,7 @@ export function DeviceFormDialog({ open, onOpenChange, device }: DeviceFormDialo
           <DialogDescription>
             {device
               ? 'Update monitoring settings for this host.'
-              : 'Register a new host for monitoring. iLO-only servers may omit the OS IP.'}
+              : 'Register a new host for monitoring. Server devices may use an iLO address.'}
           </DialogDescription>
         </DialogHeader>
 
@@ -292,24 +300,9 @@ export function DeviceFormDialog({ open, onOpenChange, device }: DeviceFormDialo
                 <p className="text-xs text-danger">{form.formState.errors.ipAddress.message}</p>
               ) : (
                 <p className="text-xs text-muted-foreground">
-                  Optional for Server / Linux Server / ESXi Server when an iLO address is set.
-                </p>
-              )}
-            </div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor="iloAddress">iLO address</Label>
-              <Input
-                id="iloAddress"
-                className="mono"
-                {...form.register('iloAddress')}
-                placeholder="IPv4 or DNS hostname"
-              />
-              {form.formState.errors.iloAddress ? (
-                <p className="text-xs text-danger">{form.formState.errors.iloAddress.message}</p>
-              ) : (
-                <p className="text-xs text-muted-foreground">
-                  Do not enter a URL (no https:// or /redfish path).
+                  {showIloFields
+                    ? 'Optional when an iLO address is set.'
+                    : 'Required for this device type.'}
                 </p>
               )}
             </div>
@@ -318,7 +311,14 @@ export function DeviceFormDialog({ open, onOpenChange, device }: DeviceFormDialo
               <Label>Device type</Label>
               <Select
                 value={form.watch('deviceType')}
-                onValueChange={(value) => form.setValue('deviceType', value)}
+                onValueChange={(value) => {
+                  form.setValue('deviceType', value)
+                  if (!device && !isIloOnlyDeviceType(value)) {
+                    form.setValue('iloAddress', '')
+                    form.setValue('iloUsername', '')
+                    form.setValue('iloPassword', '')
+                  }
+                }}
               >
                 <SelectTrigger>
                   <SelectValue />
@@ -339,6 +339,25 @@ export function DeviceFormDialog({ open, onOpenChange, device }: DeviceFormDialo
                 <p className="text-xs text-danger">{form.formState.errors.deviceType.message}</p>
               ) : null}
             </div>
+
+            {showIloFields ? (
+              <div className="space-y-1.5">
+                <Label htmlFor="iloAddress">iLO address</Label>
+                <Input
+                  id="iloAddress"
+                  className="mono"
+                  {...form.register('iloAddress')}
+                  placeholder="IPv4 or DNS hostname"
+                />
+                {form.formState.errors.iloAddress ? (
+                  <p className="text-xs text-danger">{form.formState.errors.iloAddress.message}</p>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    Do not enter a URL (no https:// or /redfish path).
+                  </p>
+                )}
+              </div>
+            ) : null}
 
             <div className="space-y-1.5">
               <Label>Location</Label>
@@ -452,50 +471,52 @@ export function DeviceFormDialog({ open, onOpenChange, device }: DeviceFormDialo
             </div>
           </fieldset>
 
-          <fieldset className="space-y-3 rounded-xl border border-border/60 bg-secondary/20 p-4">
-            <legend className="px-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-              iLO credentials (optional)
-            </legend>
-            <div className="space-y-1.5">
-              <Label htmlFor="ilo-username">iLO Username</Label>
-              <Input
-                id="ilo-username"
-                autoComplete="off"
-                {...form.register('iloUsername')}
-                placeholder="Optional iLO username"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between gap-4">
-                <Label htmlFor="ilo-password">iLO Password</Label>
-                {device?.credentials?.iloPasswordConfigured ? (
-                  <p className="text-xs text-muted-foreground">Password Configured</p>
-                ) : null}
-              </div>
-              <div className="relative">
+          {showIloFields ? (
+            <fieldset className="space-y-3 rounded-xl border border-border/60 bg-secondary/20 p-4">
+              <legend className="px-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                iLO credentials (optional)
+              </legend>
+              <div className="space-y-1.5">
+                <Label htmlFor="ilo-username">iLO Username</Label>
                 <Input
-                  id="ilo-password"
-                  type={showIloPassword ? 'text' : 'password'}
-                  autoComplete="new-password"
-                  {...form.register('iloPassword')}
-                  placeholder={
-                    device ? 'Leave blank to keep current iLO password' : 'Optional iLO password'
-                  }
-                  className="pr-10"
+                  id="ilo-username"
+                  autoComplete="off"
+                  {...form.register('iloUsername')}
+                  placeholder="Optional iLO username"
                 />
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="absolute right-0 top-1/2 -translate-y-1/2"
-                  aria-label={showIloPassword ? 'Hide iLO password' : 'Show iLO password'}
-                  onClick={() => setShowIloPassword((s) => !s)}
-                >
-                  {showIloPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </Button>
               </div>
-            </div>
-          </fieldset>
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between gap-4">
+                  <Label htmlFor="ilo-password">iLO Password</Label>
+                  {device?.credentials?.iloPasswordConfigured ? (
+                    <p className="text-xs text-muted-foreground">Password Configured</p>
+                  ) : null}
+                </div>
+                <div className="relative">
+                  <Input
+                    id="ilo-password"
+                    type={showIloPassword ? 'text' : 'password'}
+                    autoComplete="new-password"
+                    {...form.register('iloPassword')}
+                    placeholder={
+                      device ? 'Leave blank to keep current iLO password' : 'Optional iLO password'
+                    }
+                    className="pr-10"
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="absolute right-0 top-1/2 -translate-y-1/2"
+                    aria-label={showIloPassword ? 'Hide iLO password' : 'Show iLO password'}
+                    onClick={() => setShowIloPassword((s) => !s)}
+                  >
+                    {showIloPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </Button>
+                </div>
+              </div>
+            </fieldset>
+          ) : null}
 
           <fieldset className="space-y-3 rounded-xl border border-border/60 bg-secondary/20 p-4">
             <legend className="px-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">

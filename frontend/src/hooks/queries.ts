@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ApiRequestError } from '@/shared/api/client'
 import {
   acknowledgeAlert,
+  acknowledgeAllAlerts,
   collectAllInterfaceStats,
   collectDeviceInterfaceStats,
   createDevice,
@@ -918,6 +919,15 @@ export function useAlertMutations() {
     onError: (err: Error) => toast.error(err.message),
   })
 
+  const acknowledgeAll = useMutation({
+    mutationFn: acknowledgeAllAlerts,
+    onSuccess: async (result) => {
+      toast.success(`${result.acknowledgedCount} alert${result.acknowledgedCount === 1 ? '' : 's'} acknowledged`)
+      await invalidate()
+    },
+    onError: (err: Error) => toast.error(err.message),
+  })
+
   const dismiss = useMutation({
     mutationFn: (id: string) => dismissAlert(id),
     onSuccess: async () => {
@@ -927,7 +937,7 @@ export function useAlertMutations() {
     onError: (err: Error) => toast.error(err.message),
   })
 
-  return { acknowledge, dismiss }
+  return { acknowledge, acknowledgeAll, dismiss }
 }
 
 export function useDeviceMutations() {

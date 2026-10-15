@@ -11,6 +11,14 @@ from utils.utc import utc_now
 alert_bp = Blueprint("alerts", __name__)
 
 
+def _active_alert_filter():
+    return {
+        "dismissed": {"$ne": True},
+        "acknowledged": {"$ne": True},
+        "resolved": {"$ne": True},
+    }
+
+
 def serialize_alert(alert):
     return {
         "_id": str(alert["_id"]),
@@ -58,10 +66,7 @@ def list_alerts():
 
         status_filter = (request.args.get("status") or "").strip().lower()
         if status_filter == "active":
-            query["dismissed"] = {"$ne": True}
-            query["acknowledged"] = {"$ne": True}
-            # Phase 4 — recovered alerts leave the active list (backward compatible).
-            query["resolved"] = {"$ne": True}
+            query.update(_active_alert_filter())
         elif status_filter == "acknowledged":
             query["acknowledged"] = True
         elif status_filter == "dismissed":
@@ -91,6 +96,23 @@ def list_alerts():
 
     except Exception as error:
         return internal_error_response(error, message="Failed to get alerts")
+
+
+@alert_bp.route("/alerts/acknowledge-all", methods=["POST"])
+@require_auth(roles=["user"])
+def acknowledge_all_alerts():
+    try:
+        result = db.alerts.update_many(
+            _active_alert_filter(),
+            {"$set": {"acknowledged": True, "acknowledgedAt": utc_now()}},
+        )
+        return jsonify({
+            "success": True,
+            "message": "Active alerts acknowledged",
+            "acknowledgedCount": result.modified_count,
+        }), 200
+    except Exception as error:
+        return internal_error_response(error, message="Failed to acknowledge alerts")
 
 
 @alert_bp.route("/alerts/<alert_id>/acknowledge", methods=["POST"])

@@ -315,6 +315,12 @@ export const acknowledgeAlert = (id: string) =>
     method: 'POST',
   })
 
+export const acknowledgeAllAlerts = () =>
+  apiRequest<{ success: boolean; message: string; acknowledgedCount: number }>(
+    '/api/alerts/acknowledge-all',
+    { method: 'POST' },
+  )
+
 export const dismissAlert = (id: string) =>
   apiRequest<ApiItemResponse<AlertItem>>(`/api/alerts/${id}/dismiss`, {
     method: 'POST',
